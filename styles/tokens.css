@@ -1,0 +1,54 @@
+/*
+ * Gloss design tokens
+ *
+ * 主题切换：在 <html> 上切 data-theme，六个颜色变量整套替换。
+ * 规则：中栏（--paper-main）最亮，侧栏（--paper-side）退后一档。
+ *
+ *   --paper-main  中栏（正文）底色
+ *   --paper-side  左右栏底色
+ *   --ink         正文墨色
+ *   --gloss       白话文字（同字号，仅色浅）
+ *   --rule        分隔线、边框
+ *   --term        术语标记（降饱和冷调）
+ */
+
+/* 羊皮纸（默认） */
+:root,
+[data-theme="parchment"] {
+  --paper-main: #F8F6F0;
+  --paper-side: #F1EEE6;
+  --ink: #212121;
+  --gloss: #5D5750;
+  --rule: #E5DFC8;
+  --term: #3F4B53;
+}
+
+/* 月白 */
+[data-theme="moon-white"] {
+  --paper-main: #F5F5F7;
+  --paper-side: #EAEAEE;
+  --ink: #212121;
+  --gloss: #5A5A61;
+  --rule: #E2E2E8;
+  --term: #3F4B53;
+}
+
+/* 护眼绿 */
+[data-theme="eye-green"] {
+  --paper-main: #EDF2EA;
+  --paper-side: #E3E9DF;
+  --ink: #223027;
+  --gloss: #4F5D50;
+  --rule: #D5DFD0;
+  --term: #37505A;
+}
+
+/*
+ * 中文正文字体栈：只用读者本机字体，不下载中文网络字体。
+ * 拉丁字体 --font-display（Cinzel）和 --font-mono（JetBrains Mono）
+ * 由 app/layout.tsx 里的 next/font 注入到 <html> 上。
+ */
+:root {
+  --font-serif-cjk: "Noto Serif CJK SC", "Source Han Serif SC",
+                    "Songti SC", "SimSun", "Noto Serif SC", serif;
+}

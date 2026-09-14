@@ -1,0 +1,536 @@
+# Gloss · 开发看板
+
+> **依据** PRD v1.3 ｜ **周期** 4 周 ｜ **更新** 2026-09-14
+> 本文件是开发的唯一事实来源。放在仓库根目录，每完成一个 issue 就把它移到 `## ✅ Done` 并勾选验收项。
+
+---
+
+## 执行纪律（每个 issue 都适用）
+
+1. **动手前先复述**：开工前先说清「这个 issue 会改哪些文件、不会改哪些文件」，与下方清单核对。**清单之外的文件一律不动。**
+2. **一轮一个可验证增量**：每个 issue 结束时必须有一个能在浏览器里看到、或能跑测试验证的结果。做不到就说明 issue 拆得太大，先拆。
+3. **一个 issue 一个分支一个 commit**：分支名见各条目。回滚 = `git revert` 或直接删分支。
+4. **验收未全绿不算完成**：勾选框全打勾才能移进 Done。
+5. **不改 PRD**：实现中发现 PRD 有问题，先停下来说，不在代码里偷偷改行为。
+
+---
+
+## 技术骨架
+
+| 层 | 选型 | 说明 |
+|---|---|---|
+| 框架 | **Next.js (App Router) + React** | 需要服务端跑 AI 调用；部署 Vercel |
+| 样式 | **原生 CSS + CSS 变量** | **不用 Tailwind Play CDN**（设计稿用的是它，生产不可用） |
+| 文档解析 | mammoth.js (docx) / pdf.js (PDF 文字层) | 客户端解析，原文不出浏览器 |
+| 缓存 | Vercel KV / Upstash Redis | key = 句 hash + 上下文指纹 |
+| 本地存储 | localStorage 封装 | 原文、白话、功能二结果、阅读位置、设置 |
+| 模型 | 功能一快模型 / 功能二强模型 | 见 PRD 3.8 |
+
+### 目录结构
+
+```
+gloss/
+├── app/
+│   ├── layout.tsx
+│   ├── page.tsx                      # 书架
+│   ├── read/[docId]/page.tsx         # 阅读器
+│   └── api/
+│       ├── gloss/route.ts            # 功能一
+│       ├── explain/route.ts          # 功能二
+│       ├── structure/route.ts        # 全书结构提取
+│       └── segment/route.ts          # AI 断句（仅无标点文本）
+├── components/
+│   ├── reader/{Reader,Sentence,GlossPanel,ActionRow,TermMark,ContextMenu}.tsx
+│   ├── shelf/{Shelf,Spine,EmptyShelf}.tsx
+│   └── settings/SettingsPanel.tsx
+├── lib/
+│   ├── parse/{docx,txt,pdf}.ts
+│   ├── segment.ts                    # 规则切句
+│   ├── context.ts                    # 上下文窗口构造
+│   ├── cache.ts                      # KV 读写 + hash
+│   ├── storage.ts                    # localStorage 封装
+│   ├── analytics.ts                  # 埋点
+│   └── prompts/{gloss,explain}.ts
+├── styles/
+│   ├── tokens.css                    # 三套主题 token
+│   └── reader.css
+└── public/samples/                   # 内置示例文档
+```
+
+---
+
+# 📋 Backlog · W1 核心链路
+
+> **W1 目标**：上传 docx → 切句 → 点击 → 撑开出白话，端到端可用。
+> **W1 结束时必须有一个能发给别人的链接。**
+
+---
+
+### G-01 · 脚手架与 token 系统
+**P0** ｜ 依赖 无 ｜ 分支 `feat/g01-scaffold`
+
+**可验证增量**：`npm run dev` 起得来，页面渲染出三栏骨架（空内容），三套主题可在控制台手动切换并看到底色变化。
+
+**验收**
+- [ ] Next.js 项目可本地启动、可部署到 Vercel
+- [ ] `styles/tokens.css` 含三套完整主题（羊皮纸 / 月白 / 护眼绿），每套 6 个变量
+- [ ] `--paper-side` 比 `--paper-main` 明显更深，中栏最亮
+- [ ] Cinzel 在 wordmark 上实际渲染（控制台实测 `getComputedStyle(document.querySelector('.wordmark')).fontFamily` 含 Cinzel）
+- [ ] JetBrains Mono 已声明但 `preload: false`，Network 面板无其字体请求
+- [ ] 中文正文使用本机字体栈 `--font-serif-cjk`，无任何中文网络字体请求
+- [ ] **项目中不存在 `cdn.tailwindcss.com` 的引用**：`git grep -n "cdn\.tailwindcss\.com" -- ':!*.md'` 返回为空即通过（排除文档，只查代码与配置）
+
+**会改**：`package.json`、`package-lock.json`、`tsconfig.json`、`next.config.ts`、`.gitignore`、`app/layout.tsx`、`app/page.tsx`、`styles/tokens.css`、`styles/reader.css`、`README.md`、`KANBAN.md`、`PRD.md`、`AGENTS.md`、`CLAUDE.md`
+**不改**：无（初始 commit）
+**回滚**：删分支
+
+---
+
+### G-02 · 文档解析（docx / txt / 粘贴）
+**P0** ｜ 依赖 G-01 ｜ 分支 `feat/g02-parse`
+
+**可验证增量**：上传《政治经济学批判》序言 docx，控制台打印出纯文本，字数与原文一致。
+
+**验收**
+- [ ] docx / txt / 粘贴三种入口可用，**解析全部在客户端完成**
+- [ ] 表格与公式块被剔除；脚注单独归类不参与切句
+- [ ] 异常 A1–A4、A7、A8 各有用户可见提示，**无静默失败**
+- [ ] A9 非中文文本：允许上传 + 横幅提示，**不阻断**
+
+**会改**：`lib/parse/{docx,txt}.ts`、`components/Upload.tsx`、`lib/storage.ts`
+**不改**：`components/reader/**`、`app/api/**`、`styles/**`
+**回滚**：`git revert`
+
+---
+
+### G-03 · 规则切句
+**P0** ｜ 依赖 G-02 ｜ 分支 `feat/g03-segment`
+
+**可验证增量**：同一份 docx 切出 **56 句**，平均 54.8 字，最长 160 字——与 PRD 1.2 的实测数据一致。这是本 issue 的硬验收。
+
+**验收**
+- [ ] 序言 docx 切出 56 句，统计值与 PRD 1.2 一致
+- [ ] B3 引号 / 书名号内部不切分
+- [ ] B4 分号视为句末；省略号、破折号不是
+- [ ] B5 空白段落归一化，不产生空句
+- [ ] B2 超长句（>250 字）在句中标点处切分
+- [ ] 有一组回归测试用例，含上述边界
+
+**会改**：`lib/segment.ts`、`lib/segment.test.ts`
+**不改**：`lib/parse/**`、`components/**`
+**回滚**：`git revert`
+
+---
+
+### G-04 · 阅读器渲染（三栏 + 排版）
+**P0** ｜ 依赖 G-03 ｜ 分支 `feat/g04-reader`
+
+**可验证增量**：整篇序言以定稿排版渲染在中栏，左右栏有内容骨架。截图与视觉定稿比对，字号行距一致。
+
+**验收**
+- [ ] 正文 16.5px / 行高 2.05 / 字距 .025em
+- [ ] `text-align: justify` + `text-justify: inter-ideograph`
+- [ ] 中栏 ≤750px，约 38 字/行
+- [ ] 左栏：目录 + 已保存列表（**摘要两行 `line-clamp-2`**）
+- [ ] 右栏：设置面板骨架
+- [ ] **左栏最小宽度能容纳「复习态」等标签单行显示**
+- [ ] 阅读位置记忆：刷新后回到原位
+
+**会改**：`components/reader/{Reader,Sentence}.tsx`、`styles/reader.css`、`app/read/[docId]/page.tsx`
+**不改**：`lib/**`、`app/api/**`
+**回滚**：`git revert`
+
+---
+
+### G-05 · 点击撑开与视口锚定 ⚠️
+**P0** ｜ 依赖 G-04 ｜ 分支 `feat/g05-expand`
+
+> **这是 W1 最关键的一个 issue，也是整个交互模型的地基。做不对，后面全部白搭。**
+
+**可验证增量**：点击任意句子，下方撑开一块占位区（内容为固定占位文本，暂不接 AI）。**点击行的视口位置纹丝不动**，下方内容平滑下移。
+
+**验收**
+- [ ] **点击后，被点击行在视口中的位置不变**（录屏逐帧核对）
+- [ ] 句子部分超出视口时，点击自动微调滚动，整句 + 撑开区完整可见
+- [ ] **原句的底色、边框、字重、位置在点击前后完全一致**（D13）
+- [ ] 撑开动画 ≥50fps，无跳动
+- [ ] 再次点击 / 点别处 / 该句滚出视口 → 收起
+- [ ] 点击另一句，前一句收起（同时只允许一个非锁定撑开态）
+- [ ] **用户已选中文本时，松开鼠标不触发撑开**（G5）
+
+**会改**：`components/reader/{Sentence,GlossPanel}.tsx`、`styles/reader.css`
+**不改**：`lib/**`、`app/api/**`、`components/settings/**`
+**回滚**：`git revert`。**本 issue 独立成 commit，便于单独回退**
+
+---
+
+### G-06 · 功能一 API 与流式返回
+**P0** ｜ 依赖 G-03 ｜ 分支 `feat/g06-gloss-api`
+
+**可验证增量**：`curl` 调 `/api/gloss` 传入马克思那句原句，返回 73 字左右的白话，流式。
+
+**验收**
+- [ ] 上下文窗口 = 目标句 + 前后各 1–2 句 + 结构摘要，**不传整章**
+- [ ] 流式返回，**3–5 字块**吐出
+- [ ] 输出 ≤150 字且 ≤原句 80%；超长由服务端截断并埋点 `gloss_overlength`
+- [ ] 异常 C1–C6 各有明确的错误类型返回
+- [ ] 返回内容清洗掉 markdown 与格式符号
+- [ ] 用 20 句评测集跑一遍，人工检查
+
+**会改**：`app/api/gloss/route.ts`、`app/api/structure/route.ts`、`lib/prompts/gloss.ts`、`lib/context.ts`
+**不改**：`components/**`、`styles/**`
+**回滚**：`git revert`
+
+---
+
+### G-07 · 端到端串联
+**P0** ｜ 依赖 G-05 + G-06 ｜ 分支 `feat/g07-e2e`
+
+**可验证增量**：**上传 docx → 读 → 点句 → 真实白话流式出现在撑开区。链接可以发给别人。**
+
+**验收**
+- [ ] 全链路跑通，无控制台报错
+- [ ] 首字延迟 P90 ≤2.5s（本地实测 10 次取样）
+- [ ] 生成中收起 / 离开页面 → 中止请求，不计费不缓存（D3/D4）
+- [ ] 断网时点击句子有明确提示，非无限加载
+- [ ] **部署到 Vercel，链接可访问**
+- [ ] **实测并记录单次调用成本**，用于校准 PRD 3.8 的额度阈值
+
+**会改**：`components/reader/GlossPanel.tsx`、`lib/analytics.ts`（最小埋点）
+**不改**：`lib/parse/**`、`lib/segment.ts`
+**回滚**：`git revert`
+
+---
+
+# 📋 Backlog · W2 完整 MVP
+
+---
+
+### G-08 · 三类输出与术语标记
+**P0** ｜ 依赖 G-07 ｜ 分支 `feat/g08-output-types`
+
+**可验证增量**：马克思那句的白话里，「市民社会」带灰蓝标记且不折行。
+
+**验收**
+- [ ] prompt 能区分句法简化 / 指代还原 / 术语标注三类
+- [ ] 术语保留原词 + 灰蓝标记，**不输出"为什么不翻"的解释文字**
+- [ ] 术语 `white-space: nowrap`，行末整词移行（G11）
+- [ ] 20 句评测集上**术语识别准确率 ≥85%**
+- [ ] 术语色在三套主题下均达 WCAG AA
+
+**会改**：`lib/prompts/gloss.ts`、`components/reader/TermMark.tsx`、`styles/reader.css`
+**不改**：`components/reader/Sentence.tsx`、`lib/segment.ts`
+**回滚**：`git revert`
+
+---
+
+### G-09 · 跨会话缓存
+**P0** ｜ 依赖 G-06 ｜ 分支 `feat/g09-cache`
+
+**可验证增量**：同一句点第二次，**300ms 内出现且无新的 AI 调用**（Network 面板可验证）。
+
+**验收**
+- [ ] key = 句 hash + 上下文指纹；**value 只存白话，不存原文明文**
+- [ ] 命中时 ≤300ms 完整显示
+- [ ] **同一句在同一会话内白话完全相同，不重新生成、不重复计费**
+- [ ] 缓存命中率可观测（埋点 `sentence_click.cache_hit`）
+- [ ] **用户编辑版本绝不写入共享缓存**（D12）
+
+**会改**：`lib/cache.ts`、`app/api/gloss/route.ts`
+**不改**：`components/**`、`lib/prompts/**`
+**回滚**：`git revert`。缓存可直接清空，无数据迁移风险
+
+---
+
+### G-10 · 保存白话
+**P0** ｜ 依赖 G-08 ｜ 分支 `feat/g10-save`
+
+**可验证增量**：保存三条白话，刷新页面后仍在，左栏「本文沉淀」显示 3 条。
+
+**验收**
+- [ ] 保存后转为常驻；形态可在设置中选（气泡 / inline 小字，默认后者）
+- [ ] 阅读模式：折叠为行末微标记；复习模式：全部展开
+- [ ] **两种模式是显式切换，不是自动**
+- [ ] 一页 10+ 保存句时，阅读模式下正文连贯性不被破坏
+- [ ] 刷新后恢复（D5）
+- [ ] E1/E2：存储满或被禁用时提示 + 导出入口，**功能不阻断**
+
+**会改**：`lib/storage.ts`、`components/reader/GlossPanel.tsx`、`components/settings/SettingsPanel.tsx`
+**不改**：`lib/cache.ts`、`app/api/**`
+**回滚**：`git revert`
+
+---
+
+### G-11 · 功能二（含条件显示与置灰态）
+**P0** ｜ 依赖 G-08 ｜ 分支 `feat/g11-explain`
+
+**可验证增量**：含术语的句子操作行出现「听不懂」，点击出整句理解；用过后按钮置灰，收起再打开结果仍在。
+
+**验收**
+- [ ] **有术语 → 操作行显示「听不懂」；无术语 → 不显示，仅右键菜单有**（D14）
+- [ ] 按钮标签固定为「听不懂」三字，无术语名、无箭头
+- [ ] 输出 ≤250 字，**不含延伸句式**，**界面中不存在任何输入框**
+- [ ] **每句只能用一次**；用后置灰禁用
+- [ ] **结果常驻**；收起再打开仍在；刷新后仍在；**永不重新生成**
+- [ ] 点击已置灰按钮无反应，但记录埋点 `deep_explain_blocked`（G10）
+- [ ] 用强模型，与功能一分开计费
+
+**会改**：`app/api/explain/route.ts`、`lib/prompts/explain.ts`、`components/reader/ActionRow.tsx`、`lib/storage.ts`
+**不改**：`app/api/gloss/route.ts`、`lib/prompts/gloss.ts`
+**回滚**：`git revert`
+
+---
+
+### G-12 · 右键菜单与「翻错了」
+**P0** ｜ 依赖 G-11 ｜ 分支 `feat/g12-context-menu`
+
+**可验证增量**：右键呼出菜单，点「翻错了」上报成功，**撑开区保持打开，阅读不被打断**。
+
+**验收**
+- [ ] 右键菜单含：听不懂 / 翻错了 / 查看上下文原文（后者仅覆盖模式下出现）
+- [ ] 上报内容：句 hash + 原句 + 白话 + 输出类型 + 时间戳
+- [ ] **上报后撑开区保持打开**
+- [ ] 隐私说明中明示「翻错了」会携带原句明文
+
+**会改**：`components/reader/ContextMenu.tsx`、`app/api/report/route.ts`、`lib/analytics.ts`
+**不改**：`components/reader/GlossPanel.tsx`
+**回滚**：`git revert`
+
+---
+
+### G-13 · 书架
+**P0** ｜ 依赖 G-10 ｜ 分支 `feat/g13-shelf`
+
+**可验证增量**：首页显示已读文档的书脊，点击进入并回到上次位置；空态显示虚线书 + 示例书。
+
+**验收**
+- [ ] **顶部「继续读」入口**：显示上次读的书名 + 停留位置，**一次点击直接进正文原位置**，不经过详情卡
+- [ ] 书脊横向排列，宽窄错落；**宽度不编码任何信息**
+- [ ] 书脊过多时**横向滚动**，不换行、不缩小字号
+- [ ] 选中的书凸出为封面，**页面背景色跟随该书**
+- [ ] 书脊颜色默认随机，**右键可自定义**
+- [ ] **不显示阅读进度**
+- [ ] 空态：**导入入口居中**（不是排在书架末位）+ 示例书（明确标记为示例）
+- [ ] 点击最近文档跳转至上次阅读位置
+- [ ] **所有功能性文案为白话中文**；装饰性英文仅作视觉纹理，不作为任何可点击元素的唯一标签
+- [ ] **页面上不存在 MVP 之外的入口**（无「索引」「校勘」「导出」等）
+
+**会改**：`components/shelf/{Shelf,Spine,EmptyShelf}.tsx`、`app/page.tsx`、`lib/storage.ts`
+**不改**：`components/reader/**`
+**回滚**：`git revert`
+
+---
+
+# 📋 Backlog · W3 打磨与埋点
+
+> ⚠️ **W3 超载：3 个 P0 + 8 个 P1，共 11 项，大概率做不完。**
+> P0 必须完成（少了任何一个，W4 的数据复盘无法进行）。
+> P1 按下方标注的**推迟顺序**砍，**W4 不允许被挤占**。
+
+---
+
+### G-14 · 导出 docx
+**P0** ｜ 依赖 G-10 ｜ 分支 `feat/g14-export-docx`
+
+**可验证增量**：导出一份 docx，用 Word 打开，原文完整，3 条白话按设置形态排在对应原句后。
+
+**验收**
+- [ ] 四种纸面形态可选：行下小字（默认）/ 批注框 / 脚注 / 双栏对照
+- [ ] **带白话的句子与其白话不跨页**（H4）
+- [ ] 无已保存白话时提示，询问是否仅导原文（H1）
+- [ ] 大文档分段导出 + 进度提示（H2/H3）
+
+**会改**：`lib/export/docx.ts`、`components/settings/SettingsPanel.tsx`
+**不改**：`components/reader/**`、`app/api/**`
+**回滚**：`git revert`
+
+---
+
+### G-15 · 全量埋点
+**P0** ｜ 依赖 G-13 ｜ 分支 `feat/g15-analytics`
+
+**可验证增量**：走一遍完整流程，后台能看到 PRD 4.1 表里的全部事件，且失败原因分类正确。
+
+**验收**
+- [ ] PRD 4.1 的全部事件均已接入
+- [ ] **上传失败能按 A1–A9 分类统计**
+- [ ] **生成失败能按 C1–C6 分类统计**
+- [ ] 北极星（白话读完率）可计算
+- [ ] `sentence_reclick` 与 `lock_expand` 可关联查询（否则前者会误导）
+- [ ] 无 PII 上报
+
+**会改**：`lib/analytics.ts`、各组件埋点调用点
+**不改**：任何业务逻辑。**本 issue 只加埋点，不改行为**
+**回滚**：`git revert`
+
+---
+
+### G-16 · 内置示例文档与首次引导
+**P0** ｜ 依赖 G-13 ｜ 分支 `feat/g16-sample`
+
+**可验证增量**：首次访问 → 点示例书 → 第一个难句有呼吸动效 → 点一下就理解了全部交互。**全程无需上传任何文件。**
+
+**验收**
+- [ ] **不做 tooltip 教程**
+- [ ] 示例文本第一个难句自带轻微呼吸/高亮动效
+- [ ] **该难句必须含术语标记**（让用户第一次就见到功能二）
+- [ ] 版权路径已落实：公有领域原文 + 自行生成的新中译
+- [ ] **产品中不出现任何现行译本的署名**
+- [ ] 示例书在书架上明确标记为「示例」
+
+**会改**：`public/samples/**`、`components/shelf/EmptyShelf.tsx`、`components/reader/Sentence.tsx`
+**不改**：`lib/**`、`app/api/**`
+**回滚**：`git revert`
+
+---
+
+### G-17 · 编辑白话
+**P1 · 最不该推迟** ｜ 依赖 G-10 ｜ 分支 `feat/g17-edit`
+
+> 「用自己的话重述」就是理解发生的那一刻，这是产品最有价值的动作之一。
+
+**可验证增量**：双击撑开区进入编辑，改写后保存，刷新仍是编辑版本。
+
+**验收**
+- [ ] 双击进入编辑；虚线边框区分编辑态
+- [ ] 保存后以编辑版本为准
+- [ ] **编辑版本绝不写入服务端共享缓存**（D12）
+- [ ] 编辑中点击别处 → 提示未保存（G7）
+- [ ] 编辑后为空 → 视为删除该白话（G8）
+- [ ] 埋点 `gloss_edit` 记录编辑前后字数与差异度
+
+**会改**：`components/reader/GlossPanel.tsx`、`lib/storage.ts`、`lib/analytics.ts`
+**不改**：`lib/cache.ts`（**关键：不得让编辑版本流入缓存**）
+**回滚**：`git revert`
+
+---
+
+### G-18 · Ctrl 锁定
+**P1 · 最不该推迟** ｜ 依赖 G-05 ｜ 分支 `feat/g18-lock`
+
+**可验证增量**：Ctrl+点击后，点别处、滚出视口都不收起；边框加深；再次 Ctrl+点击解锁。
+
+**验收**
+- [ ] **界面中不存在任何锁定/解锁按钮或图钉**
+- [ ] 唯一视觉信号：**撑开区外边框加深**
+- [ ] 再次 Ctrl+点击解锁
+- [ ] 多句锁定可并存（G9）
+- [ ] 操作行末尾有极淡灰字提示「Ctrl + 单击锁定」——**是提示不是按钮**
+
+**会改**：`components/reader/{GlossPanel,ActionRow}.tsx`、`styles/reader.css`
+**不改**：`lib/**`
+**回滚**：`git revert`
+
+---
+
+### G-19 · 阅读主题（三套浅色）
+**P1 · 推迟顺序 4** ｜ 依赖 G-01 ｜ 分支 `feat/g19-themes`
+
+**可验证增量**：右栏切换三套主题，**所有元素**（正文、白话、术语、分隔线、侧栏）同时变化，无任何一处留着上一套的颜色。
+
+**验收**
+- [ ] 三套完整 token：羊皮纸 / 月白 / 护眼绿
+- [ ] **切换时全部 6 个变量一起换**，不是只换背景（D16）
+- [ ] **中栏最亮、侧栏退后一档**，不压暗中栏
+- [ ] 三套主题下白话对比度均 ≥4.5:1（实测值 6.6 / 6.3 / 6.1）
+- [ ] 切换用 `transition`，不闪变
+- [ ] 选择记住（localStorage）
+
+**会改**：`styles/tokens.css`、`components/settings/SettingsPanel.tsx`、`lib/storage.ts`
+**不改**：任何组件的结构。**本 issue 只动 CSS 变量与切换逻辑**
+**回滚**：`git revert`
+
+---
+
+### G-20 · 侧栏收起（沉浸阅读）
+**P1 · 推迟顺序 5** ｜ 依赖 G-04 ｜ 分支 `feat/g20-collapse`
+
+**可验证增量**：`Cmd/Ctrl + \` 收起两栏，**中栏宽度不变、只是居中**，两侧留白增加。
+
+**验收**
+- [ ] 左右两栏**可独立收起**
+- [ ] 快捷键 `Cmd/Ctrl + \`；栏边缘有 hover 才显现的折叠把手
+- [ ] **中栏宽度不变，仅居中。行长仍约 38 字**（D15）
+- [ ] 状态记住（localStorage）
+- [ ] 收起/展开有平滑过渡
+
+**会改**：`components/reader/Reader.tsx`、`styles/reader.css`、`lib/storage.ts`
+**不改**：`components/reader/{Sentence,GlossPanel}.tsx`
+**回滚**：`git revert`
+
+---
+
+### G-21 · 覆盖模式
+**P1 · 推迟顺序 3** ｜ 依赖 G-08 ｜ 分支 `feat/g21-overlay`
+
+**验收**
+- [ ] 白话替换原句位置显示，白底区分
+- [ ] **hover 到白话上临时显示原句**（否则违反"验证成本接近零"）
+- [ ] 右键可「查看上下文原文」
+- [ ] 设置中可切回撑开模式
+
+**会改**：`components/reader/GlossPanel.tsx`、`styles/reader.css`、`components/settings/SettingsPanel.tsx`
+**不改**：`lib/**`
+**回滚**：`git revert`
+
+---
+
+### G-22 · 视图切换（书架 ⇄ 列表）
+**P1 · 推迟顺序 2** ｜ 依赖 G-13 ｜ 分支 `feat/g22-view-toggle`
+
+**验收**
+- [ ] 书架视图 ⇄ 列表视图可切换，选择记住
+- [ ] 列表视图显示：标题、字数、已保存白话数、最后打开时间
+
+**会改**：`components/shelf/**`、`app/page.tsx`
+**不改**：`components/reader/**`
+**回滚**：`git revert`
+
+---
+
+### G-23 · 导出 PDF
+**P1 · 推迟顺序 1（最先砍）** ｜ 依赖 G-14 ｜ 分支 `feat/g23-export-pdf`
+
+**验收**
+- [ ] 四种纸面形态与 docx 一致
+- [ ] 带白话的句子不跨页
+
+**会改**：`lib/export/pdf.ts`
+**不改**：`lib/export/docx.ts`
+**回滚**：`git revert`
+
+---
+
+# 📋 W4 · 不写新功能
+
+> **W4 是整个作品集里最值钱的部分，不允许被 W1–W3 的延期挤占。**
+
+| 天 | 事项 |
+|---|---|
+| 1–2 | 招募 ≥10 名真实用户试用（发布 demo 链接到求助场景社区，**不是读书博主聚集地**） |
+| 3–4 | 收集数据 + 定性访谈 |
+| 5 | 数据复盘：北极星、失败原因分布、`gloss_edit` 与 `report_error` 的句子特征 |
+| 6–7 | **做一轮有数据支撑的迭代**，并记录前后对比 |
+| — | 撰写 Case Study |
+
+**W4 必须回答的三个问题：**
+1. 白话读完率是多少？没达标的话，是太长、太慢、还是没说清？
+2. 「翻错了」上报集中在哪类句式？prompt 该怎么改？
+3. **7 日回访率是多少？「长期阅读器」这个定位到底成不成立？**（这是全项目零验证的最大假设）
+
+---
+
+## ✅ Done
+
+_（完成的 issue 移到这里，保留验收清单）_
+
+---
+
+## 🚧 阻塞中
+
+| Issue | 阻塞原因 | 需要谁 |
+|---|---|---|
+| G-06 / G-08 | **白话语气未定**（中性客观 vs 更口语）——直接影响 prompt 写法 | Clara |
+| G-08 验收 | **20 句人工评测集未产出** | Clara（没有第二个人能做） |
+| G-16 | **示例文本与版权路径未定** | Clara |
+| G-13 视觉 | 书架页高保真视觉稿未产出 | Clara（跑 Stitch，不阻塞开发起步） |

@@ -94,11 +94,32 @@ gloss/
 **验收**
 - [ ] docx / txt / 粘贴三种入口可用，**解析全部在客户端完成**
 - [ ] 表格与公式块被剔除；脚注单独归类不参与切句
-- [ ] 异常 A1–A4、A7、A8 各有用户可见提示，**无静默失败**
+- [ ] 异常 A1–A3、A7、A8 各有用户可见提示，**无静默失败**（PDF 此阶段落入 A1）
 - [ ] A9 非中文文本：允许上传 + 横幅提示，**不阻断**
 
-**会改**：`lib/parse/{docx,txt}.ts`、`components/Upload.tsx`、`lib/storage.ts`
-**不改**：`components/reader/**`、`app/api/**`、`styles/**`
+**会改**：`lib/parse/{docx,txt,validate}.ts`、`components/{Upload,Notice}.tsx`、`components/{Upload,Notice}.module.css`、`app/page.tsx`（临时挂载点）、`package.json`、`package-lock.json`、`.gitignore`、`KANBAN.md`
+**不改**：`components/reader/**`、`app/api/**`、`styles/**`、`lib/parse/pdf.ts`、`lib/storage.ts`
+**回滚**：`git revert`
+
+---
+
+### G-02B · PDF 文字层解析
+**P0** ｜ 依赖 G-02 ｜ 分支 `feat/g02b-pdf`
+
+> 补漏：PRD F1 的支持格式含「文字层 PDF」（P0 / W1），原看板漏排此 issue。
+
+**可验证增量**：上传一份文字层 PDF，控制台打印出纯文本；上传一份扫描件 PDF，页面出现含「扫描件」三字的提示，且**不显示任何乱码**。
+
+**验收**
+- [ ] pdf.js 在客户端解析文字层，**worker 本地托管，不走 CDN**
+- [ ] A4 加密 PDF：提示需先解除密码
+- [ ] A5 扫描件 PDF：提示**明确含「扫描件」三字** + 原因 + v2 计划；**不可显示乱码**
+- [ ] 扫描件判定有明确阈值（文字层为空，或字符数/页数低于阈值），阈值写进注释
+- [ ] 解析全部在客户端完成，**原文不出浏览器**
+- [ ] 与 docx/txt 走同一套异常提示组件，不新造一套
+
+**会改**：`lib/parse/pdf.ts`、`lib/parse/validate.ts`、`components/Upload.tsx`、`components/Notice.tsx`
+**不改**：`lib/parse/{docx,txt}.ts`、`components/reader/**`、`app/api/**`、`styles/**`
 **回滚**：`git revert`
 
 ---
@@ -106,10 +127,15 @@ gloss/
 ### G-03 · 规则切句
 **P0** ｜ 依赖 G-02 ｜ 分支 `feat/g03-segment`
 
-**可验证增量**：同一份 docx 切出 **56 句**，平均 54.8 字，最长 160 字——与 PRD 1.2 的实测数据一致。这是本 issue 的硬验收。
+**可验证增量**：同一份 docx 切出 **62 句**，平均 49.0 字，最长 157 字。这是本 issue 的硬验收。
+
+> ⚠️ **基准已从 56 改为 62。** PRD 1.2 的 56 句是在「软回车不分段」前提下测出的；
+> G-02 定案软回车按分段处理（这份 docx 的 13 个自然段全靠软回车分隔），段落数
+> 4 → 15，句数随之变为 62。62 是独立复算值；实现若得出别的数字，**逐项说明差异
+> 来源，不得调算法去凑**。PRD 1.2 的数字待 Clara 决定是否同步修订。
 
 **验收**
-- [ ] 序言 docx 切出 56 句，统计值与 PRD 1.2 一致
+- [ ] 序言 docx 切出 62 句，平均 49.0 字，最长 157 字
 - [ ] B3 引号 / 书名号内部不切分
 - [ ] B4 分号视为句末；省略号、破折号不是
 - [ ] B5 空白段落归一化，不产生空句
@@ -135,6 +161,8 @@ gloss/
 - [ ] 右栏：设置面板骨架
 - [ ] **左栏最小宽度能容纳「复习态」等标签单行显示**
 - [ ] 阅读位置记忆：刷新后回到原位
+- [ ] 段落按 `paragraphs[]` 渲染，段首缩进正确（G-02 起共 15 段，非 4 段）
+- [ ] 清理：删除 `styles/reader.css` 中已失效的 `.col-main-empty`（G-02 遗留死样式）
 
 **会改**：`components/reader/{Reader,Sentence}.tsx`、`styles/reader.css`、`app/read/[docId]/page.tsx`
 **不改**：`lib/**`、`app/api/**`

@@ -66,26 +66,6 @@ gloss/
 
 ---
 
-### G-01 · 脚手架与 token 系统
-**P0** ｜ 依赖 无 ｜ 分支 `feat/g01-scaffold`
-
-**可验证增量**：`npm run dev` 起得来，页面渲染出三栏骨架（空内容），三套主题可在控制台手动切换并看到底色变化。
-
-**验收**
-- [ ] Next.js 项目可本地启动、可部署到 Vercel
-- [ ] `styles/tokens.css` 含三套完整主题（羊皮纸 / 月白 / 护眼绿），每套 6 个变量
-- [ ] `--paper-side` 比 `--paper-main` 明显更深，中栏最亮
-- [ ] Cinzel 在 wordmark 上实际渲染（控制台实测 `getComputedStyle(document.querySelector('.wordmark')).fontFamily` 含 Cinzel）
-- [ ] JetBrains Mono 已声明但 `preload: false`，Network 面板无其字体请求
-- [ ] 中文正文使用本机字体栈 `--font-serif-cjk`，无任何中文网络字体请求
-- [ ] **项目中不存在 `cdn.tailwindcss.com` 的引用**：`git grep -n "cdn\.tailwindcss\.com" -- ':!*.md'` 返回为空即通过（排除文档，只查代码与配置）
-
-**会改**：`package.json`、`package-lock.json`、`tsconfig.json`、`next.config.ts`、`.gitignore`、`app/layout.tsx`、`app/page.tsx`、`styles/tokens.css`、`styles/reader.css`、`README.md`、`KANBAN.md`、`PRD.md`、`AGENTS.md`、`CLAUDE.md`
-**不改**：无（初始 commit）
-**回滚**：删分支
-
----
-
 ### G-02 · 文档解析（docx / txt / 粘贴）
 **P0** ｜ 依赖 G-01 ｜ 分支 `feat/g02-parse`
 
@@ -107,6 +87,8 @@ gloss/
 **P0** ｜ 依赖 G-02 ｜ 分支 `feat/g02b-pdf`
 
 > 补漏：PRD F1 的支持格式含「文字层 PDF」（P0 / W1），原看板漏排此 issue。
+> **执行顺序：排在 G-07 之后。** PDF 导入不参与「上传→切句→点击→出白话」这条
+> 端到端链路，不该占用 W1 关键路径。W1 的死线是「有一个能发给别人的链接」。
 
 **可验证增量**：上传一份文字层 PDF，控制台打印出纯文本；上传一份扫描件 PDF，页面出现含「扫描件」三字的提示，且**不显示任何乱码**。
 
@@ -127,22 +109,41 @@ gloss/
 ### G-03 · 规则切句
 **P0** ｜ 依赖 G-02 ｜ 分支 `feat/g03-segment`
 
-**可验证增量**：同一份 docx 切出 **62 句**，平均 49.0 字，最长 157 字。这是本 issue 的硬验收。
+**可验证增量**：同一份 docx 切出 **61 句**，平均 49.8 字，最长 157 字，最短 2 字。这是本 issue 的硬验收。
 
-> ⚠️ **基准已从 56 改为 62。** PRD 1.2 的 56 句是在「软回车不分段」前提下测出的；
-> G-02 定案软回车按分段处理（这份 docx 的 13 个自然段全靠软回车分隔），段落数
-> 4 → 15，句数随之变为 62。62 是独立复算值；实现若得出别的数字，**逐项说明差异
-> 来源，不得调算法去凑**。PRD 1.2 的数字待 Clara 决定是否同步修订。
+> ⚠️ **基准两次修订：56 → 62 → 61。**
+> ① PRD 1.2 的 56 句是在「软回车不分段」前提下测出的；G-02 定案软回车按分段处理，
+> 段落 4 → 15，句数变为 62。
+> ② 62 的算法有缺陷：段 14 末尾的孤立后引号 `”` 被切成了单独一句（最短 1 字）。
+> 定案「句末标点后紧跟的闭合标点并入前一句」，句数落到 61。
+> 61 是双方独立复算一致的结果。实现若得出别的数字，**逐项说明差异来源，不得调算法去凑**。
+> PRD 1.2 的数字待 Clara 决定是否同步修订。
+
+**逐段句数分布**（定位差异用）：
+段 1–3 各 1 ｜ 段 4 = 6 ｜ 段 5 = 3 ｜ 段 6 = 6 ｜ 段 7 = 23 ｜ 段 8 = 7 ｜
+段 9 = 6 ｜ 段 10 = 2 ｜ 段 11–15 各 1
 
 **验收**
-- [ ] 序言 docx 切出 62 句，平均 49.0 字，最长 157 字
+- [ ] 序言 docx 切出 61 句，平均 49.8 字，最长 157 字，最短 2 字
 - [ ] B3 引号 / 书名号内部不切分
 - [ ] B4 分号视为句末；省略号、破折号不是
 - [ ] B5 空白段落归一化，不产生空句
-- [ ] B2 超长句（>250 字）在句中标点处切分
-- [ ] 有一组回归测试用例，含上述边界
+- [ ] B2 超长句（>250 字）在句中标点处切分，切完仍超长则继续切
+- [ ] **句末标点后紧跟的闭合标点（`”’』」》）］"'．`）并入前一句**，不产生孤立残片
+- [ ] **全角 `（）［］` 与引号、书名号同等保护**，内部不切（PRD B3 未写，属填空白）
+- [ ] 句末标点集合：`。！？；．` + 半角 `! ? ;`；**半角 `.` 不算**（`1.5`、`Mr.`）
+- [ ] 产出含**全文顺序号 `index`**，G-06 取上下文、G-09 做缓存 key 都依赖它
+- [ ] **B2 切分只在成对标点之外下刀**；整句都在一个长引号/括号内时不切，
+      但必须留下可观测痕迹（`console.warn` 或埋点），不得静默存在
+- [ ] **段末栈未清空（存在未配对的前引号）→ 该段放弃成对标点保护，重切一遍**。
+      防止一个错误引号让整段变成一个不可切分的巨句（直接推高 G-06 的调用成本）
+- [ ] **降级要可观测**：产出中带 `degradedParagraphs: number[]`，
+      并有断言覆盖「样本的段 11、段 13 降级，其余段不降级」。
+      否则降级逻辑在真实样本上被触发却零断言，将来一改就静默失效
+- [ ] 有一组回归测试用例，含上述边界 + B2 合成用例 + `《甲；乙》。` 应为 1 句
+      + 未配对前引号的段落能正常切分
 
-**会改**：`lib/segment.ts`、`lib/segment.test.ts`
+**会改**：`lib/segment.ts`、`lib/segment.test.ts`、`package.json`、`package-lock.json`、`KANBAN.md`
 **不改**：`lib/parse/**`、`components/**`
 **回滚**：`git revert`
 
@@ -221,8 +222,12 @@ gloss/
 - [ ] 首字延迟 P90 ≤2.5s（本地实测 10 次取样）
 - [ ] 生成中收起 / 离开页面 → 中止请求，不计费不缓存（D3/D4）
 - [ ] 断网时点击句子有明确提示，非无限加载
-- [ ] **部署到 Vercel，链接可访问**
+- [ ] **部署到 Vercel，链接可访问**（需关闭 Deployment Protection，否则对方要登录 Vercel）
 - [ ] **实测并记录单次调用成本**，用于校准 PRD 3.8 的额度阈值
+- [ ] ⚠️ **公开链接的滥用防护**：PRD 3.8 的每日额度存在 localStorage，清一下就绕过。
+      链接一旦公开，任何人都能烧你的 API 额度。**合并进 main 前必须有**：
+      服务端 IP 级速率限制 + 模型供应商后台的消费硬上限（Anthropic / OpenAI
+      控制台都能设）。两者缺一不可——速率限制防刷，消费上限兜底。
 
 **会改**：`components/reader/GlossPanel.tsx`、`lib/analytics.ts`（最小埋点）
 **不改**：`lib/parse/**`、`lib/segment.ts`
@@ -551,6 +556,26 @@ gloss/
 ## ✅ Done
 
 _（完成的 issue 移到这里，保留验收清单）_
+
+### G-01 · 脚手架与 token 系统
+**P0** ｜ 依赖 无 ｜ 分支 `feat/g01-scaffold`
+
+**可验证增量**：`npm run dev` 起得来，页面渲染出三栏骨架（空内容），三套主题可在控制台手动切换并看到底色变化。
+
+**验收**
+- [x] Next.js 项目可本地启动、可部署到 Vercel
+- [x] `styles/tokens.css` 含三套完整主题（羊皮纸 / 月白 / 护眼绿），每套 6 个变量
+- [x] `--paper-side` 比 `--paper-main` 明显更深，中栏最亮
+- [x] Cinzel 在 wordmark 上实际渲染（控制台实测 `getComputedStyle(document.querySelector('.wordmark')).fontFamily` 含 Cinzel）
+- [x] JetBrains Mono 已声明但 `preload: false`，Network 面板无其字体请求
+- [x] 中文正文使用本机字体栈 `--font-serif-cjk`，无任何中文网络字体请求
+- [x] **项目中不存在 `cdn.tailwindcss.com` 的引用**：`git grep -n "cdn\.tailwindcss\.com" -- ':!*.md'` 返回为空即通过（排除文档，只查代码与配置）
+
+**会改**：`package.json`、`package-lock.json`、`tsconfig.json`、`next.config.ts`、`.gitignore`、`app/layout.tsx`、`app/page.tsx`、`styles/tokens.css`、`styles/reader.css`、`README.md`、`KANBAN.md`、`PRD.md`、`AGENTS.md`、`CLAUDE.md`
+**不改**：无（初始 commit）
+**回滚**：删分支
+**完成**：2026-09-15 ｜ commit `488c7c1` ｜ Vercel main 构建通过
+
 
 ---
 

@@ -139,6 +139,17 @@ body {
 /*
  * 约 38 字/行：每字占 1em + 0.025em 字距，38 字 ≈ 38.95em，取 39em（16.5px 下约 643.5px）。
  * 底部留白让靠后的句子也能滚到视口顶端，阅读位置才能精确恢复。
+ *
+ * overflow-anchor: none —— 关掉浏览器自带的 scroll anchoring，视口锚定全部由 Reader 手动完成：
+ * 所有改变撑开状态的路径都经由同一个提交函数，先记下参照字（撑开时是被点击的那个字，其余情况是
+ * 视口顶端第一个可见的字）的视口位置，DOM 变化后、绘制前滚回原位。
+ * 为什么不交给浏览器：自带机制自己挑参照节点，挑中的不一定是用户正在读的那一行；两套同时生效
+ * 还会对同一次变化重复修正。只留一套，参照物由我们决定。
+ * 实测（Chrome，1440×900）：样本 61 句逐句点击，被点击行位移 0px；9 万字长文档抽样 40 句，0px。
+ * 撑开区在视口上方时按 Esc 收起、点别处收起、切换句子，可见内容最大位移 0.06px
+ * （补偿滚动取整为 52px，撑开区实际占 51.94px，属亚像素取整，视为 0）；长文档同样 0.06px。
+ * 滚动中触发的自动收起（滚轮快拨、滚轮慢滚、触控板惯性甩动，各测 2–3 次）：人工实测无二次弹跳、无顿住。
+ * 与 auto 模式的对照实验未做（不是验收项）。
  */
 .reader-body {
   max-width: 39em;
@@ -151,13 +162,34 @@ body {
   text-align: justify;
   text-justify: inter-ideograph; /* 旧引擎；IE 遗留值，不在现行规范里 */
   text-justify: inter-character; /* 现行规范值；不支持时保留上一行 */
+  overflow-anchor: none;
 }
 
-/* 所有非标题段统一段首缩进；原文的段首全角空格在渲染时已去掉 */
+/*
+ * 所有非标题段统一段首缩进；原文的段首全角空格在渲染时已去掉。
+ *
+ * 不要加 text-wrap: pretty（哪怕为了缓解句末孤字）。pretty 的机制是按「段落最后几行」重新平衡断行；
+ * G-05 撑开时会在行尾把段落拆成上下两半，「最后几行」的定义随之改变，与行尾拆分从原理上冲突，
+ * 可能让被点击句所在的行重排。D13（原句一动不动）是硬约束，孤字是观感优化，冲突时前者优先。
+ * 样本上没测出影响，但机制上的冲突比一次实测更可信。
+ */
 .reader-para {
   margin: 0;
   text-indent: 2em;
-  text-wrap: pretty;
+}
+
+/*
+ * 行尾拆分的上半段：它的最后一行在拆分前是段中间的满行（两端对齐）。
+ * 拆开后浏览器会把它当成「最后一行」按起始边对齐，字位置最多偏移 33px；
+ * text-align-last: justify 让它保持两端对齐，逐字实测偏移 0px（D13）。
+ */
+.reader-para-head {
+  text-align-last: justify;
+}
+
+/* 行尾拆分的下半段：从原来的下一行行首接着排，不再缩进 */
+.reader-para-cont {
+  text-indent: 0;
 }
 
 .reader-heading {
@@ -168,6 +200,34 @@ body {
   letter-spacing: 0.1em;
   text-align: center;
   text-indent: 0;
+}
+
+/*
+ * 句子：hover 轻微变色是「这句能点」的唯一视觉提示。
+ * D13：点击前后句子本身不改任何属性（无底色、边框、字重、位置变化），撑开状态由撑开区承担。
+ */
+.sentence {
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.sentence:hover {
+  color: var(--term);
+}
+
+/* 撑开区（PRD 3.10）：不加框、不加底色，仅一条左竖线；白话与正文同字号，仅颜色浅一档 */
+.gloss-panel {
+  margin: 0.3em 0 0.8em;
+  padding-left: 1em;
+  border-left: 2px solid var(--rule);
+  color: var(--gloss);
+  text-align: start;
+  text-indent: 0;
+  cursor: auto;
+}
+
+.gloss-panel-text {
+  margin: 0;
 }
 
 .reader-notes {

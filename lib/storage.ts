@@ -1,7 +1,7 @@
 import type { ParsedDocument, ParsedFootnote, ParsedHeading } from "./parse/validate";
 
 /**
- * 本地存储：文档与阅读位置（G-04）。白话存储不在这里（G-10）。
+ * 本地存储：文档与阅读位置（G-04）、全书结构摘要（G-07）。白话存储不在这里（G-10）。
  *
  * - docId = SHA-256(paragraphs.join("\n")) 的前 8 位 hex，是书架主键。
  *   只由内容决定，与文件名、格式、上传时间无关；同一份文档重复上传覆盖同一条目。
@@ -13,6 +13,7 @@ import type { ParsedDocument, ParsedFootnote, ParsedHeading } from "./parse/vali
 
 const DOC_PREFIX = "gloss:doc:";
 const POS_PREFIX = "gloss:pos:";
+const STRUCTURE_PREFIX = "gloss:structure:";
 const SCHEMA_VERSION = 1;
 
 export interface StoredDocument {
@@ -120,6 +121,44 @@ export function loadReadingPosition(docId: string): number | null {
     // 只接受非负整数的十进制写法；Number("") 是 0，不能直接转
     if (raw === null || !/^\d+$/.test(raw)) return null;
     return Number(raw);
+  } catch {
+    return null;
+  }
+}
+
+/* ---------------- 全书结构摘要 ---------------- */
+
+interface StoredStructure {
+  version: typeof SCHEMA_VERSION;
+  /** 生成这份摘要的提示词版本。提示词一改，旧摘要作废，下次开书重算 */
+  prompt: string;
+  structure: string;
+  savedAt: number;
+}
+
+/**
+ * 保存全书结构摘要。/api/structure 每调用一次就计费一次，所以每份文档只算一次，算好就存。
+ * 尽力而为：失败只留 console.warn——下次开书会重算，不影响阅读。
+ */
+export function saveStructure(docId: string, prompt: string, structure: string): void {
+  const record: StoredStructure = { version: SCHEMA_VERSION, prompt, structure, savedAt: Date.now() };
+  try {
+    getStorage().setItem(STRUCTURE_PREFIX + docId, JSON.stringify(record));
+  } catch (err) {
+    console.warn("[Gloss] 结构摘要保存失败，下次打开会重算", { docId, err });
+  }
+}
+
+/** 读取结构摘要。没有、数据损坏、提示词版本不符或存储不可用时返回 null */
+export function loadStructure(docId: string, prompt: string): string | null {
+  try {
+    const raw = getStorage().getItem(STRUCTURE_PREFIX + docId);
+    if (raw === null) return null;
+    const record = JSON.parse(raw) as Partial<StoredStructure> | null;
+    if (record?.version !== SCHEMA_VERSION || record.prompt !== prompt || typeof record.structure !== "string") {
+      return null;
+    }
+    return record.structure;
   } catch {
     return null;
   }

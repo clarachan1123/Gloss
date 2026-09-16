@@ -7,8 +7,10 @@ import {
   computeDocId,
   loadDocument,
   loadReadingPosition,
+  loadStructure,
   saveDocument,
   saveReadingPosition,
+  saveStructure,
 } from "./storage";
 
 const make = (paragraphs: string[], fileName: string | null = "a.docx", format: ParseFormat = "docx") =>
@@ -171,6 +173,53 @@ describe("阅读位置存句序号", () => {
       },
     });
     expect(() => saveReadingPosition("aaaa0000", 1)).not.toThrow();
+    expect(warn).toHaveBeenCalled();
+  });
+});
+
+/* ---------------- 全书结构摘要（G-07） ---------------- */
+
+describe("全书结构摘要按 docId 缓存，每份文档只算一次", () => {
+  it("存进去什么，读出来什么", () => {
+    saveStructure("aaaa0000", "structure-v1", "一本书的结构摘要。");
+    expect(loadStructure("aaaa0000", "structure-v1")).toBe("一本书的结构摘要。");
+  });
+
+  it("按 docId 区分，互不覆盖", () => {
+    saveStructure("aaaa0000", "structure-v1", "甲书。");
+    saveStructure("bbbb0000", "structure-v1", "乙书。");
+    expect(loadStructure("aaaa0000", "structure-v1")).toBe("甲书。");
+    expect(loadStructure("bbbb0000", "structure-v1")).toBe("乙书。");
+    expect(loadStructure("cccc0000", "structure-v1")).toBeNull();
+  });
+
+  it("提示词版本变了，旧摘要作废", () => {
+    saveStructure("aaaa0000", "structure-v1", "旧摘要。");
+    expect(loadStructure("aaaa0000", "structure-v2")).toBeNull();
+  });
+
+  it.each(["不是 JSON", "null", JSON.stringify({ version: 1, prompt: "structure-v1" }), JSON.stringify({ version: 99, prompt: "structure-v1", structure: "摘要。" })])(
+    "数据损坏或结构不对（%s）按没有处理",
+    (raw) => {
+      localStorage.setItem("gloss:structure:aaaa0000", raw);
+      expect(loadStructure("aaaa0000", "structure-v1")).toBeNull();
+    },
+  );
+
+  it("存储不可用时读不到也不抛错", () => {
+    vi.stubGlobal("localStorage", undefined);
+    expect(loadStructure("aaaa0000", "structure-v1")).toBeNull();
+  });
+
+  it("保存失败不抛错，只留警告", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("localStorage", {
+      getItem: () => null,
+      setItem: () => {
+        throw new DOMException("full", "QuotaExceededError");
+      },
+    });
+    expect(() => saveStructure("aaaa0000", "structure-v1", "摘要。")).not.toThrow();
     expect(warn).toHaveBeenCalled();
   });
 });

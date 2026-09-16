@@ -226,8 +226,61 @@ body {
   cursor: auto;
 }
 
+/*
+ * 生成过程中先按 3 行预留高度：撑开那一刻的可见性微调（G6）按这个高度算，之后白话逐字变长时页面不再滚动
+ * （G-07：流式生成时正在读的内容不动）。多数白话在 3 行以上，写完后释放预留高度，少数短白话会让下方内容上移一两行。
+ */
+.gloss-panel[data-state="busy"] {
+  min-height: calc(3 * 2.05em);
+}
+
 .gloss-panel-text {
   margin: 0;
+}
+
+.gloss-panel-pending {
+  margin: 0;
+  letter-spacing: 0.2em;
+  animation: gloss-pending 1.2s ease-in-out infinite;
+}
+
+@keyframes gloss-pending {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gloss-panel-pending {
+    animation: none;
+  }
+}
+
+/* 断流、失败的说明：比白话再淡一档，不抢正文 */
+.gloss-panel-note {
+  margin: 0.2em 0 0;
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+
+/* 重试是轻量的文字链接，不是主按钮（PRD 3.7：操作行不与正文争夺注意力） */
+.gloss-panel-retry {
+  margin-left: 0.6em;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--term);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.gloss-panel-retry:disabled {
+  color: inherit;
+  text-decoration: none;
+  cursor: default;
+  opacity: 0.6;
 }
 
 .reader-notes {

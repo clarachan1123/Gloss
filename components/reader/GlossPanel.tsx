@@ -1,14 +1,139 @@
-import type { Ref } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
+import type { GlossFailure } from "@/lib/gloss-client";
 
 /**
  * 撑开区。插在被点击句所在的「行尾」之后，占据布局空间、推动下文（D9）。
- * 本 issue 不接 AI，只放固定占位文本；白话流式填充在 G-07。
  * PRD 3.10：不加框、不加底色，仅一条左竖线；白话与正文同字号，仅颜色浅一档。
+ *
+ * 白话按 3–5 字一块逐步出现（PRD 3.7）。服务端已按这个粒度切块，但传输层会把几块并成一次到达，
+ * 视觉节奏只能在这里保证：收到的字先进队列，按固定节奏放出来。
  */
-export default function GlossPanel({ ref }: { ref?: Ref<HTMLDivElement> }) {
+
+export type GlossStatus = "loading" | "streaming" | "done" | "failed";
+
+export interface GlossView {
+  status: GlossStatus;
+  /** 目前收到的全部白话（失败时是断流前收到的部分） */
+  text: string;
+  failure: GlossFailure | null;
+  /** 本次会话里生成过的句子：整段直接出现，不再逐块放 */
+  instant: boolean;
+}
+
+export const LOADING_VIEW: GlossView = { status: "loading", text: "", failure: null, instant: false };
+
+/** 每块放出的字数（PRD 3.7：3–5 字一块）与间隔。约 90 字/秒，150 字上限约 1.7 秒放完 */
+const REVEAL_CHARS = 4;
+const REVEAL_INTERVAL_MS = 45;
+
+/** C3：限流后 5 秒才能重试 */
+const RATE_LIMIT_WAIT_MS = 5000;
+
+/** 措辞只说发生了什么，不说「出错了」这类把责任推给读者的话 */
+const NOTES: Record<GlossFailure, string> = {
+  timeout: "生成超时，这次没能写出来。",
+  unavailable: "暂时无法生成。",
+  rate_limited: "请求有点多，稍后再试。",
+  throttled: "点得太快了，过几分钟再试。",
+  refused: "这一句无法处理。",
+  offline: "网络已断开，连上网络后再试。",
+  interrupted: "网络中断，这段白话没有写完。",
+};
+
+const prefersReducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+export default function GlossPanel({
+  ref,
+  view,
+  onRetry,
+}: {
+  ref?: Ref<HTMLDivElement>;
+  view: GlossView;
+  onRetry: () => void;
+}) {
+  const chars = Array.from(view.text);
+  const [reducedMotion] = useState(prefersReducedMotion);
+  // 每次渲染都判断：重复点击时面板先以「加载中」出现，下一次渲染才拿到会话缓存
+  const immediate = view.instant || reducedMotion;
+  const [shown, setShown] = useState(0);
+  const visible = immediate ? chars.length : Math.min(shown, chars.length);
+  const revealing = visible < chars.length;
+
+  useEffect(() => {
+    if (!revealing) return;
+    const timer = window.setTimeout(() => setShown(visible + REVEAL_CHARS), REVEAL_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
+  }, [revealing, visible]);
+
+  // 断流时先把已收到的字放完，再显示提示
+  const failure = view.status === "failed" && !revealing ? view.failure : null;
+  const busy = !failure && (view.status === "loading" || view.status === "streaming" || revealing);
+
+  /*
+   * 撑开期间高度只增不减（决议：生成结束不是用户操作，由它引起的位移违反产品不变量）。
+   * 生成中按 CSS 预留 3 行；写完的白话不足 3 行、或换成一行失败提示时，内容会变矮——
+   * 每次渲染后、绘制前量一次高度，比历史最高矮就用 min-height 顶住，下方内容不动。
+   * 收起时撑开区整个移除，自然缩回；重试会换 key 重新挂载，从头计算（那是读者自己的操作）。
+   * 只量高度，不影响宽度方向的排版。
+   */
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const tallestRef = useRef(0);
+  const setPanelRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      panelRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+    },
+    [ref],
+  );
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const height = panel.getBoundingClientRect().height;
+    if (height >= tallestRef.current) {
+      tallestRef.current = height;
+    } else {
+      panel.style.minHeight = `${tallestRef.current}px`;
+    }
+  });
+
+  const [cooling, setCooling] = useState(false);
+  useEffect(() => {
+    if (failure !== "rate_limited") return;
+    setCooling(true);
+    const timer = window.setTimeout(() => setCooling(false), RATE_LIMIT_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [failure]);
+
   return (
-    <div ref={ref} className="gloss-panel" role="region" aria-label="白话">
-      <p className="gloss-panel-text">这里将显示这句话的大白话改写。（占位文本，接入 AI 后替换）</p>
+    <div
+      ref={setPanelRef}
+      className="gloss-panel"
+      role="region"
+      aria-label="白话"
+      aria-busy={busy}
+      data-state={busy ? "busy" : failure ? "failed" : "done"}
+    >
+      {visible > 0 && <p className="gloss-panel-text">{chars.slice(0, visible).join("")}</p>}
+      {busy && visible === 0 && (
+        <p className="gloss-panel-pending" aria-label="正在生成">
+          ……
+        </p>
+      )}
+      {failure && (
+        <p className="gloss-panel-note">
+          {NOTES[failure]}
+          {/*
+            不给重试：C6 拒答再试一次也一样；被 WAF 限流时窗口还没过，马上点也会再被拦。
+            限流过去之后，收起再点这一句就会重新请求（失败结果不进会话缓存）
+          */}
+          {failure !== "refused" && failure !== "throttled" && (
+            <button type="button" className="gloss-panel-retry" onClick={onRetry} disabled={cooling}>
+              重试
+            </button>
+          )}
+        </p>
+      )}
     </div>
   );
 }

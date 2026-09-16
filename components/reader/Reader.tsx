@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   Fragment,
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -14,16 +15,21 @@ import {
   type Ref,
 } from "react";
 import Notice from "@/components/Notice";
+import { MAX_AFTER, MAX_BEFORE } from "@/lib/context";
+import { fetchStructure, streamGloss } from "@/lib/gloss-client";
 import type { ParsedHeading } from "@/lib/parse/validate";
-import { segmentParagraphs } from "@/lib/segment";
+import { STRUCTURE_PROMPT_VERSION } from "@/lib/prompts/structure";
+import { segmentParagraphs, type Sentence as SentenceData } from "@/lib/segment";
 import {
   StorageError,
   loadDocument,
   loadReadingPosition,
+  loadStructure,
   saveReadingPosition,
+  saveStructure,
   type StoredDocument,
 } from "@/lib/storage";
-import GlossPanel from "./GlossPanel";
+import GlossPanel, { LOADING_VIEW, type GlossView } from "./GlossPanel";
 import Sentence from "./Sentence";
 
 /** PRD 3.5 M1 设置面板六项。本 issue 只做骨架，无控件 */
@@ -105,6 +111,15 @@ export default function Reader({ docId }: { docId: string }) {
   const animationRef = useRef<Animation | null>(null);
   const collapseTimerRef = useRef<number | undefined>(undefined);
   const lastToggleRef = useRef<{ index: number; time: number } | null>(null);
+
+  // 功能一（G-07）
+  const [gloss, setGloss] = useState<{ index: number; view: GlossView } | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  /** 本次会话里已生成的白话：同一句重复点击不再发请求（跨会话缓存是 G-09） */
+  const glossMemoRef = useRef(new Map<number, string>());
+  const glossAbortRef = useRef<AbortController | null>(null);
+  /** 全书结构摘要；开书时后台算，算好之前为 null */
+  const structureRef = useRef<string | null>(null);
 
   useEffect(() => {
     try {
@@ -256,6 +271,9 @@ export default function Reader({ docId }: { docId: string }) {
     const panel = panelRef.current;
     if (!expansion || !panel || collapseTimerRef.current !== undefined) return;
 
+    // D3：生成中收起立即中止请求，不等收起动画放完
+    glossAbortRef.current?.abort();
+
     const rect = panel.getBoundingClientRect();
     // 只在撑开区整体位于视口顶端之下时播动画；其余情况（如自动收起时它已在视口上方）直接移除，由锚定保证可见内容不动
     const canAnimate = animate && !prefersReducedMotion() && rect.top >= 0 && rect.top < window.innerHeight;
@@ -387,6 +405,65 @@ export default function Reader({ docId }: { docId: string }) {
     [],
   );
 
+  /* ---------------- 功能一：白话（G-07） ---------------- */
+
+  // 全书结构摘要：开书时后台算一次，按 docId 缓存。算好之前的点击不带摘要照常发，不让第一次点击等待
+  useEffect(() => {
+    structureRef.current = null;
+    if (!doc) return;
+    const cached = loadStructure(docId, STRUCTURE_PROMPT_VERSION);
+    if (cached) {
+      structureRef.current = cached;
+      return;
+    }
+    const controller = new AbortController();
+    const input = {
+      title: doc.meta.fileName?.replace(/\.[^.]+$/, "") || null,
+      headings: doc.headings.map((h) => h.text.trim()),
+      paragraphs: doc.paragraphs,
+    };
+    void fetchStructure(input, controller.signal).then((result) => {
+      if (!result || controller.signal.aborted) return;
+      structureRef.current = result.structure;
+      saveStructure(docId, result.prompt, result.structure);
+    });
+    return () => controller.abort();
+  }, [doc, docId]);
+
+  // 撑开一句就请求它的白话；收起、切换句子、离开页面时中止（D3 / D4）
+  const activeIndex = expansion?.index ?? null;
+  useEffect(() => {
+    if (activeIndex === null) return;
+    const remembered = glossMemoRef.current.get(activeIndex);
+    if (remembered !== undefined) {
+      setGloss({ index: activeIndex, view: { status: "done", text: remembered, failure: null, instant: true } });
+      return;
+    }
+
+    const controller = new AbortController();
+    glossAbortRef.current = controller;
+    setGloss({ index: activeIndex, view: LOADING_VIEW });
+    const show = (view: GlossView) => setGloss({ index: activeIndex, view });
+    void streamGloss(glossInput(sentences, activeIndex, structureRef.current), {
+      signal: controller.signal,
+      onText: (text) => show({ status: "streaming", text, failure: null, instant: false }),
+    }).then((result) => {
+      if (result.status === "aborted" || controller.signal.aborted) return;
+      if (result.status === "done") {
+        glossMemoRef.current.set(activeIndex, result.text);
+        show({ status: "done", text: result.text, failure: null, instant: false });
+      } else {
+        show({ status: "failed", text: result.text, failure: result.failure, instant: false });
+      }
+    });
+    return () => controller.abort();
+  }, [activeIndex, retryCount, sentences]);
+
+  const retryGloss = useCallback(() => setRetryCount((n) => n + 1), []);
+  const glossView = gloss && gloss.index === activeIndex ? gloss.view : LOADING_VIEW;
+  // 每次重试换一个 key，撑开区重新挂载，逐块放字的进度从头开始
+  const glossKey = `${activeIndex}:${retryCount}`;
+
   const minHeadingLevel = Math.min(...(doc?.headings ?? []).map((h) => h.level));
 
   return (
@@ -448,16 +525,23 @@ export default function Reader({ docId }: { docId: string }) {
 
         {doc && (
           <article ref={bodyRef} className="reader-body" lang="zh-CN" onClick={handleBodyClick}>
-            {doc.paragraphs.map((_, paraIndex) => (
-              <Paragraph
-                key={paraIndex}
-                paraIndex={paraIndex}
-                heading={headingByParagraph.get(paraIndex)}
-                pieces={piecesByParagraph[paraIndex] ?? NO_PIECES}
-                splitAt={expansion?.paraIndex === paraIndex ? expansion.splitAt : undefined}
-                panelRef={panelRef}
-              />
-            ))}
+            {doc.paragraphs.map((_, paraIndex) => {
+              const expanded = expansion?.paraIndex === paraIndex;
+              return (
+                <Paragraph
+                  key={paraIndex}
+                  paraIndex={paraIndex}
+                  heading={headingByParagraph.get(paraIndex)}
+                  pieces={piecesByParagraph[paraIndex] ?? NO_PIECES}
+                  splitAt={expanded ? expansion.splitAt : undefined}
+                  panelRef={panelRef}
+                  // 只交给撑开的那一段：白话逐字更新时，其余段落的 memo 不失效
+                  gloss={expanded ? glossView : undefined}
+                  glossKey={expanded ? glossKey : undefined}
+                  onRetry={expanded ? retryGloss : undefined}
+                />
+              );
+            })}
 
             {doc.footnotes.length > 0 && (
               <section className="reader-notes" aria-label="脚注">
@@ -497,13 +581,41 @@ interface ParagraphProps {
   /** undefined：本段未撑开；null：撑开区放在整段之后；数字：在该偏移处行尾拆分 */
   splitAt: number | null | undefined;
   panelRef: Ref<HTMLDivElement>;
+  /** 以下三项只有撑开的段落才有 */
+  gloss?: GlossView;
+  glossKey?: string;
+  onRetry?: () => void;
+}
+
+const noop = () => {};
+
+/** 功能一的上下文窗口：目标句 + 前后各至多 2 句（跨段照取）+ 全书结构摘要 */
+function glossInput(sentences: SentenceData[], index: number, structure: string | null) {
+  const text = (i: number) => sentences[i].text.trim();
+  const range = (from: number, to: number) =>
+    Array.from({ length: Math.max(0, to - from) }, (_, k) => text(from + k)).filter(Boolean);
+  return {
+    sentence: text(index),
+    before: range(Math.max(0, index - MAX_BEFORE), index),
+    after: range(index + 1, Math.min(sentences.length, index + 1 + MAX_AFTER)),
+    structure,
+  };
 }
 
 /**
  * 单个段落。用 memo 包住：撑开 / 收起时只有 splitAt 变化的一两段重新渲染。
  * 否则每次点击都会让全文上千个句子组件重新比对，在 5 万字的书上足以卡掉动画的第一帧。
  */
-const Paragraph = memo(function Paragraph({ paraIndex, heading, pieces, splitAt, panelRef }: ParagraphProps) {
+const Paragraph = memo(function Paragraph({
+  paraIndex,
+  heading,
+  pieces,
+  splitAt,
+  panelRef,
+  gloss,
+  glossKey,
+  onRetry,
+}: ParagraphProps) {
   const Tag: ElementType = heading ? HEADING_TAGS[Math.min(Math.max(heading.level, 1), 6) - 1] : "p";
   const className = heading ? "reader-heading" : "reader-para";
 
@@ -527,7 +639,7 @@ const Paragraph = memo(function Paragraph({ paraIndex, heading, pieces, splitAt,
       >
         {renderPieces(head)}
       </Tag>
-      <GlossPanel ref={panelRef} />
+      <GlossPanel key={glossKey} ref={panelRef} view={gloss ?? LOADING_VIEW} onRetry={onRetry ?? noop} />
       {tail.length > 0 && (
         <p data-para={paraIndex} className="reader-para reader-para-cont">
           {renderPieces(tail)}

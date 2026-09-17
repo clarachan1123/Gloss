@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import type { GlossFailure } from "@/lib/gloss-client";
+import { splitTerms } from "@/lib/output";
+import TermMark from "./TermMark";
 
 /**
  * 撑开区。插在被点击句所在的「行尾」之后，占据布局空间、推动下文（D9）。
@@ -114,7 +116,18 @@ export default function GlossPanel({
       aria-busy={busy}
       data-state={busy ? "busy" : failure ? "failed" : "done"}
     >
-      {visible > 0 && <p className="gloss-panel-text">{chars.slice(0, visible).join("")}</p>}
+      {visible > 0 && (
+        <p className="gloss-panel-text">
+          {/*
+            每次渲染都拿「已经放出来的那一段全文」重新解析：定界符可能被 3–5 字的分块切开，
+            按累计文本解析就不受分块边界影响。生成中未配对的左半边先按术语显示（右半边还没到），
+            写完了仍未配对就按普通文字显示。定界符本身不会出现在任何一段里。
+          */}
+          {splitTerms(chars.slice(0, visible).join(""), busy).map((seg, i) =>
+            seg.term ? <TermMark key={i}>{seg.text}</TermMark> : <span key={i}>{seg.text}</span>,
+          )}
+        </p>
+      )}
       {busy && visible === 0 && (
         <p className="gloss-panel-pending" aria-label="正在生成">
           ……

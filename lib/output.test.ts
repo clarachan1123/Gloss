@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { CHUNK_MAX_CHARS, CHUNK_MIN_CHARS, GlossOutput, MAX_GLOSS_CHARS, MarkdownStripper, stripMarkdown, truncateChars } from "./output";
+import {
+  CHUNK_MAX_CHARS,
+  CHUNK_MIN_CHARS,
+  GlossOutput,
+  MAX_GLOSS_CHARS,
+  MarkdownStripper,
+  splitTerms,
+  stripMarkdown,
+  truncateChars,
+} from "./output";
 import { countChars } from "./parse/validate";
-import { GLOSS_REFUSAL_MARKER } from "./prompts/gloss";
+import { GLOSS_REFUSAL_MARKER, TERM_CLOSE, TERM_OPEN } from "./prompts/gloss";
 
 /** 按给定切法把原始输出逐段喂进去，返回全部字块 */
 function run(pieces: string[]) {
@@ -123,5 +132,78 @@ describe("流式吐字：3–5 字一块，拼起来与原文一致", () => {
 
   it("白话开头的空白不发出去", () => {
     expect(run(["\n  ", "从头说起。"]).text).toBe("从头说起。");
+  });
+});
+
+/* ---------------- 术语标记（G-08） ---------------- */
+
+const T = (text: string) => `${TERM_OPEN}${text}${TERM_CLOSE}`;
+const joined = (segs: { text: string }[]) => segs.map((s) => s.text).join("");
+
+describe("术语标记：定界符永不出现在读者眼前", () => {
+  it("成对的标记切成普通文字 + 术语两种片段", () => {
+    expect(splitTerms(`他说的${T("市民社会")}指的是这个。`)).toEqual([
+      { text: "他说的", term: false },
+      { text: "市民社会", term: true },
+      { text: "指的是这个。", term: false },
+    ]);
+  });
+
+  it("一句里的多个术语各自成段", () => {
+    const segs = splitTerms(`${T("实体")}和${T("样式")}不同。`);
+    expect(segs.filter((s) => s.term).map((s) => s.text)).toEqual(["实体", "样式"]);
+    expect(joined(segs)).toBe("实体和样式不同。");
+  });
+
+  it("只有左半边：生成中按术语显示，写完了按普通文字显示，两种都不露符号", () => {
+    const streaming = splitTerms(`他说的${TERM_OPEN}市民社`, true);
+    expect(streaming).toEqual([
+      { text: "他说的", term: false },
+      { text: "市民社", term: true },
+    ]);
+    const finished = splitTerms(`他说的${TERM_OPEN}市民社会指的是这个。`, false);
+    expect(finished).toEqual([{ text: "他说的市民社会指的是这个。", term: false }]);
+    for (const segs of [streaming, finished]) expect(joined(segs)).not.toContain(TERM_OPEN);
+  });
+
+  it("只有右半边：丢掉符号，文字照常显示", () => {
+    expect(splitTerms(`他说的市民社会${TERM_CLOSE}指的是这个。`)).toEqual([
+      { text: "他说的市民社会指的是这个。", term: false },
+    ]);
+  });
+
+  it("嵌套的左半边不重复开启", () => {
+    expect(splitTerms(`${TERM_OPEN}绝对${TERM_OPEN}精神${TERM_CLOSE}`)).toEqual([
+      { text: "绝对精神", term: true },
+    ]);
+  });
+
+  it("空标记不产生空片段", () => {
+    expect(splitTerms(`前${TERM_OPEN}${TERM_CLOSE}后`)).toEqual([{ text: "前后", term: false }]);
+  });
+
+  it("跨数据块被截断：按累计文本解析，与一次到达的结果相同，中途也不露符号", () => {
+    const whole = `他说的${T("市民社会")}指的是这个。`;
+    const pieces = [`他说的${TERM_OPEN}市`, "民社", `会${TERM_CLOSE}指的`, "是这个。"];
+    let acc = "";
+    for (const piece of pieces) {
+      acc += piece;
+      expect(joined(splitTerms(acc, true))).not.toContain(TERM_OPEN);
+      expect(joined(splitTerms(acc, true))).not.toContain(TERM_CLOSE);
+    }
+    expect(splitTerms(acc)).toEqual(splitTerms(whole));
+  });
+
+  it("输出管线原样透传标记，由前端解析", () => {
+    const { text } = run([`他说的${TERM_OPEN}市`, `民社会${TERM_CLOSE}指的是这个。`]);
+    expect(splitTerms(text).filter((s) => s.term).map((s) => s.text)).toEqual(["市民社会"]);
+  });
+
+  it("定界符不计入 150 字上限", () => {
+    const marked = Array.from({ length: 5 }, () => T("术语")).join("") + "字".repeat(140);
+    const { text } = run([marked]);
+    const plain = text.replaceAll(TERM_OPEN, "").replaceAll(TERM_CLOSE, "");
+    expect(countChars(plain)).toBe(MAX_GLOSS_CHARS);
+    expect(text).toContain(TERM_OPEN);
   });
 });

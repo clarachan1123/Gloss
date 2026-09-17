@@ -1,4 +1,4 @@
-import { GLOSS_REFUSAL_MARKER } from "./prompts/gloss";
+import { GLOSS_REFUSAL_MARKER, TERM_CLOSE, TERM_OPEN } from "./prompts/gloss";
 
 /**
  * 模型原始输出 → 发给前端的字块。四道工序依次串联，全部流式处理，不等整段生成完：
@@ -107,13 +107,17 @@ class CharLimiter {
   count = 0;
   truncated = false;
 
-  constructor(private readonly max: number) {}
+  /** uncounted：不计入上限、但照常放行的字符（术语标记的 ⟦⟧，PRD 3.7 的 150 字是给读者看的字数） */
+  constructor(
+    private readonly max: number,
+    private readonly uncounted = "",
+  ) {}
 
   push(text: string): string {
     if (this.truncated) return "";
     let out = "";
     for (const ch of text) {
-      const counted = !/\s/u.test(ch);
+      const counted = !/\s/u.test(ch) && !this.uncounted.includes(ch);
       if (counted && this.count >= this.max) {
         this.truncated = true;
         break;
@@ -148,7 +152,7 @@ class Chunker {
 export class GlossOutput {
   private readonly stripper = new MarkdownStripper();
   private readonly gate = new RefusalGate();
-  private readonly limiter = new CharLimiter(MAX_GLOSS_CHARS);
+  private readonly limiter = new CharLimiter(MAX_GLOSS_CHARS, TERM_OPEN + TERM_CLOSE);
   private readonly chunker = new Chunker();
 
   get refused(): boolean {
@@ -173,6 +177,58 @@ export class GlossOutput {
     const tail = this.gate.push(this.stripper.end()) + this.gate.end();
     return [...this.chunker.push(this.limiter.push(tail)), ...this.chunker.end()];
   }
+}
+
+/* ---------------- 术语标记（G-08） ---------------- */
+
+export interface GlossSegment {
+  text: string;
+  /** true：承重概念，渲染成灰蓝色标记且整词不折行 */
+  term: boolean;
+}
+
+/**
+ * 把带 ⟦⟧ 标记的白话切成「普通文字 / 术语」两种片段。**定界符本身永不出现在结果里**，
+ * 所以配对失败时读者看到的仍是通顺的纯文本（PRD 3.7：不做「为什么不翻」的说明，更不能露出内部符号）。
+ *
+ * - 只有左半边：`unterminatedIsTerm` 为 true 时后面的字先按术语显示（流式中途，右半边还没到），
+ *   为 false 时按普通文字显示（已经写完了还没配上，判定为模型写坏了）。
+ * - 只有右半边：丢掉这个符号，文字照常显示。
+ * - 嵌套的左半边：忽略，不重复开启。
+ * - 跨数据块被截断：调用方每次都用「到目前为止收到的全文」重新解析，chunk 边界不影响结果。
+ */
+export function splitTerms(text: string, unterminatedIsTerm = false): GlossSegment[] {
+  const segments: GlossSegment[] = [];
+  let buffer = "";
+  let inTerm = false;
+  // 相邻的同类片段合并：空标记、未配对的符号被丢掉之后，两边的文字应当连成一段
+  const flush = (term: boolean) => {
+    if (buffer !== "") {
+      const last = segments.at(-1);
+      if (last && last.term === term) last.text += buffer;
+      else segments.push({ text: buffer, term });
+    }
+    buffer = "";
+  };
+  for (const ch of text) {
+    if (ch === TERM_OPEN) {
+      if (!inTerm) {
+        flush(false);
+        inTerm = true;
+      }
+      continue;
+    }
+    if (ch === TERM_CLOSE) {
+      if (inTerm) {
+        flush(true);
+        inTerm = false;
+      }
+      continue;
+    }
+    buffer += ch;
+  }
+  flush(inTerm && unterminatedIsTerm);
+  return segments;
 }
 
 /** 非流式场景（结构摘要）用的整段清洗 */

@@ -259,6 +259,15 @@ body {
   margin: 0;
 }
 
+/*
+ * 承重概念（G-08，PRD 3.6 F5）：只染色，不加底色、不加下划线。
+ * white-space: nowrap —— 术语整词不折行，行末放不下就整词移到下一行（PRD 3.7、G11）。
+ */
+.gloss-term {
+  color: var(--term);
+  white-space: nowrap;
+}
+
 .gloss-panel-pending {
   margin: 0;
   letter-spacing: 0.2em;

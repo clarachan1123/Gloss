@@ -137,8 +137,22 @@ gloss/
       （G-06 评测时发现：docx 提取留下「性 状」「倾 向」这类词中空格，模型收到的是断开的词，任何一本书都会受影响）
 - [x] `Claude outputs/` 加进 `.gitignore`。它目前既没被跟踪、也没被忽略，一旦有人用 `git add -A` 就会被提交进去
       （G-07 收尾时发现，记在这里，不在 G-07 做）（Claude Code 自测）：`git check-ignore -v` 命中 `.gitignore:17`
-- [ ] 线上：Vercel 构建日志里有 `> gloss@0.1.0 prebuild`；浏览器能直接打开 https://gloss-jet.vercel.app/pdfjs/6.3.289/cmaps/GBK-EUC-H.bcmap（约 15 KB）
-- [ ] 线上：上传文字层 PDF 能进入阅读器（Clara 验）
+- [x] 线上构建：Vercel 构建日志里有 `> gloss@0.1.0 prebuild`，复制了 169 个 cMap 文件
+      （Clara 亲验（Preview 部署））
+- [x] 线上 cMap：Network 里 `GBK-EUC-H.bcmap`（12.5 kB）与 `Adobe-GB1-UCS2.bcmap`（30.0 kB）均为 200 且来自本站；
+      无 cdn / jsdelivr / unpkg（Clara 亲验（Preview 部署））
+- [x] 线上文字层 PDF：`pdf-real.pdf` 页面闪现「8091 字 · 69 段 · 14 页」后进入阅读器，数字与自测一致
+      （Clara 亲验（Preview 部署））
+- [x] 线上控制台：没有原文（Clara 亲验（Preview 部署））
+- [x] 线上三种提示：扫描件、加密、混合型均正确，混合型显示「234 字 · 1 段 · 2 页」
+      （Clara 亲验（Preview 部署））
+- [x] 线上 docx 回归：3037 字 · 15 段（Clara 亲验（Preview 部署））
+- [ ] 生产环境同样通过（合并进 main 后 Clara 验）
+
+> Preview 上另见两条与本卡无关的请求，已确认不是本项目代码：
+> ① `vercel.com` 的 feedback / validate 是 Vercel 给 Preview 部署注入的评论工具条
+>   （仓库里没有任何相关代码；未登录取到的 Preview HTML 里也没有这些脚本）；
+> ② `favicon.ico` 404 —— 项目还没有网站图标，Preview 与生产都是 404，与本卡无关，见 G-26。
 
 **会改**：`lib/parse/pdf.ts`、`lib/parse/validate.ts`、`components/Upload.tsx`、`components/Notice.tsx`（实际未改）、`.gitignore`；
 经批准追加：`lib/storage.ts`（日志只记错误类型）、`lib/parse/pdf.test.ts`、`lib/parse/validate.test.ts`、
@@ -187,6 +201,36 @@ gloss/
 - [ ] 不影响无表格文档：序言以外的样本不出提示
 
 **会改**：待开工时复述（预计 `lib/parse/docx.ts`、`lib/parse/validate.ts`、`components/Upload.tsx`）
+**回滚**：`git revert`
+
+---
+
+### G-25 · 阅读界面左栏：解析统计常驻 + 无标题时的呈现
+**P1** ｜ 依赖 G-04 ｜ 分支 `feat/g25-side-info`
+
+> 来源：Clara 在 Preview 上的实际使用反馈（2026-09-18）。
+
+**验收**
+- [ ] 「N 字 · N 段 · N 页」常驻阅读界面左栏：现在只在跳转前闪现一瞬间，核对不了。
+      **不要加确认步骤挡在进入阅读之间**——解析完自动进入阅读器是对的
+- [ ] PDF 路径识别不出标题时，左栏固定显示「没有识别到标题」观感不好
+      （`components/reader/Reader.tsx:500`），换一种更合适的呈现
+
+**会改**：待开工时复述（预计 `components/reader/**`、`styles/**`）
+**回滚**：`git revert`
+
+---
+
+### G-26 · UI 精修清单
+**P2** ｜ 无依赖 ｜ 分支 `chore/g26-ui-polish`
+
+> 逐条累积，攒够一批一起做。
+
+**验收**
+- [ ] 上传失败的提示颜色不够醒目（来源：Clara 在 Preview 上的实际使用反馈，2026-09-18）
+- [ ] 补网站图标：`favicon.ico` 目前 404（G-02B 线上验收时发现）
+
+**会改**：待开工时复述
 **回滚**：`git revert`
 
 ---
@@ -309,6 +353,8 @@ gloss/
 - [ ] 书脊颜色默认随机，**右键可自定义**
 - [ ] **不显示阅读进度**
 - [ ] 空态：**导入入口居中**（不是排在书架末位）+ 示例书（明确标记为示例）
+- [ ] **「添加新书」入口放在书架上**：现在传完一本书之后要再传一本，只能手动退回首页。
+      不在阅读界面单加按钮（来源：Clara 在 Preview 上的实际使用反馈，2026-09-18）
 - [ ] 点击最近文档跳转至上次阅读位置
 - [ ] **所有功能性文案为白话中文**；装饰性英文仅作视觉纹理，不作为任何可点击元素的唯一标签
 - [ ] **页面上不存在 MVP 之外的入口**（无「索引」「校勘」「导出」等）

@@ -6,7 +6,7 @@
  * 本文件不做任何网络请求——解析全部在浏览器内完成，原文不出浏览器。
  */
 
-export type ParseFormat = "docx" | "txt" | "paste";
+export type ParseFormat = "docx" | "txt" | "paste" | "pdf";
 
 export interface ParsedHeading {
   /** 在 paragraphs 中的下标 */
@@ -33,6 +33,8 @@ export interface ParsedDocument {
     format: ParseFormat;
     fileName: string | null;
     charCount: number;
+    /** 仅 PDF：原文件总页数（含被跳过的扫描页） */
+    pageCount?: number;
   };
 }
 
@@ -45,9 +47,12 @@ export const MAX_CHARS = 50_000;
 /** A9：汉字占非空白字符的比例低于此值时提示「针对中文优化」（不阻断） */
 export const CJK_RATIO_THRESHOLD = 0.3;
 
-const SUPPORTED_FILE_FORMATS: Record<string, "docx" | "txt"> = {
+export type FileFormat = "docx" | "txt" | "pdf";
+
+const SUPPORTED_FILE_FORMATS: Record<string, FileFormat> = {
   ".docx": "docx",
   ".txt": "txt",
+  ".pdf": "pdf",
 };
 
 /**
@@ -73,30 +78,47 @@ export function cjkRatio(text: string): number {
   return (text.match(HAN)?.length ?? 0) / total;
 }
 
-/** 由各格式解析器调用，统一生成 text 与 charCount */
+/**
+ * 空白归一化：删掉「汉字与汉字之间」的半角空格 / 制表符。
+ * docx 提取常留下「性 状」「倾 向」这类词中空格，模型收到的是断开的词（G-06 评测发现）。
+ *
+ * - 只动两侧都是汉字的位置：中英文之间、数字之间、汉字与标点之间的空格不动。
+ * - 全角空格 U+3000 不动（段首缩进、诗文间隔常用它），不间断空格 U+00A0 不动。
+ * - 不影响字数：countChars 本来就不计空白。会改变 docId（按段落内容计算）。
+ */
+const HAN_GAP = new RegExp("(?<=\\p{Script=Han})[ \\t]+(?=\\p{Script=Han})", "gu");
+
+export function normalizeWhitespace(paragraph: string): string {
+  return paragraph.replace(HAN_GAP, "");
+}
+
+/** 由各格式解析器调用，统一做空白归一化并生成 text 与 charCount */
 export function assembleDocument(
   parts: Pick<ParsedDocument, "paragraphs" | "headings" | "footnotes">,
   format: ParseFormat,
   fileName: string | null,
+  pageCount?: number,
 ): ParsedDocument {
-  const text = parts.paragraphs.join("\n");
-  return {
-    text,
-    paragraphs: parts.paragraphs,
-    headings: parts.headings,
-    footnotes: parts.footnotes,
-    meta: { format, fileName, charCount: countChars(text) },
-  };
+  const paragraphs = parts.paragraphs.map(normalizeWhitespace);
+  const headings = parts.headings.map((h) => ({ ...h, text: normalizeWhitespace(h.text) }));
+  const text = paragraphs.join("\n");
+  const meta: ParsedDocument["meta"] = { format, fileName, charCount: countChars(text) };
+  if (pageCount !== undefined) meta.pageCount = pageCount;
+  return { text, paragraphs, headings, footnotes: parts.footnotes, meta };
 }
 
 /* ---------------- 异常码与提示文案（PRD 3.9 A 类） ---------------- */
 
 /**
- * LOAD 不在 PRD 3.9：解析组件（按需加载的 mammoth）没能下载下来，通常是断网。
- * 与 A3「文件损坏」分开，避免让用户朝错误方向排查。完整的断网处理见 D1，不在 G-02 范围。
+ * LOAD 不在 PRD 3.9：解析组件（按需加载的 mammoth / pdf.js，或 PDF 需要的 cMap 字符映射表）
+ * 没能下载下来，通常是断网。与 A3「文件损坏」分开，避免让用户朝错误方向排查。
+ * 完整的断网处理见 D1，不在 G-02 范围。
+ *
+ * GARBLED 不在 PRD 3.9：PDF 有文字层，但提取出来的字符大量无法识别（阈值见 lib/parse/pdf.ts）。
+ * 与 A5「扫描件」分开：不是没有文字，而是文字读不出来，换一个版本的 PDF 可能就好了。
  */
-export type BlockingCode = "A1" | "A2" | "A3" | "A7" | "A8" | "LOAD";
-export type WarningCode = "A9";
+export type BlockingCode = "A1" | "A2" | "A3" | "A4" | "A5" | "A7" | "A8" | "GARBLED" | "LOAD";
+export type WarningCode = "A6" | "A9";
 export type NoticeCode = BlockingCode | WarningCode;
 
 export class ParseError extends Error {
@@ -120,13 +142,34 @@ export interface NoticeContent {
   offerPaste: boolean;
 }
 
-export function noticeContent(code: NoticeCode, charCount?: number): NoticeContent {
+/** [1,2,3,5,7,8] → 「1–3、5、7–8」 */
+export function formatPageRanges(pages: number[]): string {
+  const sorted = [...new Set(pages)].sort((a, b) => a - b);
+  const ranges: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+    ranges.push(i === j ? `${sorted[i]}` : `${sorted[i]}–${sorted[j]}`);
+    i = j + 1;
+  }
+  return ranges.join("、");
+}
+
+export interface NoticeDetail {
+  /** A8 */
+  charCount?: number;
+  /** A6：被跳过的扫描页页码，从 1 起 */
+  skippedPages?: number[];
+}
+
+export function noticeContent(code: NoticeCode, detail: NoticeDetail = {}): NoticeContent {
+  const { charCount, skippedPages = [] } = detail;
   switch (code) {
     case "A1":
       return {
         code,
         tone: "block",
-        message: "暂不支持这种文件格式。目前支持 .docx 和 .txt，也可以直接粘贴文本。",
+        message: "暂不支持这种文件格式。目前支持 .docx、.txt 和带文字层的 .pdf，也可以直接粘贴文本。",
         offerPaste: true,
       };
     case "A2":
@@ -141,6 +184,37 @@ export function noticeContent(code: NoticeCode, charCount?: number): NoticeConte
         code,
         tone: "block",
         message: "无法读取这个文件，它可能已损坏。可以复制正文，改用粘贴文本。",
+        offerPaste: true,
+      };
+    case "A4":
+      return {
+        code,
+        tone: "block",
+        message: "这份 PDF 设置了打开密码，Gloss 读不了。请先在 PDF 阅读器里解除密码，另存一份再上传。",
+        offerPaste: false,
+      };
+    case "A5":
+      return {
+        code,
+        tone: "block",
+        message:
+          "这份 PDF 看起来是扫描件：页面是图片，没有可以读取的文字，Gloss 目前处理不了。" +
+          "扫描件的文字识别计划在 v2 支持。现在可以找这本书的文字版，或者复制正文改用粘贴文本。",
+        offerPaste: true,
+      };
+    case "A6":
+      return {
+        code,
+        tone: "banner",
+        message: `第 ${formatPageRanges(skippedPages)} 页为扫描页，已跳过。其余页面已正常读取。`,
+        offerPaste: false,
+      };
+    case "GARBLED":
+      return {
+        code,
+        tone: "block",
+        message:
+          "这份 PDF 的文字读不出来：提取出来的大多是无法识别的字符。换一个版本的 PDF 试试，或者复制正文改用粘贴文本。",
         offerPaste: true,
       };
     case "A7":
@@ -172,7 +246,7 @@ export function noticeContent(code: NoticeCode, charCount?: number): NoticeConte
 /* ---------------- 校验 ---------------- */
 
 /** 读文件前的校验：A1 格式 → A2 大小 → A7 空文件。返回解析器类型。 */
-export function checkFile(file: File): "docx" | "txt" {
+export function checkFile(file: File): FileFormat {
   const dot = file.name.lastIndexOf(".");
   const ext = dot === -1 ? "" : file.name.slice(dot).toLowerCase();
   const format = SUPPORTED_FILE_FORMATS[ext];

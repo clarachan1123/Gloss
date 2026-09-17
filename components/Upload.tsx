@@ -5,6 +5,7 @@ import { useRef, useState, type ChangeEvent } from "react";
 import Notice from "./Notice";
 import styles from "./Upload.module.css";
 import { parseDocx } from "@/lib/parse/docx";
+import { parsePdf } from "@/lib/parse/pdf";
 import { parseTxt, plainTextToDocument } from "@/lib/parse/txt";
 import {
   ParseError,
@@ -14,6 +15,7 @@ import {
   type BlockingCode,
   type NoticeContent,
   type ParsedDocument,
+  type WarningCode,
 } from "@/lib/parse/validate";
 import { StorageError, saveDocument, type StorageErrorCode } from "@/lib/storage";
 
@@ -29,6 +31,11 @@ const STORAGE_MESSAGES: Record<StorageErrorCode, string> = {
   E1: "本地存储空间已满，暂时无法打开阅读器。",
   E2: "当前浏览器禁止本地存储，暂时无法打开阅读器。",
 };
+
+interface PdfExtra {
+  warnings: WarningCode[];
+  skippedPages: number[];
+}
 
 const fromParseNotice = (n: NoticeContent): UploadNotice => ({
   key: n.code,
@@ -56,13 +63,14 @@ export default function Upload() {
     setReadyDocId(null);
   }
 
-  async function accept(doc: ParsedDocument) {
-    const warnings = checkParsed(doc);
-    console.log("[Gloss] 解析结果", doc);
-    console.log(doc.text);
+  /** extra：PDF 解析器给出的警告（A6）与被跳过的页码 */
+  async function accept(doc: ParsedDocument, extra: PdfExtra = { warnings: [], skippedPages: [] }) {
+    const warnings = [...extra.warnings, ...checkParsed(doc)];
+    // 只显示统计数字，不在控制台输出正文
     setSummary(
       `已解析${doc.meta.fileName ? `「${doc.meta.fileName}」` : "粘贴文本"}：` +
-        `${doc.meta.charCount} 字 · ${doc.paragraphs.length} 段`,
+        `${doc.meta.charCount} 字 · ${doc.paragraphs.length} 段` +
+        (doc.meta.pageCount === undefined ? "" : ` · ${doc.meta.pageCount} 页`),
     );
 
     let docId: string;
@@ -78,15 +86,18 @@ export default function Upload() {
       router.push(`/read/${docId}`);
       return;
     }
-    setNotices(warnings.map((code) => fromParseNotice(noticeContent(code))));
+    setNotices(
+      warnings.map((code) => fromParseNotice(noticeContent(code, { skippedPages: extra.skippedPages }))),
+    );
     setReadyDocId(docId);
   }
 
   function fail(err: unknown, fallback: BlockingCode) {
     if (err instanceof ParseError) {
-      setNotices([fromParseNotice(noticeContent(err.code, err.charCount))]);
+      setNotices([fromParseNotice(noticeContent(err.code, { charCount: err.charCount }))]);
     } else {
-      console.error("[Gloss] 解析异常", err);
+      // 只记错误类型：异常消息和异常对象可能带出文档内容
+      console.error("[Gloss] 解析异常", err instanceof Error ? err.name : typeof err);
       setNotices([fromParseNotice(noticeContent(fallback))]);
     }
     setSummary(null);
@@ -101,7 +112,12 @@ export default function Upload() {
     reset();
     try {
       const format = checkFile(file);
-      await accept(format === "docx" ? await parseDocx(file) : await parseTxt(file));
+      if (format === "pdf") {
+        const { doc, warnings, skippedPages } = await parsePdf(file);
+        await accept(doc, { warnings, skippedPages });
+      } else {
+        await accept(format === "docx" ? await parseDocx(file) : await parseTxt(file));
+      }
     } catch (err) {
       fail(err, "A3");
     } finally {
@@ -129,7 +145,7 @@ export default function Upload() {
   return (
     <section className={styles.upload} aria-busy={busy}>
       <label className={styles.fileLabel}>
-        <span>{busy ? "正在解析…" : "选择文件（.docx / .txt）"}</span>
+        <span>{busy ? "正在解析…" : "选择文件（.docx / .txt / .pdf）"}</span>
         <input type="file" className={styles.fileInput} onChange={handleFile} disabled={busy} />
       </label>
 

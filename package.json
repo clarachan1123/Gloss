@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/copy-pdfjs-assets.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/copy-pdfjs-assets.mjs",
     "build": "next build",
     "start": "next start",
     "test": "vitest run"
@@ -11,6 +13,7 @@
   "dependencies": {
     "mammoth": "1.12.3",
     "next": "16.3.5",
+    "pdfjs-dist": "6.3.289",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

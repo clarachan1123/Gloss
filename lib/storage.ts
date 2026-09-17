@@ -100,7 +100,11 @@ export function loadDocument(docId: string): StoredDocument | null {
     }
     return record;
   } catch (err) {
-    console.warn("[Gloss] 本地文档数据无法读取，按不存在处理", { docId, err });
+    // 只记错误类型：JSON 解析错误的消息会带出一段原始数据（即文档内容）
+    console.warn("[Gloss] 本地文档数据无法读取，按不存在处理", {
+      docId,
+      errName: err instanceof Error ? err.name : typeof err,
+    });
     return null;
   }
 }

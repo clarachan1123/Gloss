@@ -10,6 +10,12 @@ next-env.d.ts
 # test fixtures (copyrighted samples, see G-16)
 test-fixtures/
 
+# pdf.js cMap copied at predev / prebuild (scripts/copy-pdfjs-assets.mjs)
+public/pdfjs/
+
+# Claude session outputs (never commit)
+Claude outputs/
+
 # vercel
 .vercel
 

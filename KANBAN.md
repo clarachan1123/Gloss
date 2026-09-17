@@ -117,51 +117,6 @@ gloss/
 
 ---
 
-### G-25 · 阅读界面左栏：解析统计常驻 + 无标题时的呈现
-**P1** ｜ 依赖 G-04 ｜ 分支 `feat/g25-side-info`
-
-> 来源：Clara 在 Preview 上的实际使用反馈（2026-09-18）。
-
-**验收**
-- [x] 「N 字 · N 段 · N 页」常驻阅读界面左栏（Claude Code 自测）：左栏新增「这份文档」块，
-      第一行文件名、第二行「字数 · 段数 ·（PDF 才有的）页数 · 句数」、第三行跳过信息。
-      数字全部来自已存的记录（`meta` + 重算的句数），**刷新后仍在**；解析完照旧自动进入阅读器，没有加确认步骤
-- [x] 把「跳过了什么」带进阅读页（Claude Code 自测）：跳过信息作为**可选字段** `meta.skipped` 随文档存进 localStorage，
-      **不升 SCHEMA_VERSION**；docx 记表格处数 / 字数 / 有无公式，PDF 记扫描页页码。
-      实测：`docx-table-formula.docx`「已跳过：表格 1 处（102 字）、公式」；`pdf-mixed.pdf`「已跳过：第 2 页（扫描页）」
-- [x] 老记录照常打开（硬要求）（Claude Code 自测）：手工写入一条没有 `meta.skipped` 的旧记录，正常打开、正文正常、
-      不显示跳过行、不报「找不到这份文档」；`storage.test.ts` 有对应用例
-- [x] 无标题的文档：目录块留在原位，文案改为「这份文档没有标题层级」（Claude Code 自测）：
-      Clara 定的口径——目录时有时无会让读者困惑，块保持在原位，状态自己说明自己。
-      带标题的 docx 仍正常显示目录（序言样本显示「序言」）
-- [x] 不做任何随滚动变化的内容（Claude Code 自测）：左栏全部静态，不新增 state / effect
-- [x] 性能不回归（Claude Code 自测）：见下方复测数字
-- [ ] Clara 亲验（按 6 条：常驻、换书、跳过信息、反证、老文档兼容、点句不位移）
-
-**会改**：`components/reader/Reader.tsx`、`styles/reader.css`、`lib/parse/validate.ts`（`SkippedContent` 类型、
-`assembleDocument` 增加可选参数、`skippedSummary()`）、`lib/parse/docx.ts`、`lib/parse/pdf.ts`（填 `meta.skipped`）、
-`lib/storage.test.ts`、`KANBAN.md`；开工后追加：`lib/parse/validate.test.ts`（`skippedSummary` 的文案用例）。
-`lib/storage.ts` 与 `components/Upload.tsx` 经核对**无需改动**（`meta` 原样存取，上传页提示沿用 G-24 的路径）
-**不改**：`components/reader/{GlossPanel,Sentence}.tsx`、`app/api/**`、`lib/{segment,gloss-client,deepseek}.ts`、`lib/prompts/**`、`package.json`
-**回滚**：`git revert`
-
-**性能复测**（与 G-07 同一脚本、同一规格样本：450 段 / 1830 句，本地 production 构建，40 次点击）
-
-| 轮次 | 中位数 | p90 | 最长 |
-|---|---|---|---|
-| G-07 基线（2026-09-17 记录） | 6.5ms | 10.6ms | 17.2ms |
-| main 对照 第 1 轮（冷） | 7.8ms | 11.6ms | 13.5ms |
-| main 对照 第 2 轮 | 6.9ms | 8.3ms | 9.1ms |
-| 本分支 第 1 轮（冷） | 8.5ms | 13.7ms | 17.4ms |
-| 本分支 第 2 轮 | 6.7ms | 8.1ms | 10.4ms |
-| 本分支 第 3 轮 | 6.6ms | 7.8ms | 8.0ms |
-
-每轮第一次测量都偏高（热身），稳定后本分支 6.6–6.7ms、main 6.9ms，**没有回归**。
-重渲染：抽 5 个位置点击，451 个段落元素里每次只有被点的 1 段属性对象换新。
-位移：被点击行 0px，段内其余字 0px。
-
----
-
 ### G-26 · UI 精修清单
 **P2** ｜ 无依赖 ｜ 分支 `chore/g26-ui-polish`
 
@@ -582,6 +537,54 @@ gloss/
 ## ✅ Done
 
 _（完成的 issue 移到这里，保留验收清单）_
+
+### G-25 · 阅读界面左栏：解析统计常驻 + 无标题时的呈现
+**P1** ｜ 依赖 G-04 ｜ 分支 `feat/g25-side-info`
+
+> 来源：Clara 在 Preview 上的实际使用反馈（2026-09-18）。
+
+**验收**
+- [x] 「N 字 · N 段 · N 页」常驻阅读界面左栏（Claude Code 自测）：左栏新增「这份文档」块，
+      第一行文件名、第二行「字数 · 段数 ·（PDF 才有的）页数 · 句数」、第三行跳过信息。
+      数字全部来自已存的记录（`meta` + 重算的句数），**刷新后仍在**；解析完照旧自动进入阅读器，没有加确认步骤
+- [x] 把「跳过了什么」带进阅读页（Claude Code 自测）：跳过信息作为**可选字段** `meta.skipped` 随文档存进 localStorage，
+      **不升 SCHEMA_VERSION**；docx 记表格处数 / 字数 / 有无公式，PDF 记扫描页页码。
+      实测：`docx-table-formula.docx`「已跳过：表格 1 处（102 字）、公式」；`pdf-mixed.pdf`「已跳过：第 2 页（扫描页）」
+- [x] 老记录照常打开（硬要求）（Claude Code 自测）：手工写入一条没有 `meta.skipped` 的旧记录，正常打开、正文正常、
+      不显示跳过行、不报「找不到这份文档」；`storage.test.ts` 有对应用例
+- [x] 无标题的文档：目录块留在原位，文案改为「这份文档没有标题层级」（Claude Code 自测）：
+      Clara 定的口径——目录时有时无会让读者困惑，块保持在原位，状态自己说明自己。
+      带标题的 docx 仍正常显示目录（序言样本显示「序言」）
+- [x] 不做任何随滚动变化的内容（Claude Code 自测）：左栏全部静态，不新增 state / effect
+- [x] 性能不回归（Claude Code 自测）：见下方复测数字
+- [x] Clara 亲验（Preview 部署）：6 条全部通过——常驻并在刷新后仍在、换书数字正确（docx 无「页」）、
+      跳过信息正确（表格 / 公式 / 扫描页）、干净文档不出「已跳过」、老文档照常打开、目录块留在原位且点句不位移
+
+**会改**：`components/reader/Reader.tsx`、`styles/reader.css`、`lib/parse/validate.ts`（`SkippedContent` 类型、
+`assembleDocument` 增加可选参数、`skippedSummary()`）、`lib/parse/docx.ts`、`lib/parse/pdf.ts`（填 `meta.skipped`）、
+`lib/storage.test.ts`、`KANBAN.md`；开工后追加：`lib/parse/validate.test.ts`（`skippedSummary` 的文案用例）。
+`lib/storage.ts` 与 `components/Upload.tsx` 经核对**无需改动**（`meta` 原样存取，上传页提示沿用 G-24 的路径）——
+与复述清单的两处出入（这两个文件未改、`validate.test.ts` 为追加）已由 Clara 确认接受
+**不改**：`components/reader/{GlossPanel,Sentence}.tsx`、`app/api/**`、`lib/{segment,gloss-client,deepseek}.ts`、`lib/prompts/**`、`package.json`
+**回滚**：`git revert`
+**完成**：2026-09-18 ｜ commit `3e010f4` ｜ Clara 在 Preview 部署上亲验通过
+
+**性能复测**（与 G-07 同一脚本、同一规格样本：450 段 / 1830 句，本地 production 构建，40 次点击）
+
+| 轮次 | 中位数 | p90 | 最长 |
+|---|---|---|---|
+| G-07 基线（2026-09-17 记录） | 6.5ms | 10.6ms | 17.2ms |
+| main 对照 第 1 轮（冷） | 7.8ms | 11.6ms | 13.5ms |
+| main 对照 第 2 轮 | 6.9ms | 8.3ms | 9.1ms |
+| 本分支 第 1 轮（冷） | 8.5ms | 13.7ms | 17.4ms |
+| 本分支 第 2 轮 | 6.7ms | 8.1ms | 10.4ms |
+| 本分支 第 3 轮 | 6.6ms | 7.8ms | 8.0ms |
+
+每轮第一次测量都偏高（热身），稳定后本分支 6.6–6.7ms、main 6.9ms，**没有回归**。
+重渲染：抽 5 个位置点击，451 个段落元素里每次只有被点的 1 段属性对象换新。
+位移：被点击行 0px，段内其余字 0px。
+
+---
 
 ### G-24 · docx 剔除表格时给出提示（A10）
 **P1** ｜ 依赖 G-02 ｜ 分支 `fix/g24-table-notice`

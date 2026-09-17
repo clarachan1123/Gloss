@@ -117,39 +117,6 @@ gloss/
 
 ---
 
-### G-24 · docx 剔除表格时给出提示（A10）
-**P1** ｜ 依赖 G-02 ｜ 分支 `fix/g24-table-notice`
-
-> 来源：G-02B 查字数差异时发现。docx 解析按 A10 剔除表格，但**没有任何用户可见提示**，
-> 违反 PRD 第 761 行「A1–A10 … 每条均有用户可见提示，**无任何静默失败**」。
-> G-02 验收时漏掉了：G-02 的验收项只写了「A1–A3、A7、A8 各有提示」，没有覆盖 A10。
-> 现象：《政治经济学批判》序言 docx 文末的署名、落款、出处说明共 62 字是用表格排版的，
-> 上传后这 62 字直接消失，用户不知道。位置：`lib/parse/docx.ts` 里 `body.querySelectorAll("table")` 那一步。
-
-**样本**：`test-fixtures/docx-table-formula.docx`（正文 + 1 处表格 3 行 6 单元格 102 字 + 1 个 oMathPara 公式）。
-
-**验收**
-- [x] docx 含表格时出横幅提示（不阻断），说明表格内容已跳过（Claude Code 自测）：序言「1 处表格，其中的 62 字已跳过」；
-      新样本「1 处表格（102 字）和公式，都已跳过」；两者都停在上传页 + 「开始阅读」，与 A6 / A9 一致
-- [x] 含公式时同样提示，**不报个数**（Claude Code 自测）：mammoth 不转换 OMML，直接丢弃，但 messages 里留下
-      `An unrecognised element was ignored: {…/2006/math}oMath(Para)`。行内 `m:oMath` 与独立成段的
-      `m:oMathPara` 都带这个命名空间；消息按元素类型去重，两个公式也只有一条，所以只能知道有、数不出几个
-- [x] 表格计数口径（Claude Code 自测）：只数最外层 `<table>`（嵌套表格的字数算进外层，不另计）；
-      只有一个单元格的排版表格照样计入（序言那 62 字就是这么丢的）；不区分「排版用」与「放数据」——XML 上无可靠差异
-- [x] 不含表格和公式的文档不出提示（Claude Code 自测）：txt 直接进阅读器，无横幅；构造数据用例覆盖
-- [x] 反证：同一本书的 PDF 路径不出此提示，且表格文字读得进正文（Claude Code 自测）：
-      `pdf-text.pdf` 无横幅，阅读器正文里搜得到「原文是德文」；序言 docx 搜不到
-- [ ] Clara 亲验：上传两份样本，横幅数字与 Word 的「字符数（不计空格）」一致；
-      进阅读器后搜「意识流型」「原文是德文」应搜不到
-
-**会改**：`lib/parse/docx.ts`、`lib/parse/validate.ts`、`components/Upload.tsx`、`lib/parse/docx.test.ts`（新建）、`KANBAN.md`；
-开工后追加：`lib/parse/pdf.test.ts`、`lib/segment.test.ts` —— `parseDocx` 改为返回 `{ doc, warnings, detail }`，
-这两个测试各有一行取 `doc` 的写法要跟着改
-**不改**：`lib/parse/{txt,pdf}.ts`、`components/reader/**`、`components/Notice.tsx`、`app/api/**`、`styles/**`、`package.json`
-**回滚**：`git revert`
-
----
-
 ### G-25 · 阅读界面左栏：解析统计常驻 + 无标题时的呈现
 **P1** ｜ 依赖 G-04 ｜ 分支 `feat/g25-side-info`
 
@@ -549,6 +516,43 @@ gloss/
 ## ✅ Done
 
 _（完成的 issue 移到这里，保留验收清单）_
+
+### G-24 · docx 剔除表格时给出提示（A10）
+**P1** ｜ 依赖 G-02 ｜ 分支 `fix/g24-table-notice`
+
+> 来源：G-02B 查字数差异时发现。docx 解析按 A10 剔除表格，但**没有任何用户可见提示**，
+> 违反 PRD 第 761 行「A1–A10 … 每条均有用户可见提示，**无任何静默失败**」。
+> G-02 验收时漏掉了：G-02 的验收项只写了「A1–A3、A7、A8 各有提示」，没有覆盖 A10。
+> 现象：《政治经济学批判》序言 docx 文末的署名、落款、出处说明共 62 字是用表格排版的，
+> 上传后这 62 字直接消失，用户不知道。位置：`lib/parse/docx.ts` 里 `body.querySelectorAll("table")` 那一步。
+
+**样本**：`test-fixtures/docx-table-formula.docx`（正文 + 1 处表格 3 行 6 单元格 102 字 + 1 个 oMathPara 公式）。
+
+**验收**
+- [x] docx 含表格时出横幅提示（不阻断），说明表格内容已跳过（Claude Code 自测）：序言「1 处表格，其中的 62 字已跳过」；
+      新样本「1 处表格（102 字）和公式，都已跳过」；两者都停在上传页 + 「开始阅读」，与 A6 / A9 一致
+- [x] 含公式时同样提示，**不报个数**（Claude Code 自测）：mammoth 不转换 OMML，直接丢弃，但 messages 里留下
+      `An unrecognised element was ignored: {…/2006/math}oMath(Para)`。行内 `m:oMath` 与独立成段的
+      `m:oMathPara` 都带这个命名空间；消息按元素类型去重，两个公式也只有一条，所以只能知道有、数不出几个
+- [x] 表格计数口径（Claude Code 自测）：只数最外层 `<table>`（嵌套表格的字数算进外层，不另计）；
+      只有一个单元格的排版表格照样计入（序言那 62 字就是这么丢的）；不区分「排版用」与「放数据」——XML 上无可靠差异
+- [x] 不含表格和公式的文档不出提示（Claude Code 自测）：txt 直接进阅读器，无横幅；构造数据用例覆盖
+- [x] 反证：同一本书的 PDF 路径不出此提示，且表格文字读得进正文（Claude Code 自测）：
+      `pdf-text.pdf` 无横幅，阅读器正文里搜得到「原文是德文」；序言 docx 搜不到
+- [x] Clara 亲验（Preview 部署）：横幅里的字数与 Word 的**「字符数（不计空格）」**一致
+      （不是「字数」——「字数」把 1859 这类数字整体算 1 个，对不上）：
+      新样本「1 处表格（102 字）和公式」＝ 102；序言「1 处表格，其中的 62 字」＝ 62；
+      两份文档进阅读器后分别搜「意识流型」「原文是德文」都搜不到；
+      反证：`pdf-text.pdf` 不出此横幅且搜得到「原文是德文」，无表格无公式的文档不出横幅、直接进阅读器
+
+**会改**：`lib/parse/docx.ts`、`lib/parse/validate.ts`、`components/Upload.tsx`、`lib/parse/docx.test.ts`（新建）、`KANBAN.md`；
+开工后追加：`lib/parse/pdf.test.ts`、`lib/segment.test.ts` —— `parseDocx` 改为返回 `{ doc, warnings, detail }`，
+这两个测试各有一行取 `doc` 的写法要跟着改
+**不改**：`lib/parse/{txt,pdf}.ts`、`components/reader/**`、`components/Notice.tsx`、`app/api/**`、`styles/**`、`package.json`
+**回滚**：`git revert`
+**完成**：2026-09-18 ｜ commit `f32c89c` ｜ Clara 在 Preview 部署上亲验通过
+
+---
 
 ### G-02B · PDF 文字层解析
 **P0** ｜ 依赖 G-02 ｜ 分支 `feat/g02b-pdf`

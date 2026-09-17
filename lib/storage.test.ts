@@ -223,3 +223,46 @@ describe("全书结构摘要按 docId 缓存，每份文档只算一次", () => 
     expect(warn).toHaveBeenCalled();
   });
 });
+
+/* ---------------- 跳过信息随文档存取（G-25） ---------------- */
+
+describe("meta.skipped 随文档存取，老记录照常打开", () => {
+  it("docx 的表格 / 公式写进 meta，读出来一模一样", async () => {
+    const doc = assembleDocument({ paragraphs: ["甲。"], headings: [], footnotes: [] }, "docx", "a.docx", undefined, {
+      tableCount: 1,
+      tableChars: 62,
+      hasFormula: true,
+    });
+    const docId = await saveDocument(doc);
+    expect(loadDocument(docId)?.meta.skipped).toEqual({ tableCount: 1, tableChars: 62, hasFormula: true });
+  });
+
+  it("PDF 的扫描页页码写进 meta", async () => {
+    const doc = assembleDocument({ paragraphs: ["甲。"], headings: [], footnotes: [] }, "pdf", "a.pdf", 2, {
+      scannedPages: [2],
+    });
+    const docId = await saveDocument(doc);
+    expect(loadDocument(docId)?.meta).toMatchObject({ pageCount: 2, skipped: { scannedPages: [2] } });
+  });
+
+  it("没跳过任何东西时不写这一项", async () => {
+    const docId = await saveDocument(make(["甲。"]));
+    expect(loadDocument(docId)?.meta.skipped).toBeUndefined();
+  });
+
+  it("G-25 之前保存的记录（没有 meta.skipped）照常打开，不报错、不当作不存在", () => {
+    const record = {
+      version: 1,
+      docId: "old00000",
+      paragraphs: ["甲。", "乙。"],
+      headings: [],
+      footnotes: [],
+      meta: { format: "docx", fileName: "旧书.docx", charCount: 4 },
+      savedAt: 1,
+    };
+    localStorage.setItem("gloss:doc:old00000", JSON.stringify(record));
+    const loaded = loadDocument("old00000");
+    expect(loaded?.paragraphs).toEqual(["甲。", "乙。"]);
+    expect(loaded?.meta.skipped).toBeUndefined();
+  });
+});

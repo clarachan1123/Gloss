@@ -21,6 +21,20 @@ export interface ParsedFootnote {
   text: string;
 }
 
+/**
+ * 解析时被跳过的内容，随文档一起存进 localStorage，阅读页要常驻显示（G-25）。
+ * 全部字段可选：老记录里没有这一项，读出来是 undefined，照常打开（不升 SCHEMA_VERSION）。
+ */
+export interface SkippedContent {
+  /** docx A10：被剔除的表格处数（只数最外层）与其中的字数 */
+  tableCount?: number;
+  tableChars?: number;
+  /** docx A10：有没有公式（mammoth 的警告去重，数不出个数） */
+  hasFormula?: boolean;
+  /** PDF A6：被跳过的扫描页页码，从 1 起 */
+  scannedPages?: number[];
+}
+
 export interface ParsedDocument {
   /** paragraphs.join("\n")，不含表格与脚注 */
   text: string;
@@ -35,6 +49,8 @@ export interface ParsedDocument {
     charCount: number;
     /** 仅 PDF：原文件总页数（含被跳过的扫描页） */
     pageCount?: number;
+    /** 解析时跳过了什么；没跳过任何东西时不写这一项 */
+    skipped?: SkippedContent;
   };
 }
 
@@ -98,13 +114,26 @@ export function assembleDocument(
   format: ParseFormat,
   fileName: string | null,
   pageCount?: number,
+  skipped?: SkippedContent,
 ): ParsedDocument {
   const paragraphs = parts.paragraphs.map(normalizeWhitespace);
   const headings = parts.headings.map((h) => ({ ...h, text: normalizeWhitespace(h.text) }));
   const text = paragraphs.join("\n");
   const meta: ParsedDocument["meta"] = { format, fileName, charCount: countChars(text) };
   if (pageCount !== undefined) meta.pageCount = pageCount;
+  if (skipped && Object.keys(skipped).length > 0) meta.skipped = skipped;
   return { text, paragraphs, headings, footnotes: parts.footnotes, meta };
+}
+
+/** 左栏常驻的一行（G-25）：说明这份文档解析时跳过了什么；没跳过返回 null */
+export function skippedSummary(skipped: SkippedContent | undefined): string | null {
+  if (!skipped) return null;
+  const { tableCount = 0, tableChars = 0, hasFormula = false, scannedPages = [] } = skipped;
+  const parts: string[] = [];
+  if (tableCount > 0) parts.push(`表格 ${tableCount} 处（${tableChars.toLocaleString("zh-CN")} 字）`);
+  if (hasFormula) parts.push("公式");
+  if (scannedPages.length > 0) parts.push(`第 ${formatPageRanges(scannedPages)} 页（扫描页）`);
+  return parts.length === 0 ? null : `已跳过：${parts.join("、")}`;
 }
 
 /* ---------------- 异常码与提示文案（PRD 3.9 A 类） ---------------- */

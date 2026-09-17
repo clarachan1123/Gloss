@@ -17,7 +17,7 @@ import {
 import Notice from "@/components/Notice";
 import { MAX_AFTER, MAX_BEFORE } from "@/lib/context";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
-import type { ParsedHeading } from "@/lib/parse/validate";
+import { skippedSummary, type ParsedHeading } from "@/lib/parse/validate";
 import { STRUCTURE_PROMPT_VERSION } from "@/lib/prompts/structure";
 import { segmentParagraphs, type Sentence as SentenceData } from "@/lib/segment";
 import {
@@ -465,6 +465,8 @@ export default function Reader({ docId }: { docId: string }) {
   const glossKey = `${activeIndex}:${retryCount}`;
 
   const minHeadingLevel = Math.min(...(doc?.headings ?? []).map((h) => h.level));
+  // 左栏常驻信息（G-25）：全部来自已存的记录，不随滚动变化，不新增状态
+  const skippedLine = skippedSummary(doc?.meta.skipped);
 
   return (
     <div className="shell">
@@ -477,6 +479,17 @@ export default function Reader({ docId }: { docId: string }) {
           <span className="mode-option mode-option-active">阅读态</span>
           <span className="mode-option">复习态</span>
         </div>
+
+        {doc && (
+          <section className="side-section" aria-labelledby="doc-title">
+            <h2 id="doc-title" className="side-title">
+              这份文档
+            </h2>
+            {doc.meta.fileName && <p className="side-file">{doc.meta.fileName}</p>}
+            <p className="side-stats">{documentStats(doc, sentences.length)}</p>
+            {skippedLine && <p className="side-skipped">{skippedLine}</p>}
+          </section>
+        )}
 
         <section className="side-section" aria-labelledby="toc-title">
           <h2 id="toc-title" className="side-title">
@@ -497,7 +510,8 @@ export default function Reader({ docId }: { docId: string }) {
               ))}
             </ol>
           )}
-          {doc && doc.headings.length === 0 && <p className="side-empty">没有识别到标题</p>}
+          {/* 目录块始终在原位：时有时无会让读者困惑，状态自己说明自己（G-25） */}
+          {doc && doc.headings.length === 0 && <p className="side-empty">这份文档没有标题层级</p>}
         </section>
 
         <section className="side-section" aria-labelledby="saved-title">
@@ -573,6 +587,15 @@ export default function Reader({ docId }: { docId: string }) {
 /* ---------------- 渲染辅助 ---------------- */
 
 const NO_PIECES: Piece[] = [];
+
+/** 左栏第二行：字数 · 段数 ·（PDF 才有的）页数 · 句数。数字口径与上传页一致 */
+function documentStats(doc: StoredDocument, sentenceCount: number): string {
+  const n = (value: number) => value.toLocaleString("zh-CN");
+  const parts = [`${n(doc.meta.charCount)} 字`, `${n(doc.paragraphs.length)} 段`];
+  if (doc.meta.pageCount !== undefined) parts.push(`${n(doc.meta.pageCount)} 页`);
+  parts.push(`${n(sentenceCount)} 句`);
+  return parts.join(" · ");
+}
 
 interface ParagraphProps {
   paraIndex: number;

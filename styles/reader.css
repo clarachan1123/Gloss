@@ -101,6 +101,27 @@ body {
   font-size: 14px;
 }
 
+/* 「这份文档」块（G-25）：文件名 / 数字 / 跳过了什么，静态显示，不随滚动变化 */
+.side-file {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: 14px;
+  /* 长文件名换行断开，不撑宽侧栏（中栏宽度必须不受影响） */
+  overflow-wrap: anywhere;
+}
+
+.side-stats,
+.side-skipped {
+  margin: 0;
+  color: var(--gloss);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.side-skipped {
+  margin-top: 4px;
+}
+
 .toc {
   margin: 0;
   padding: 0;

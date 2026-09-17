@@ -275,7 +275,14 @@ export function buildPdfDocument(pages: PdfPageData[], fileName: string | null):
   const bodies = stripPageEdges(kept);
   const paragraphs = linesToParagraphs(bodies);
   return {
-    doc: assembleDocument({ paragraphs, headings: [], footnotes: [] }, "pdf", fileName, pages.length),
+    doc: assembleDocument(
+      { paragraphs, headings: [], footnotes: [] },
+      "pdf",
+      fileName,
+      pages.length,
+      // 跳过的扫描页写进 meta，阅读页左栏要常驻显示（G-25）
+      skippedPages.length > 0 ? { scannedPages: skippedPages } : undefined,
+    ),
     warnings: skippedPages.length > 0 ? ["A6"] : [],
     skippedPages,
   };

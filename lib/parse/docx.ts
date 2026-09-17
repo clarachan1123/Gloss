@@ -117,8 +117,12 @@ function htmlToDocument(html: string, fileName: string, hasFormula: boolean): Do
   });
 
   const skippedSomething = tables.length > 0 || hasFormula;
+  // 跳过的内容写进 meta，随文档存进 localStorage，阅读页左栏要常驻显示（G-25）
+  const skipped = skippedSomething
+    ? { tableCount: tables.length, tableChars, hasFormula }
+    : undefined;
   return {
-    doc: assembleDocument({ paragraphs, headings, footnotes }, "docx", fileName),
+    doc: assembleDocument({ paragraphs, headings, footnotes }, "docx", fileName, undefined, skipped),
     warnings: skippedSomething ? ["A10"] : [],
     detail: { tableCount: tables.length, tableChars, hasFormula },
   };

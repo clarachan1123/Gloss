@@ -6,6 +6,7 @@ import {
   formatPageRanges,
   noticeContent,
   normalizeWhitespace,
+  skippedSummary,
 } from "./validate";
 
 describe("空白归一化", () => {
@@ -93,5 +94,30 @@ describe("页码区间", () => {
   it("合并连续页、去重、排序", () => {
     expect(formatPageRanges([8, 1, 2, 3, 5, 7, 3])).toBe("1–3、5、7–8");
     expect(formatPageRanges([4])).toBe("4");
+  });
+});
+
+describe("左栏「已跳过」一行（G-25）", () => {
+  it("没有跳过任何东西 → null", () => {
+    expect(skippedSummary(undefined)).toBeNull();
+    expect(skippedSummary({})).toBeNull();
+    expect(skippedSummary({ tableCount: 0, hasFormula: false, scannedPages: [] })).toBeNull();
+  });
+
+  it("docx：表格与公式", () => {
+    expect(skippedSummary({ tableCount: 1, tableChars: 62 })).toBe("已跳过：表格 1 处（62 字）");
+    expect(skippedSummary({ hasFormula: true })).toBe("已跳过：公式");
+    expect(skippedSummary({ tableCount: 1, tableChars: 102, hasFormula: true })).toBe(
+      "已跳过：表格 1 处（102 字）、公式",
+    );
+  });
+
+  it("PDF：扫描页按区间合并", () => {
+    expect(skippedSummary({ scannedPages: [2] })).toBe("已跳过：第 2 页（扫描页）");
+    expect(skippedSummary({ scannedPages: [3, 1, 2, 7] })).toBe("已跳过：第 1–3、7 页（扫描页）");
+  });
+
+  it("字数用千分位", () => {
+    expect(skippedSummary({ tableCount: 2, tableChars: 12345 })).toContain("12,345 字");
   });
 });

@@ -14,6 +14,7 @@ import {
   noticeContent,
   type BlockingCode,
   type NoticeContent,
+  type NoticeDetail,
   type ParsedDocument,
   type WarningCode,
 } from "@/lib/parse/validate";
@@ -32,10 +33,13 @@ const STORAGE_MESSAGES: Record<StorageErrorCode, string> = {
   E2: "当前浏览器禁止本地存储，暂时无法打开阅读器。",
 };
 
-interface PdfExtra {
+/** 解析器给出的警告（PDF 的 A6、docx 的 A10）与提示文案要用的数字 */
+interface ParseExtra {
   warnings: WarningCode[];
-  skippedPages: number[];
+  detail: NoticeDetail;
 }
+
+const NO_EXTRA: ParseExtra = { warnings: [], detail: {} };
 
 const fromParseNotice = (n: NoticeContent): UploadNotice => ({
   key: n.code,
@@ -63,8 +67,7 @@ export default function Upload() {
     setReadyDocId(null);
   }
 
-  /** extra：PDF 解析器给出的警告（A6）与被跳过的页码 */
-  async function accept(doc: ParsedDocument, extra: PdfExtra = { warnings: [], skippedPages: [] }) {
+  async function accept(doc: ParsedDocument, extra: ParseExtra = NO_EXTRA) {
     const warnings = [...extra.warnings, ...checkParsed(doc)];
     // 只显示统计数字，不在控制台输出正文
     setSummary(
@@ -86,9 +89,7 @@ export default function Upload() {
       router.push(`/read/${docId}`);
       return;
     }
-    setNotices(
-      warnings.map((code) => fromParseNotice(noticeContent(code, { skippedPages: extra.skippedPages }))),
-    );
+    setNotices(warnings.map((code) => fromParseNotice(noticeContent(code, extra.detail))));
     setReadyDocId(docId);
   }
 
@@ -114,9 +115,12 @@ export default function Upload() {
       const format = checkFile(file);
       if (format === "pdf") {
         const { doc, warnings, skippedPages } = await parsePdf(file);
-        await accept(doc, { warnings, skippedPages });
+        await accept(doc, { warnings, detail: { skippedPages } });
+      } else if (format === "docx") {
+        const { doc, warnings, detail } = await parseDocx(file);
+        await accept(doc, { warnings, detail });
       } else {
-        await accept(format === "docx" ? await parseDocx(file) : await parseTxt(file));
+        await accept(await parseTxt(file));
       }
     } catch (err) {
       fail(err, "A3");

@@ -1,9 +1,12 @@
 import {
   ParseError,
   assembleDocument,
+  countChars,
+  type NoticeDetail,
   type ParsedDocument,
   type ParsedFootnote,
   type ParsedHeading,
+  type WarningCode,
 } from "./validate";
 
 /**
@@ -16,8 +19,25 @@ const ID_PREFIX = "gloss-docx-";
 const NOTE_REF_ID = new RegExp(`^${ID_PREFIX}(footnote|endnote)-ref-(-?\\d+)$`);
 const NOTE_ID = new RegExp(`^${ID_PREFIX}(footnote|endnote)-(-?\\d+)$`);
 
+/**
+ * mammoth 不转换 OMML 公式，直接丢掉，但会在 messages 里留一条
+ * 「An unrecognised element was ignored: {…/2006/math}oMath / oMathPara」。
+ * 行内公式（m:oMath）与独立成段的公式（m:oMathPara）都带这个命名空间，据此判断「有没有公式」。
+ * 消息按元素类型去重，所以只能知道有，数不出几个。
+ * 已知盲区：依赖 mammoth 的警告文本，升级 mammoth 可能变化 —— 由 docx.test.ts 锁住。
+ */
+const OMML_NAMESPACE = "/2006/math";
+
+export interface DocxParseResult {
+  doc: ParsedDocument;
+  /** A10：有表格或公式被剔除（不阻断） */
+  warnings: WarningCode[];
+  /** A10 提示要用的数字 */
+  detail: NoticeDetail;
+}
+
 /** 在浏览器内解析 .docx（mammoth → HTML → DOM），不上传任何内容 */
-export async function parseDocx(file: File): Promise<ParsedDocument> {
+export async function parseDocx(file: File): Promise<DocxParseResult> {
   let mammoth: typeof import("mammoth");
   try {
     ({ default: mammoth } = await import("mammoth"));
@@ -27,6 +47,7 @@ export async function parseDocx(file: File): Promise<ParsedDocument> {
   }
 
   let html: string;
+  let hasFormula: boolean;
   try {
     const arrayBuffer = await file.arrayBuffer();
     const result = await mammoth.convertToHtml(
@@ -38,13 +59,14 @@ export async function parseDocx(file: File): Promise<ParsedDocument> {
       },
     );
     html = result.value;
+    hasFormula = result.messages.some((m) => m.message.includes(OMML_NAMESPACE));
   } catch {
     throw new ParseError("A3");
   }
-  return htmlToDocument(html, file.name);
+  return htmlToDocument(html, file.name, hasFormula);
 }
 
-function htmlToDocument(html: string, fileName: string): ParsedDocument {
+function htmlToDocument(html: string, fileName: string, hasFormula: boolean): DocxParseResult {
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
   const body = doc.body;
 
@@ -70,7 +92,13 @@ function htmlToDocument(html: string, fileName: string): ParsedDocument {
     if (list && list.children.length === 0) list.remove();
   });
 
-  // A10：剔除表格（公式 OMML 不被 mammoth 转换，已在上一步自然剔除）
+  // A10：剔除表格（公式 OMML 不被 mammoth 转换，已在上一步自然剔除）。
+  // 只数最外层表格：嵌套表格的文字已包含在外层里，分开数会让「跳过 N 处」虚高。
+  // 只有一个单元格的排版表格照样计入 —— 它确实吞掉了正文（序言样本的文末署名就是这样）。
+  const tables = Array.from(body.querySelectorAll("table")).filter(
+    (table) => table.parentElement?.closest("table") == null,
+  );
+  const tableChars = tables.reduce((sum, table) => sum + countChars(table.textContent ?? ""), 0);
   body.querySelectorAll("table").forEach((table) => table.remove());
 
   const paragraphs: string[] = [];
@@ -88,7 +116,12 @@ function htmlToDocument(html: string, fileName: string): ParsedDocument {
     }
   });
 
-  return assembleDocument({ paragraphs, headings, footnotes }, "docx", fileName);
+  const skippedSomething = tables.length > 0 || hasFormula;
+  return {
+    doc: assembleDocument({ paragraphs, headings, footnotes }, "docx", fileName),
+    warnings: skippedSomething ? ["A10"] : [],
+    detail: { tableCount: tables.length, tableChars, hasFormula },
+  };
 }
 
 /** 块级元素的文字（软回车已是 \n）；列表项不含其嵌套子列表 */

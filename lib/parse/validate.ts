@@ -118,7 +118,7 @@ export function assembleDocument(
  * 与 A5「扫描件」分开：不是没有文字，而是文字读不出来，换一个版本的 PDF 可能就好了。
  */
 export type BlockingCode = "A1" | "A2" | "A3" | "A4" | "A5" | "A7" | "A8" | "GARBLED" | "LOAD";
-export type WarningCode = "A6" | "A9";
+export type WarningCode = "A6" | "A9" | "A10";
 export type NoticeCode = BlockingCode | WarningCode;
 
 export class ParseError extends Error {
@@ -160,10 +160,15 @@ export interface NoticeDetail {
   charCount?: number;
   /** A6：被跳过的扫描页页码，从 1 起 */
   skippedPages?: number[];
+  /** A10：被剔除的表格处数（只数最外层）与其中的字数 */
+  tableCount?: number;
+  tableChars?: number;
+  /** A10：文档里有没有公式。mammoth 的警告按元素类型去重，数不出个数 */
+  hasFormula?: boolean;
 }
 
 export function noticeContent(code: NoticeCode, detail: NoticeDetail = {}): NoticeContent {
-  const { charCount, skippedPages = [] } = detail;
+  const { charCount, skippedPages = [], tableCount = 0, tableChars = 0, hasFormula = false } = detail;
   switch (code) {
     case "A1":
       return {
@@ -240,6 +245,18 @@ export function noticeContent(code: NoticeCode, detail: NoticeDetail = {}): Noti
         message: "这份文本主要不是中文。Gloss 针对中文优化，其他语言的效果可能不理想。",
         offerPaste: false,
       };
+    case "A10": {
+      // 三种情况同一句式：说明跳过了什么、有多少、对阅读的影响，不用「失败 / 错误」
+      const table = `${tableCount} 处表格`;
+      const chars = `${tableChars.toLocaleString("zh-CN")} 字`;
+      const what =
+        tableCount > 0 && hasFormula
+          ? `有 ${table}（${chars}）和公式，都已跳过`
+          : tableCount > 0
+            ? `有 ${table}，其中的 ${chars}已跳过`
+            : "有公式，已跳过";
+      return { code, tone: "banner", message: `这份文档里${what}，不影响正文阅读。`, offerPaste: false };
+    }
   }
 }
 

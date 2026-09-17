@@ -61,7 +61,8 @@ async function codeOf(promise: Promise<unknown>) {
 
 async function docxFixture(): Promise<ParsedDocument> {
   const buf = readFileSync(fixture("政治经济学批判-序言.docx"));
-  return parseDocx(new File([buf], "序言.docx"));
+  // G-24 起 parseDocx 返回 { doc, warnings, detail }
+  return (await parseDocx(new File([buf], "序言.docx"))).doc;
 }
 
 /** docx 里全部可见文字（含被 A10 剔除的表格），按文档顺序 */

@@ -41,7 +41,8 @@ describe.skipIf(!existsSync(FIXTURE))(
   "真实样本 政治经济学批判-序言.docx（样本文件被 git 忽略，此机器上不存在时跳过）",
   () => {
     async function load() {
-      const doc = await parseDocx(new File([readFileSync(FIXTURE)], "政治经济学批判-序言.docx"));
+      // G-24 起 parseDocx 返回 { doc, warnings, detail }
+      const { doc } = await parseDocx(new File([readFileSync(FIXTURE)], "政治经济学批判-序言.docx"));
       const { sentences, degradedParagraphs } = segmentParagraphs(doc.paragraphs);
       const inPara = (i: number) => sentences.filter((s) => s.paraIndex === i);
       return { doc, sentences, degradedParagraphs, inPara };

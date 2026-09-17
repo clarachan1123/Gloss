@@ -126,12 +126,26 @@ gloss/
 > 现象：《政治经济学批判》序言 docx 文末的署名、落款、出处说明共 62 字是用表格排版的，
 > 上传后这 62 字直接消失，用户不知道。位置：`lib/parse/docx.ts` 里 `body.querySelectorAll("table")` 那一步。
 
-**验收**
-- [ ] docx 含表格时出横幅提示（不阻断），说明表格内容已跳过
-- [ ] 公式块（A10 同条）是否需要同样提示，先确认 mammoth 能否检测到再定
-- [ ] 不影响无表格文档：序言以外的样本不出提示
+**样本**：`test-fixtures/docx-table-formula.docx`（正文 + 1 处表格 3 行 6 单元格 102 字 + 1 个 oMathPara 公式）。
 
-**会改**：待开工时复述（预计 `lib/parse/docx.ts`、`lib/parse/validate.ts`、`components/Upload.tsx`）
+**验收**
+- [x] docx 含表格时出横幅提示（不阻断），说明表格内容已跳过（Claude Code 自测）：序言「1 处表格，其中的 62 字已跳过」；
+      新样本「1 处表格（102 字）和公式，都已跳过」；两者都停在上传页 + 「开始阅读」，与 A6 / A9 一致
+- [x] 含公式时同样提示，**不报个数**（Claude Code 自测）：mammoth 不转换 OMML，直接丢弃，但 messages 里留下
+      `An unrecognised element was ignored: {…/2006/math}oMath(Para)`。行内 `m:oMath` 与独立成段的
+      `m:oMathPara` 都带这个命名空间；消息按元素类型去重，两个公式也只有一条，所以只能知道有、数不出几个
+- [x] 表格计数口径（Claude Code 自测）：只数最外层 `<table>`（嵌套表格的字数算进外层，不另计）；
+      只有一个单元格的排版表格照样计入（序言那 62 字就是这么丢的）；不区分「排版用」与「放数据」——XML 上无可靠差异
+- [x] 不含表格和公式的文档不出提示（Claude Code 自测）：txt 直接进阅读器，无横幅；构造数据用例覆盖
+- [x] 反证：同一本书的 PDF 路径不出此提示，且表格文字读得进正文（Claude Code 自测）：
+      `pdf-text.pdf` 无横幅，阅读器正文里搜得到「原文是德文」；序言 docx 搜不到
+- [ ] Clara 亲验：上传两份样本，横幅数字与 Word 的「字符数（不计空格）」一致；
+      进阅读器后搜「意识流型」「原文是德文」应搜不到
+
+**会改**：`lib/parse/docx.ts`、`lib/parse/validate.ts`、`components/Upload.tsx`、`lib/parse/docx.test.ts`（新建）、`KANBAN.md`；
+开工后追加：`lib/parse/pdf.test.ts`、`lib/segment.test.ts` —— `parseDocx` 改为返回 `{ doc, warnings, detail }`，
+这两个测试各有一行取 `doc` 的写法要跟着改
+**不改**：`lib/parse/{txt,pdf}.ts`、`components/reader/**`、`components/Notice.tsx`、`app/api/**`、`styles/**`、`package.json`
 **回滚**：`git revert`
 
 ---
@@ -144,6 +158,8 @@ gloss/
 **验收**
 - [ ] 「N 字 · N 段 · N 页」常驻阅读界面左栏：现在只在跳转前闪现一瞬间，核对不了。
       **不要加确认步骤挡在进入阅读之间**——解析完自动进入阅读器是对的
+- [ ] 把「跳过了什么」带进阅读页：docx 的 A10（表格 / 公式已跳过）目前只在上传页显示一次，
+      进阅读器后就看不到了（G-24 决定：本卡一起做，G-24 不改 reader）
 - [ ] PDF 路径识别不出标题时，左栏固定显示「没有识别到标题」观感不好
       （`components/reader/Reader.tsx:500`），换一种更合适的呈现
 
@@ -515,6 +531,7 @@ gloss/
 | PDF 扫描书的 JPX / JBIG2 图片 | 标准字体和 wasm 解码器没有托管，这类图片可能识别不出来，图片面积算不出，逐页判定失效 | 靠「全书平均每页少于 20 字 → A5」兜底；混合型书里这类扫描页会被当成字少的文字页，不出 A6（G-02B） |
 | 有大插图、字很少的 PDF 页（封面、标题页） | 样本里没有这种页 | 会被判成扫描页，出 A6 横幅，这一页的几个字被跳过，不阻断（G-02B） |
 | 只有一两页、字确实很少的 PDF | 样本里没有；兜底按全书平均每页字数判断 | 平均每页少于 20 字会被误报成扫描件（A5）（G-02B） |
+| docx 公式检测依赖 mammoth 的警告文本 | 判断条件是 messages 里出现 `2006/math` 命名空间的 unrecognised element；升级 mammoth 后文本可能变化 | `lib/parse/docx.test.ts` 用 `docx-table-formula.docx` 与构造消息锁住，升级时跑测试就能发现（G-24） |
 | PDF 页眉去除和段落拼接规则换一本书是否还有效 | 只在 1 本真实书（`pdf-real.pdf`，14 页）和 Word 导出的序言样本上调过；排版不同的书（双栏、竖排、页眉在侧边、段间无缩进）效果未知 | 拿到更多真实书样本后重新评估（G-02B） |
 
 ---

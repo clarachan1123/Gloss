@@ -108,77 +108,8 @@ gloss/
 
 > **W1 目标**：上传 docx → 切句 → 点击 → 撑开出白话，端到端可用。
 > **W1 结束时必须有一个能发给别人的链接。**
-
----
-
-### G-02B · PDF 文字层解析
-**P0** ｜ 依赖 G-02 ｜ 分支 `feat/g02b-pdf`
-
-> 补漏：PRD F1 的支持格式含「文字层 PDF」（P0 / W1），原看板漏排此 issue。
-> **执行顺序：排在 G-07 之后。** PDF 导入不参与「上传→切句→点击→出白话」这条
-> 端到端链路，不该占用 W1 关键路径。W1 的死线是「有一个能发给别人的链接」。
-
-**可验证增量**：上传一份文字层 PDF，直接进入阅读器并显示正文（有提示时停留在上传页，页面显示「已解析「文件名」：N 字 · N 段 · N 页」）；上传一份扫描件 PDF，页面出现含「扫描件」三字的提示，且**不显示任何乱码**。控制台不再输出正文。
-
-**验收**
-- [x] pdf.js 在客户端解析文字层，**worker 本地托管，不走 CDN**（Claude Code 自测）：本地 dev 与 production 构建下 worker 为本站打包文件，cMap 只从本站 `/pdfjs/6.3.289/cmaps/` 加载，无第三方请求，`quickjs-eval.wasm` 等 wasm 从未被请求
-- [x] A4 加密 PDF：提示需先解除密码（Claude Code 自测）
-- [x] A5 扫描件 PDF：提示**明确含「扫描件」三字** + 原因 + v2 计划；**不可显示乱码**（Claude Code 自测）
-- [x] 扫描件判定有明确阈值（文字层为空，或字符数/页数低于阈值），阈值写进注释（Claude Code 自测）：字数 < 20 且最大图片面积 ≥ 30%；无扫描页但平均每页 < 20 字 → A5
-- [x] 解析全部在客户端完成，**原文不出浏览器**（Claude Code 自测）：网络请求只有本站静态资源和 cMap；控制台不输出正文
-- [x] 与 docx/txt 走同一套异常提示组件，不新造一套（Claude Code 自测）
-- [x] 与 docx 对照（序言样本，`pdf.test.ts` 自动检查）（Claude Code 自测）：
-      ① PDF 提取文字去空白后，与 docx **全部可见文字（含表格）**去空白后逐字一致；
-      ② PDF 字数 = docx 解析字数 + docx 表格字数（3099 = 3037 + 62）；
-      ③ PDF 前 15 段与 docx 的 15 段逐段一致
-- [x] 页眉页脚：`pdf-header.pdf`（奇偶页不同页眉 + 页码）去除后与 `pdf-text.pdf` 去空白后逐字一致（Claude Code 自测）：逐字、逐段均一致
-- [x] 解析后归一化：合并汉字与汉字之间的半角空白（空格、制表符）；全角空格 U+3000 不合并（2026-09-17 决定），
-      不影响中英文之间和数字之间的空格。需要先在样本上统计误伤率（Claude Code 自测）：序言 docx 0 处，`pdf-text.pdf` 10 处（标题字间空格），评测文本 169 处，抽查未见误伤
-      （G-06 评测时发现：docx 提取留下「性 状」「倾 向」这类词中空格，模型收到的是断开的词，任何一本书都会受影响）
-- [x] `Claude outputs/` 加进 `.gitignore`。它目前既没被跟踪、也没被忽略，一旦有人用 `git add -A` 就会被提交进去
-      （G-07 收尾时发现，记在这里，不在 G-07 做）（Claude Code 自测）：`git check-ignore -v` 命中 `.gitignore:17`
-- [x] 线上构建：Vercel 构建日志里有 `> gloss@0.1.0 prebuild`，复制了 169 个 cMap 文件
-      （Clara 亲验（Preview 部署））
-- [x] 线上 cMap：Network 里 `GBK-EUC-H.bcmap`（12.5 kB）与 `Adobe-GB1-UCS2.bcmap`（30.0 kB）均为 200 且来自本站；
-      无 cdn / jsdelivr / unpkg（Clara 亲验（Preview 部署））
-- [x] 线上文字层 PDF：`pdf-real.pdf` 页面闪现「8091 字 · 69 段 · 14 页」后进入阅读器，数字与自测一致
-      （Clara 亲验（Preview 部署））
-- [x] 线上控制台：没有原文（Clara 亲验（Preview 部署））
-- [x] 线上三种提示：扫描件、加密、混合型均正确，混合型显示「234 字 · 1 段 · 2 页」
-      （Clara 亲验（Preview 部署））
-- [x] 线上 docx 回归：3037 字 · 15 段（Clara 亲验（Preview 部署））
-- [ ] 生产环境同样通过（合并进 main 后 Clara 验）
-
-> Preview 上另见两条与本卡无关的请求，已确认不是本项目代码：
-> ① `vercel.com` 的 feedback / validate 是 Vercel 给 Preview 部署注入的评论工具条
->   （仓库里没有任何相关代码；未登录取到的 Preview HTML 里也没有这些脚本）；
-> ② `favicon.ico` 404 —— 项目还没有网站图标，Preview 与生产都是 404，与本卡无关，见 G-26。
-
-**会改**：`lib/parse/pdf.ts`、`lib/parse/validate.ts`、`components/Upload.tsx`、`components/Notice.tsx`（实际未改）、`.gitignore`；
-经批准追加：`lib/storage.ts`（日志只记错误类型）、`lib/parse/pdf.test.ts`、`lib/parse/validate.test.ts`、
-`scripts/copy-pdfjs-assets.mjs`、`package.json` / `package-lock.json`（`pdfjs-dist` 锁定 6.3.289，`predev` / `prebuild`）、`KANBAN.md`
-**不改**：`lib/parse/{docx,txt}.ts`、`components/reader/**`、`app/api/**`、`styles/**`
-**回滚**：`git revert`
-
-**样本逐页数据**（2026-09-17，配本地 cMap；阈值依据，`lib/parse/pdf.ts` 注释引用这里）
-
-| 样本 | 页 | 每页字数 | 最大图片面积 | 判定 |
-|---|---|---|---|---|
-| `pdf-text.pdf` | 6 | 433 / 684 / 682 / 683 / 571 / 46 | 0% | 文字页 |
-| `pdf-encrypted.pdf`（打开密码 123456） | 6 | 与 `pdf-text.pdf` 逐页相同 | 0% | 不带密码 → A4 |
-| `pdf-scan.pdf` | 1 | 0 | 62.7% | 扫描页 → A5 |
-| `pdf-mixed.pdf` | 2 | 234 / 0 | 0% / 44.5% | 第 2 页扫描页 → A6 |
-| `pdf-real.pdf`（扫描图 + GBK 文字层） | 14 | 420–672 | 每页 96.9% | 文字页；**不配 cMap 时每页 0 字** |
-| `pdf-header.pdf`（奇数页「政治经济学批判」、偶数页「序言」、底部页码） | 6 | 441 / 687 / 690 / 686 / 579 / 49 | 0% | 6 个页眉、6 个页码全部去掉，结果与 `pdf-text.pdf` 逐字、逐段一致 |
-
-乱码比例全部样本为 0%。旧版 `pdf-encrypted.pdf`（未加密，3011 字）已被覆盖。
-
-**已知限制**（知道做不到，本卡不处理）
-- 页底的脚注混进正文，会打断跨页段落。
-- PDF 分不出表格和文本框：docx 路径按 A10 剔除的表格文字，PDF 路径会读进来
-  （序言样本里是文末署名和出处说明共 62 字，docx 用表格排版）。
-- 英文长单词换行会让行末提前，被误判为段末。
-- 页眉页脚只看每页最上、最下各一行；页眉下紧跟的第二行即使也重复，也不去掉。
+>
+> **W1 已全部完成**：G-01～G-07、G-02B 均已移进 Done，链接为 gloss-jet.vercel.app。
 
 ---
 
@@ -601,6 +532,80 @@ gloss/
 ## ✅ Done
 
 _（完成的 issue 移到这里，保留验收清单）_
+
+### G-02B · PDF 文字层解析
+**P0** ｜ 依赖 G-02 ｜ 分支 `feat/g02b-pdf`
+
+> 补漏：PRD F1 的支持格式含「文字层 PDF」（P0 / W1），原看板漏排此 issue。
+> **执行顺序：排在 G-07 之后。** PDF 导入不参与「上传→切句→点击→出白话」这条
+> 端到端链路，不该占用 W1 关键路径。W1 的死线是「有一个能发给别人的链接」。
+
+**可验证增量**：上传一份文字层 PDF，直接进入阅读器并显示正文（有提示时停留在上传页，页面显示「已解析「文件名」：N 字 · N 段 · N 页」）；上传一份扫描件 PDF，页面出现含「扫描件」三字的提示，且**不显示任何乱码**。控制台不再输出正文。
+
+**验收**
+- [x] pdf.js 在客户端解析文字层，**worker 本地托管，不走 CDN**（Claude Code 自测）：本地 dev 与 production 构建下 worker 为本站打包文件，cMap 只从本站 `/pdfjs/6.3.289/cmaps/` 加载，无第三方请求，`quickjs-eval.wasm` 等 wasm 从未被请求
+- [x] A4 加密 PDF：提示需先解除密码（Claude Code 自测）
+- [x] A5 扫描件 PDF：提示**明确含「扫描件」三字** + 原因 + v2 计划；**不可显示乱码**（Claude Code 自测）
+- [x] 扫描件判定有明确阈值（文字层为空，或字符数/页数低于阈值），阈值写进注释（Claude Code 自测）：字数 < 20 且最大图片面积 ≥ 30%；无扫描页但平均每页 < 20 字 → A5
+- [x] 解析全部在客户端完成，**原文不出浏览器**（Claude Code 自测）：网络请求只有本站静态资源和 cMap；控制台不输出正文
+- [x] 与 docx/txt 走同一套异常提示组件，不新造一套（Claude Code 自测）
+- [x] 与 docx 对照（序言样本，`pdf.test.ts` 自动检查）（Claude Code 自测）：
+      ① PDF 提取文字去空白后，与 docx **全部可见文字（含表格）**去空白后逐字一致；
+      ② PDF 字数 = docx 解析字数 + docx 表格字数（3099 = 3037 + 62）；
+      ③ PDF 前 15 段与 docx 的 15 段逐段一致
+- [x] 页眉页脚：`pdf-header.pdf`（奇偶页不同页眉 + 页码）去除后与 `pdf-text.pdf` 去空白后逐字一致（Claude Code 自测）：逐字、逐段均一致
+- [x] 解析后归一化：合并汉字与汉字之间的半角空白（空格、制表符）；全角空格 U+3000 不合并（2026-09-17 决定），
+      不影响中英文之间和数字之间的空格。需要先在样本上统计误伤率（Claude Code 自测）：序言 docx 0 处，`pdf-text.pdf` 10 处（标题字间空格），评测文本 169 处，抽查未见误伤
+      （G-06 评测时发现：docx 提取留下「性 状」「倾 向」这类词中空格，模型收到的是断开的词，任何一本书都会受影响）
+- [x] `Claude outputs/` 加进 `.gitignore`。它目前既没被跟踪、也没被忽略，一旦有人用 `git add -A` 就会被提交进去
+      （G-07 收尾时发现，记在这里，不在 G-07 做）（Claude Code 自测）：`git check-ignore -v` 命中 `.gitignore:17`
+- [x] 线上构建：Vercel 构建日志里有 `> gloss@0.1.0 prebuild`，复制了 169 个 cMap 文件
+      （Clara 亲验（Preview 部署））
+- [x] 线上 cMap：Network 里 `GBK-EUC-H.bcmap`（12.5 kB）与 `Adobe-GB1-UCS2.bcmap`（30.0 kB）均为 200 且来自本站；
+      无 cdn / jsdelivr / unpkg（Clara 亲验（Preview 部署））
+- [x] 线上文字层 PDF：`pdf-real.pdf` 页面闪现「8091 字 · 69 段 · 14 页」后进入阅读器，数字与自测一致
+      （Clara 亲验（Preview 部署））
+- [x] 线上控制台：没有原文（Clara 亲验（Preview 部署））
+- [x] 线上三种提示：扫描件、加密、混合型均正确，混合型显示「234 字 · 1 段 · 2 页」
+      （Clara 亲验（Preview 部署））
+- [x] 线上 docx 回归：3037 字 · 15 段（Clara 亲验（Preview 部署））
+- [x] 生产环境同样通过（Clara 亲验（线上 gloss-jet.vercel.app））：上传 `pdf-real.pdf` 进入阅读器；
+      Network 的 Domain 一列全是 `gloss-jet.vercel.app`，无外部域名，也没有 Preview 才有的 vercel feedback / validate；
+      两个 `.bcmap` 均为 200；上传 `pdf-text.pdf` 点句子，白话正常生成（真实调用）
+
+> Preview 上另见两条与本卡无关的请求，已确认不是本项目代码：
+> ① `vercel.com` 的 feedback / validate 是 Vercel 给 Preview 部署注入的评论工具条
+>   （仓库里没有任何相关代码；未登录取到的 Preview HTML 里也没有这些脚本）；
+> ② `favicon.ico` 404 —— 项目还没有网站图标，Preview 与生产都是 404，与本卡无关，见 G-26。
+
+**会改**：`lib/parse/pdf.ts`、`lib/parse/validate.ts`、`components/Upload.tsx`、`components/Notice.tsx`（实际未改）、`.gitignore`；
+经批准追加：`lib/storage.ts`（日志只记错误类型）、`lib/parse/pdf.test.ts`、`lib/parse/validate.test.ts`、
+`scripts/copy-pdfjs-assets.mjs`、`package.json` / `package-lock.json`（`pdfjs-dist` 锁定 6.3.289，`predev` / `prebuild`）、`KANBAN.md`
+**不改**：`lib/parse/{docx,txt}.ts`、`components/reader/**`、`app/api/**`、`styles/**`
+**回滚**：`git revert`
+**完成**：2026-09-18 ｜ commit `6d18967`（实现）、`5ffed98`（Preview 验收记录）｜ gloss-jet.vercel.app 已上线，Clara 线上亲验通过
+
+**样本逐页数据**（2026-09-17，配本地 cMap；阈值依据，`lib/parse/pdf.ts` 注释引用这里）
+
+| 样本 | 页 | 每页字数 | 最大图片面积 | 判定 |
+|---|---|---|---|---|
+| `pdf-text.pdf` | 6 | 433 / 684 / 682 / 683 / 571 / 46 | 0% | 文字页 |
+| `pdf-encrypted.pdf`（打开密码 123456） | 6 | 与 `pdf-text.pdf` 逐页相同 | 0% | 不带密码 → A4 |
+| `pdf-scan.pdf` | 1 | 0 | 62.7% | 扫描页 → A5 |
+| `pdf-mixed.pdf` | 2 | 234 / 0 | 0% / 44.5% | 第 2 页扫描页 → A6 |
+| `pdf-real.pdf`（扫描图 + GBK 文字层） | 14 | 420–672 | 每页 96.9% | 文字页；**不配 cMap 时每页 0 字** |
+| `pdf-header.pdf`（奇数页「政治经济学批判」、偶数页「序言」、底部页码） | 6 | 441 / 687 / 690 / 686 / 579 / 49 | 0% | 6 个页眉、6 个页码全部去掉，结果与 `pdf-text.pdf` 逐字、逐段一致 |
+
+乱码比例全部样本为 0%。旧版 `pdf-encrypted.pdf`（未加密，3011 字）已被覆盖。
+
+**已知限制**（知道做不到，本卡不处理）
+- 页底的脚注混进正文，会打断跨页段落。
+- PDF 分不出表格和文本框：docx 路径按 A10 剔除的表格文字，PDF 路径会读进来
+  （序言样本里是文末署名和出处说明共 62 字，docx 用表格排版）。
+- 英文长单词换行会让行末提前，被误判为段末。
+- 页眉页脚只看每页最上、最下各一行；页眉下紧跟的第二行即使也重复，也不去掉。
+
+---
 
 ### G-02 · 文档解析（docx / txt / 粘贴）
 **P0** ｜ 依赖 G-01 ｜ 分支 `feat/g02-parse`

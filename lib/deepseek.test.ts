@@ -79,6 +79,18 @@ function headersThenSilence(_url: string, init: FetchInit): Promise<Response> {
   return Promise.resolve(new Response(body, { status: 200 }));
 }
 
+/** 先给一段正文，随后保持沉默；用于锁住首字后断流的既有 D2 路径。 */
+function firstThenSilence(_url: string, init: FetchInit): Promise<Response> {
+  const first = new TextEncoder().encode("data: " + JSON.stringify(delta("先到的字")) + "\n\n");
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(first);
+      init.signal.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")));
+    },
+  });
+  return Promise.resolve(new Response(body, { status: 200 }));
+}
+
 const options = (overrides: Partial<StreamChatOptions> = {}): StreamChatOptions => ({
   model: MODEL_FAST,
   messages: [{ role: "user", content: SENTENCE }],
@@ -299,15 +311,20 @@ describe("/api/gloss 错误路径：每条都有明确的状态码和错误类�
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("C1 504 timeout：15 秒没有首字", async () => {
+  it("C1 两次首字超时：每次 15 秒，中间等 1 秒后才返回 504", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     fetchMock.mockImplementation(hangUntilAborted);
     const pending = POST(glossRequest());
     await vi.advanceTimersByTimeAsync(15_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(15_000);
     await expectError(await pending, 504, "timeout");
+    expect(logs.some((line) => line.includes('"event":"gloss_retry"') && line.includes('"retryOutcome":"failure"'))).toBe(true);
   });
 
-  it("C1 不会提前触发：14.9 秒时还在等", async () => {
+  it("C1 不会提前触发：第一次 14.9 秒时还在等", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     fetchMock.mockImplementation(hangUntilAborted);
     let settled = false;
@@ -318,7 +335,70 @@ describe("/api/gloss 错误路径：每条都有明确的状态码和错误类�
     await vi.advanceTimersByTimeAsync(14_900);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(100);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(14_900);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
     await expectError(await pending, 504, "timeout");
+  });
+
+  it("第一次首字超时会中止第一次请求，再重试成功", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let firstAborted = false;
+    fetchMock
+      .mockImplementationOnce((_url: string, init: FetchInit) =>
+        new Promise<Response>((_, reject) => {
+          init.signal.addEventListener("abort", () => {
+            firstAborted = true;
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+      )
+      .mockResolvedValueOnce(sse([delta("第二次成功。"), DONE]));
+    const pending = POST(glossRequest());
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(firstAborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const response = await pending;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(await response.text()).toBe("第二次成功。");
+    expect(logs.some((line) => line.includes('"event":"gloss_retry"') && line.includes('"retryOutcome":"success"'))).toBe(true);
+  });
+
+  it("重试等待期间读者中止：不发第二次请求", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    fetchMock.mockImplementation(hangUntilAborted);
+    const controller = new AbortController();
+    const request = new Request("http://localhost/api/gloss", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sentence: SENTENCE, before: ["前一句。"], structure: "结构摘要。" }),
+      signal: controller.signal,
+    });
+    const pending = POST(request);
+    await vi.advanceTimersByTimeAsync(15_000);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await pending).status).toBe(499);
+    expect(logs.some((line) => line.includes('"event":"gloss_retry"') && line.includes('"retryOutcome":"aborted"'))).toBe(true);
+  });
+
+  it("首字后流中超时不自动重试，保留既有断流路径", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    fetchMock.mockImplementation(firstThenSilence);
+    const response = await POST(glossRequest());
+    expect(response.status).toBe(200);
+    const text = response.text();
+    const rejected = expect(text).rejects.toBeDefined();
+    await vi.advanceTimersByTimeAsync(15_000);
+    await rejected;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(logs.some((line) => line.includes('"event":"gloss_retry"'))).toBe(false);
+    expect(logs.some((line) => line.includes('"event":"gloss_error"') && line.includes('"phase":"streaming"'))).toBe(true);
   });
 
   it("C2 502 api_error：上游详情不透传给前端", async () => {

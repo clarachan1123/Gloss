@@ -31,9 +31,15 @@ const REVEAL_INTERVAL_MS = 45;
 /** C3：限流后 5 秒才能重试 */
 const RATE_LIMIT_WAIT_MS = 5000;
 
+/**
+ * 前端从发请求开始 10 秒未收到首字时给读者反馈。服务端首字重试阈值是 15 秒，
+ * 这个值必须小于服务端阈值；任一侧改动时要一起核对，否则慢提示会失去意义。
+ */
+const SLOW_NOTICE_MS = 10_000;
+
 /** 措辞只说发生了什么，不说「出错了」这类把责任推给读者的话 */
 const NOTES: Record<GlossFailure, string> = {
-  timeout: "生成超时，这次没能写出来。",
+  timeout: "这次没能生成，点「重试」通常就好。",
   unavailable: "暂时无法生成。",
   rate_limited: "请求有点多，稍后再试。",
   throttled: "点得太快了，过几分钟再试。",
@@ -76,6 +82,16 @@ export default function GlossPanel({
   // 断流时先把已收到的字放完，再显示提示
   const failure = view.status === "failed" && !revealing ? view.failure : null;
   const busy = !failure && (view.status === "loading" || view.status === "streaming" || revealing);
+  const [slow, setSlow] = useState(false);
+
+  useEffect(() => {
+    if (!busy || visible > 0) {
+      setSlow(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSlow(true), SLOW_NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [busy, visible]);
 
   /*
    * 撑开期间高度只增不减（决议：生成结束不是用户操作，由它引起的位移违反产品不变量）。
@@ -139,6 +155,7 @@ export default function GlossPanel({
           ……
         </p>
       )}
+      {busy && visible === 0 && slow && <p className="gloss-panel-note">这句有点慢，再等一下…</p>}
       {failure && (
         <p className="gloss-panel-note">
           {NOTES[failure]}

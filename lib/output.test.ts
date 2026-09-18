@@ -4,7 +4,9 @@ import {
   CHUNK_MIN_CHARS,
   GlossOutput,
   MAX_GLOSS_CHARS,
+  MAX_TERMS_PER_GLOSS,
   MarkdownStripper,
+  limitTerms,
   splitTerms,
   stripMarkdown,
   truncateChars,
@@ -205,5 +207,81 @@ describe("术语标记：定界符永不出现在读者眼前", () => {
     const plain = text.replaceAll(TERM_OPEN, "").replaceAll(TERM_CLOSE, "");
     expect(countChars(plain)).toBe(MAX_GLOSS_CHARS);
     expect(text).toContain(TERM_OPEN);
+  });
+});
+
+describe("相邻的两个术语不合并", () => {
+  it("⟦实体⟧⟦样式⟧ 是两个术语片段", () => {
+    expect(splitTerms(`${T("实体")}${T("样式")}`)).toEqual([
+      { text: "实体", term: true },
+      { text: "样式", term: true },
+    ]);
+  });
+});
+
+/* ---------------- 标记的本地校验与上限（G-08 验收 a / b） ---------------- */
+
+const SOURCE = "凡是能被单独设想的东西叫实体，只能依附别的东西被设想的叫样式，二者合起来讲绝对精神与市民社会。";
+const terms = (segs: { text: string; term: boolean }[]) => segs.filter((s) => s.term).map((s) => s.text);
+
+describe("验收 a：标记必须逐字出现在原句里", () => {
+  it("原句里有的词保留标记", () => {
+    const segs = limitTerms(splitTerms(`他说的${T("实体")}是独立的。`), { source: SOURCE });
+    expect(terms(segs)).toEqual(["实体"]);
+  });
+
+  it("原句里没有的词（模型改写过的、自己编的）按纯文本显示，文字不丢", () => {
+    const segs = limitTerms(splitTerms(`他说的${T("独立存在者")}是独立的。`), { source: SOURCE });
+    expect(terms(segs)).toEqual([]);
+    expect(joined(segs)).toBe("他说的独立存在者是独立的。");
+    expect(segs).toHaveLength(1); // 降级后与两边的普通文字连成一段
+  });
+
+  it("比对时忽略空白：原句里「实 体」、白话里「实体」算同一个词", () => {
+    const segs = limitTerms(splitTerms(`讲的是${T("实体")}。`), { source: "他讨论的是实 体。" });
+    expect(terms(segs)).toEqual(["实体"]);
+  });
+
+  it("流式中途未配对的前半截：是原句词的前缀就先按术语显示", () => {
+    const partial = limitTerms(splitTerms(`他说的${TERM_OPEN}绝对精`, true), { source: SOURCE });
+    expect(terms(partial)).toEqual(["绝对精"]);
+  });
+
+  it("不传原句时只做数量上限，不做逐字校验", () => {
+    const segs = limitTerms(splitTerms(`${T("原句里没有")}`));
+    expect(terms(segs)).toEqual(["原句里没有"]);
+  });
+});
+
+describe("验收 b：一句白话最多 3 处标记", () => {
+  it("上限是 3", () => {
+    expect(MAX_TERMS_PER_GLOSS).toBe(3);
+  });
+
+  it("超过 3 处时保留前 3 处，其余按纯文本显示", () => {
+    const text = `${T("实体")}、${T("样式")}、${T("绝对精神")}和${T("市民社会")}。`;
+    const segs = limitTerms(splitTerms(text), { source: SOURCE });
+    expect(terms(segs)).toEqual(["实体", "样式", "绝对精神"]);
+    expect(joined(segs)).toBe("实体、样式、绝对精神和市民社会。");
+  });
+
+  it("同一个词出现多次，每次都计数", () => {
+    const text = `${T("实体")}${T("实体")}${T("实体")}${T("实体")}`;
+    expect(terms(limitTerms(splitTerms(text), { source: SOURCE }))).toHaveLength(3);
+  });
+
+  it("没通过逐字校验的不占名额：先剔除，再数前 3 处", () => {
+    const text = `${T("编造的词")}、${T("实体")}、${T("样式")}、${T("绝对精神")}、${T("市民社会")}。`;
+    const segs = limitTerms(splitTerms(text), { source: SOURCE });
+    expect(terms(segs)).toEqual(["实体", "样式", "绝对精神"]);
+  });
+
+  it("定界符在任何情况下都不出现", () => {
+    const text = `${T("编造的词")}${T("实体")}${T("样式")}${T("绝对精神")}${T("市民社会")}${TERM_OPEN}未配对`;
+    for (const busy of [true, false]) {
+      const out = joined(limitTerms(splitTerms(text, busy), { source: SOURCE }));
+      expect(out).not.toContain(TERM_OPEN);
+      expect(out).not.toContain(TERM_CLOSE);
+    }
   });
 });

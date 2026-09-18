@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import type { GlossFailure } from "@/lib/gloss-client";
-import { splitTerms } from "@/lib/output";
+import { limitTerms, splitTerms } from "@/lib/output";
 import TermMark from "./TermMark";
 
 /**
@@ -48,10 +48,16 @@ export default function GlossPanel({
   ref,
   view,
   onRetry,
+  source,
 }: {
   ref?: Ref<HTMLDivElement>;
   view: GlossView;
   onRetry: () => void;
+  /**
+   * 被点击的原句。传了就逐字校验标记（标记里的词必须出现在原句里，G-08 验收 a）；
+   * 不传只做「每句最多 3 处」的上限。目前 Reader 还没有传（Reader.tsx 在 G-08 的「不改」清单里，待批准）
+   */
+  source?: string;
 }) {
   const chars = Array.from(view.text);
   const [reducedMotion] = useState(prefersReducedMotion);
@@ -123,7 +129,7 @@ export default function GlossPanel({
             按累计文本解析就不受分块边界影响。生成中未配对的左半边先按术语显示（右半边还没到），
             写完了仍未配对就按普通文字显示。定界符本身不会出现在任何一段里。
           */}
-          {splitTerms(chars.slice(0, visible).join(""), busy).map((seg, i) =>
+          {limitTerms(splitTerms(chars.slice(0, visible).join(""), busy), { source }).map((seg, i) =>
             seg.term ? <TermMark key={i}>{seg.text}</TermMark> : <span key={i}>{seg.text}</span>,
           )}
         </p>

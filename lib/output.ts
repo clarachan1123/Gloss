@@ -201,11 +201,12 @@ export function splitTerms(text: string, unterminatedIsTerm = false): GlossSegme
   const segments: GlossSegment[] = [];
   let buffer = "";
   let inTerm = false;
-  // 相邻的同类片段合并：空标记、未配对的符号被丢掉之后，两边的文字应当连成一段
+  // 相邻的普通文字合并：空标记、未配对的符号被丢掉之后，两边的文字应当连成一段。
+  // 相邻的两个术语（⟦实体⟧⟦样式⟧）不合并——它们是两个词，数量上限要分开计数
   const flush = (term: boolean) => {
     if (buffer !== "") {
       const last = segments.at(-1);
-      if (last && last.term === term) last.text += buffer;
+      if (last && !term && !last.term) last.text += buffer;
       else segments.push({ text: buffer, term });
     }
     buffer = "";
@@ -229,6 +230,41 @@ export function splitTerms(text: string, unterminatedIsTerm = false): GlossSegme
   }
   flush(inTerm && unterminatedIsTerm);
   return segments;
+}
+
+/** 一句白话里最多显示的术语标记数。标记的价值在稀少，满屏灰蓝等于没标（G-08 验收 b） */
+export const MAX_TERMS_PER_GLOSS = 3;
+
+/**
+ * 标记的含义是「这个词没给你改写」（2026-09-18 决定），所以显示前做两道本地检查，不靠模型自觉：
+ * ① 逐字校验：标记里的词必须原样出现在原句里（忽略空白），对不上的按普通文字显示（G-08 验收 a）；
+ * ② 数量上限：通过校验的标记按出现先后只保留前 max 处，其余按普通文字显示（验收 b）。
+ *
+ * 不传 source 时跳过逐字校验、只做数量上限。流式中途还没配上右半边的那一段也照样校验：
+ * 它是一个词的前半截，只要是原句里的词，前半截也一定出现在原句里。
+ * 被降级的片段与相邻的普通文字合并，读者看到的是一段连续的纯文本。
+ */
+export function limitTerms(
+  segments: GlossSegment[],
+  { source, max = MAX_TERMS_PER_GLOSS }: { source?: string; max?: number } = {},
+): GlossSegment[] {
+  const compact = (text: string) => text.replace(/\s/gu, "");
+  const haystack = source === undefined ? null : compact(source);
+  const out: GlossSegment[] = [];
+  let shown = 0;
+  for (const seg of segments) {
+    let term = seg.term;
+    if (term) {
+      const word = compact(seg.text);
+      const verbatim = haystack === null || (word !== "" && haystack.includes(word));
+      if (verbatim && shown < max) shown++;
+      else term = false;
+    }
+    const last = out.at(-1);
+    if (last && last.term === term && !term) last.text += seg.text;
+    else out.push({ text: seg.text, term });
+  }
+  return out;
 }
 
 /** 非流式场景（结构摘要）用的整段清洗 */

@@ -16,7 +16,7 @@ const AA_NORMAL_TEXT = 4.5;
 
 const CSS = readFileSync(path.resolve(__dirname, "../styles/tokens.css"), "utf8");
 
-type Token = "--paper-main" | "--paper-side" | "--ink" | "--gloss" | "--term";
+type Token = "--paper-main" | "--paper-side" | "--ink" | "--gloss" | "--term" | "--hover";
 
 /** 从 tokens.css 里取某套主题的色值。主题块按 [data-theme="…"] 分段 */
 function themeColors(theme: string): Record<Token, string> {
@@ -34,6 +34,7 @@ function themeColors(theme: string): Record<Token, string> {
     "--ink": read("--ink"),
     "--gloss": read("--gloss"),
     "--term": read("--term"),
+    "--hover": read("--hover"),
   };
 }
 
@@ -57,6 +58,11 @@ describe("三套主题的对比度", () => {
   it.each(THEMES)("%s：术语色在中栏底色上达 WCAG AA（≥ 4.5:1）", (theme) => {
     const c = themeColors(theme);
     expect(contrast(c["--term"], c["--paper-main"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+  });
+
+  it.each(THEMES)("%s：原句悬停色落在正文上，同样达 WCAG AA（≥ 4.5:1）", (theme) => {
+    const c = themeColors(theme);
+    expect(contrast(c["--hover"], c["--paper-main"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 
   it.each(THEMES)("%s：正文墨色与白话色也达 AA（术语不是唯一要读的字）", (theme) => {

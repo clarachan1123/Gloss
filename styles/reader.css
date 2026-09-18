@@ -233,7 +233,7 @@ body {
 }
 
 .sentence:hover {
-  color: var(--term);
+  color: var(--hover);
 }
 
 /* 撑开区（PRD 3.10）：不加框、不加底色，仅一条左竖线；白话与正文同字号，仅颜色浅一档 */

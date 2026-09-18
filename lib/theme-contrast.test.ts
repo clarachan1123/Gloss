@@ -85,3 +85,29 @@ describe("三套主题的对比度", () => {
     console.log(rows.join("\n"));
   });
 });
+
+/**
+ * 标记的视觉只有颜色（2026-09-18 Clara 定）：不要底色、下划线、边框、图标。
+ * white-space: nowrap 保留（整词不折行）。reader.css 里 .gloss-term 多一条别的属性，这里就失败。
+ */
+describe("术语标记只有颜色", () => {
+  const READER = readFileSync(path.resolve(__dirname, "../styles/reader.css"), "utf8");
+
+  it(".gloss-term 只有 color 与 white-space: nowrap 两条声明", () => {
+    const m = /\.gloss-term\s*\{([^}]*)\}/.exec(READER);
+    expect(m).not.toBeNull();
+    const decls = m![1]
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split(";")
+      .map((d) => d.trim())
+      .filter(Boolean)
+      .map((d) => d.split(":")[0].trim());
+    expect(decls.sort()).toEqual(["color", "white-space"]);
+    expect(m![1]).toMatch(/color:\s*var\(--term\)/);
+    expect(m![1]).toMatch(/white-space:\s*nowrap/);
+  });
+
+  it("reader.css 里只有一处给 .gloss-term 定样式（没有别处偷偷加底色）", () => {
+    expect(READER.match(/\.gloss-term\b/g)).toHaveLength(1);
+  });
+});

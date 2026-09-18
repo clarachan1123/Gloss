@@ -4,6 +4,7 @@ import {
   CHUNK_MIN_CHARS,
   GlossOutput,
   MAX_GLOSS_CHARS,
+  MAX_TERM_CHARS,
   MAX_TERMS_PER_GLOSS,
   MarkdownStripper,
   limitTerms,
@@ -265,9 +266,9 @@ describe("验收 b：一句白话最多 3 处标记", () => {
     expect(joined(segs)).toBe("实体、样式、绝对精神和市民社会。");
   });
 
-  it("同一个词出现多次，每次都计数", () => {
-    const text = `${T("实体")}${T("实体")}${T("实体")}${T("实体")}`;
-    expect(terms(limitTerms(splitTerms(text), { source: SOURCE }))).toHaveLength(3);
+  it("上限按不同的词计：重复出现的不占名额", () => {
+    const text = `${T("实体")}${T("实体")}${T("样式")}${T("绝对精神")}${T("市民社会")}`;
+    expect(terms(limitTerms(splitTerms(text), { source: SOURCE }))).toEqual(["实体", "样式", "绝对精神"]);
   });
 
   it("没通过逐字校验的不占名额：先剔除，再数前 3 处", () => {
@@ -283,5 +284,54 @@ describe("验收 b：一句白话最多 3 处标记", () => {
       expect(out).not.toContain(TERM_OPEN);
       expect(out).not.toContain(TERM_CLOSE);
     }
+  });
+});
+
+describe("同一段白话里，同一个词只标第一次出现（2026-09-18 Clara 定）", () => {
+  it("第二次及以后按普通文字显示，文字不丢", () => {
+    const text = `${T("实体")}先说一遍，${T("实体")}再说一遍，${T("实体")}第三遍。`;
+    const segs = limitTerms(splitTerms(text), { source: SOURCE });
+    expect(terms(segs)).toEqual(["实体"]);
+    expect(joined(segs)).toBe("实体先说一遍，实体再说一遍，实体第三遍。");
+  });
+
+  it("比对时忽略空白：「实 体」与「实体」算同一个词", () => {
+    const segs = limitTerms(splitTerms(`${T("实体")}和${T("实 体")}`), { source: SOURCE });
+    expect(terms(segs)).toEqual(["实体"]);
+  });
+
+  it("不同的词各标一次", () => {
+    const text = `${T("实体")}、${T("样式")}、${T("实体")}、${T("样式")}`;
+    expect(terms(limitTerms(splitTerms(text), { source: SOURCE }))).toEqual(["实体", "样式"]);
+  });
+});
+
+describe("标记长度上限：≤ 6 字", () => {
+  const LONG_SOURCE = "以另一个样式为条件的样式，斯宾诺莎主义，力，实在性，终极因。";
+
+  it("上限是 6", () => {
+    expect(MAX_TERM_CHARS).toBe(6);
+  });
+
+  it("整句短语不是术语：「以另一个样式为条件的样式」按普通文字显示", () => {
+    const segs = limitTerms(splitTerms(`指的是${T("以另一个样式为条件的样式")}。`), { source: LONG_SOURCE });
+    expect(terms(segs)).toEqual([]);
+    expect(joined(segs)).toBe("指的是以另一个样式为条件的样式。");
+  });
+
+  it("恰好 6 字的照标（斯宾诺莎主义），1 字的也照标（力）", () => {
+    const segs = limitTerms(splitTerms(`${T("斯宾诺莎主义")}讲${T("力")}`), { source: LONG_SOURCE });
+    expect(terms(segs)).toEqual(["斯宾诺莎主义", "力"]);
+  });
+
+  it("7 字按普通文字显示", () => {
+    const seven = "以另一个样式为";
+    expect(Array.from(seven)).toHaveLength(7);
+    expect(terms(limitTerms(splitTerms(T(seven)), { source: LONG_SOURCE }))).toEqual([]);
+  });
+
+  it("超长的不占名额", () => {
+    const text = `${T("以另一个样式为条件的样式")}${T("力")}${T("实在性")}${T("终极因")}`;
+    expect(terms(limitTerms(splitTerms(text), { source: LONG_SOURCE }))).toEqual(["力", "实在性", "终极因"]);
   });
 });

@@ -232,16 +232,26 @@ export function splitTerms(text: string, unterminatedIsTerm = false): GlossSegme
   return segments;
 }
 
-/** 一句白话里最多显示的术语标记数。标记的价值在稀少，满屏灰蓝等于没标（G-08 验收 b） */
+/** 一句白话里最多标几个不同的词。标记的价值在稀少，满屏灰蓝等于没标（G-08 验收 b） */
 export const MAX_TERMS_PER_GLOSS = 3;
 
 /**
- * 标记的含义是「这个词没给你改写」（2026-09-18 决定），所以显示前做两道本地检查，不靠模型自觉：
+ * 一个标记最长几个字。术语是名词性的概念词；「以另一个样式为条件的样式」这种整段短语不是术语，
+ * 超过这个长度的一律不标。名词性本身本地判断不了（要靠提示词），长度是本地能拦的那一半
+ */
+export const MAX_TERM_CHARS = 6;
+
+/**
+ * 标记的含义是「这个词没给你改写」（2026-09-18 决定），显示前按顺序做四道本地检查，不靠模型自觉：
  * ① 逐字校验：标记里的词必须原样出现在原句里（忽略空白），对不上的按普通文字显示（G-08 验收 a）；
- * ② 数量上限：通过校验的标记按出现先后只保留前 max 处，其余按普通文字显示（验收 b）。
+ * ② 长度：超过 MAX_TERM_CHARS 字的按普通文字显示；
+ * ③ 去重：同一个词只标第一次出现，第二次及以后按普通文字显示（2026-09-18 Clara 定）；
+ * ④ 数量：最多标 max 个不同的词，其余按普通文字显示（验收 b）。
+ * 没过前面几道的不占 ④ 的名额。
  *
- * 不传 source 时跳过逐字校验、只做数量上限。流式中途还没配上右半边的那一段也照样校验：
- * 它是一个词的前半截，只要是原句里的词，前半截也一定出现在原句里。
+ * 不传 source 时跳过 ①。流式中途还没配上右半边的那一段也照样检查：它是一个词的前半截，
+ * 只要是原句里的词，前半截也一定出现在原句里。代价是：一个已经标过的词第二次出现、
+ * 还没写完的那一两个字会先按术语显示，写完后才判成重复——文字每 45ms 放出 4 个字，至多闪一次。
  * 被降级的片段与相邻的普通文字合并，读者看到的是一段连续的纯文本。
  */
 export function limitTerms(
@@ -251,13 +261,15 @@ export function limitTerms(
   const compact = (text: string) => text.replace(/\s/gu, "");
   const haystack = source === undefined ? null : compact(source);
   const out: GlossSegment[] = [];
-  let shown = 0;
+  const shown = new Set<string>();
   for (const seg of segments) {
     let term = seg.term;
     if (term) {
       const word = compact(seg.text);
       const verbatim = haystack === null || (word !== "" && haystack.includes(word));
-      if (verbatim && shown < max) shown++;
+      const shortEnough = word !== "" && Array.from(word).length <= MAX_TERM_CHARS;
+      const firstTime = !shown.has(word);
+      if (verbatim && shortEnough && firstTime && shown.size < max) shown.add(word);
       else term = false;
     }
     const last = out.at(-1);

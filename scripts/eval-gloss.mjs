@@ -4,6 +4,7 @@
  * 用法：先 `npm run dev`，再
  *   跑一轮：node scripts/eval-gloss.mjs [base-url] [--items 文件] [--before-field 字段] [--label 名称]
  *                                        [--model deepseek-v4-pro] [--prompt gloss-v3] [--temperature 0.5]
+ *                                        [--structure none]
  *   盲测：  node scripts/eval-gloss.mjs --compare a.json b.json ... [--items 文件] [--before-field 字段]
  *                                        [--judge rank|clear] [--note "写进报告说明的话"]
  * 默认评测集是 test-fixtures/eval20.json。报告写到 test-fixtures/（已被 git 忽略：评测集和模型输出
@@ -30,6 +31,7 @@ const VALUE_FLAGS = new Set([
   "--items",
   "--before-field",
   "--judge",
+  "--structure",
 ]);
 const flag = (name) => {
   const at = args.indexOf(name);
@@ -68,6 +70,11 @@ const CLARA_FIELD = "Clara原批注_仅供语气参考_非标准答案";
  */
 const STRUCTURE =
   "雅各比《论斯宾诺莎的学说》，18 世纪末德国哲学书信体论辩。核心争论是斯宾诺莎主义是否等于宿命论与无神论，涉及实体、样式、充足理由律等概念。";
+const STRUCTURE_FLAG = flag("--structure");
+if (STRUCTURE_FLAG !== null && !["none", "null"].includes(STRUCTURE_FLAG)) {
+  throw new Error("--structure 只能是 none/null");
+}
+const REQUEST_STRUCTURE = STRUCTURE_FLAG === null ? STRUCTURE : null;
 
 const countChars = (text) => Array.from(text.replace(/\s/g, "")).length;
 
@@ -127,7 +134,7 @@ const SHARED_CSS = `
 
 async function glossOne(item) {
   // 显式只取这四项，别的字段（尤其是批注、备注）不可能被带进请求
-  const body = { sentence: item["原句"], before: item[BEFORE_FIELD], after: item["后文"], structure: STRUCTURE };
+  const body = { sentence: item["原句"], before: item[BEFORE_FIELD], after: item["后文"], structure: REQUEST_STRUCTURE };
   const startedAt = performance.now();
   const result = {
     status: null,
@@ -274,6 +281,7 @@ async function runEval() {
     beforeField: BEFORE_FIELD,
     items: showPath(ITEMS_FILE),
     date,
+    structure: REQUEST_STRUCTURE,
   };
   // 早先报告的默认参数不写进文件名；改了哪个才标哪个
   const modelTag = first.model && first.model !== "deepseek-flash" ? `-${first.model}` : "";

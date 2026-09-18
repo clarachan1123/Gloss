@@ -142,6 +142,24 @@ describe("streamChat 正常路径", () => {
   });
 });
 
+describe("本地慢上游地址只在开发环境生效", () => {
+  it("development 使用 DEEPSEEK_BASE_URL，便于无真实调用地复现首字慢", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("DEEPSEEK_BASE_URL", "http://127.0.0.1:3431/");
+    fetchMock.mockResolvedValue(sse([delta("本地首字。"), DONE]));
+    await collect(streamChat(options()));
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe("http://127.0.0.1:3431/chat/completions");
+  });
+
+  it("production 忽略 DEEPSEEK_BASE_URL，始终使用官方地址", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("DEEPSEEK_BASE_URL", "http://127.0.0.1:3431/");
+    fetchMock.mockResolvedValue(sse([delta("线上首字。"), DONE]));
+    await collect(streamChat(options()));
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe("https://api.deepseek.com/chat/completions");
+  });
+});
+
 describe("C1 超时", () => {
   it("上游迟迟不响应：到点抛 timeout", async () => {
     fetchMock.mockImplementation(hangUntilAborted);

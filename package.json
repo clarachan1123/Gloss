@@ -5,6 +5,7 @@
   "scripts": {
     "predev": "node scripts/copy-pdfjs-assets.mjs",
     "dev": "next dev",
+    "dev:slow-gloss": "node scripts/dev-slow-gloss.mjs",
     "prebuild": "node scripts/copy-pdfjs-assets.mjs",
     "build": "next build",
     "start": "next start",

@@ -28,7 +28,16 @@
  * 隐私：key 只从环境变量读，不进日志；上游错误的响应体可能回显请求内容，只记状态码，不透传给前端。
  */
 
-const BASE_URL = "https://api.deepseek.com";
+const DEFAULT_BASE_URL = "https://api.deepseek.com";
+
+/**
+ * 本地慢上游复现只允许在 development 覆盖地址；生产环境始终使用官方地址。
+ * 这样本地验证不会触发真实调用，也不会改变线上请求去向。
+ */
+function baseUrl(): string {
+  const override = process.env.NODE_ENV === "development" ? process.env.DEEPSEEK_BASE_URL : undefined;
+  return (override || DEFAULT_BASE_URL).replace(/\/$/, "");
+}
 
 export const MODEL_FAST = "deepseek-flash";
 export const MODEL_STRONG = "deepseek-v4-pro";
@@ -128,7 +137,7 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<st
   try {
     let response: Response;
     try {
-      response = await fetch(`${BASE_URL}/chat/completions`, {
+      response = await fetch(`${baseUrl()}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({

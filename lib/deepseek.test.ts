@@ -151,6 +151,14 @@ describe("本地慢上游地址只在开发环境生效", () => {
     expect((fetchMock.mock.calls[0] as [string])[0]).toBe("http://127.0.0.1:3431/chat/completions");
   });
 
+  it("development 忽略外部 DEEPSEEK_BASE_URL，避免把原句和 key 发到外部", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("DEEPSEEK_BASE_URL", "https://example.invalid");
+    fetchMock.mockResolvedValue(sse([delta("安全回退。"), DONE]));
+    await collect(streamChat(options()));
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe("https://api.deepseek.com/chat/completions");
+  });
+
   it("production 忽略 DEEPSEEK_BASE_URL，始终使用官方地址", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("DEEPSEEK_BASE_URL", "http://127.0.0.1:3431/");

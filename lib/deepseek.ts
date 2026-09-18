@@ -31,12 +31,22 @@
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 
 /**
- * 本地慢上游复现只允许在 development 覆盖地址；生产环境始终使用官方地址。
- * 这样本地验证不会触发真实调用，也不会改变线上请求去向。
+ * 本地慢上游复现只允许在 development 覆盖到 localhost 或 127.0.0.1；
+ * 其他地址一律忽略，避免原句和 key 被发到外部。生产环境始终使用官方地址。
  */
 function baseUrl(): string {
   const override = process.env.NODE_ENV === "development" ? process.env.DEEPSEEK_BASE_URL : undefined;
-  return (override || DEFAULT_BASE_URL).replace(/\/$/, "");
+  if (override) {
+    try {
+      const url = new URL(override);
+      if ((url.hostname === "127.0.0.1" || url.hostname === "localhost") && !url.username && !url.password) {
+        return override.replace(/\/$/, "");
+      }
+    } catch {
+      // 无效覆盖地址按外部地址处理，回退官方地址。
+    }
+  }
+  return DEFAULT_BASE_URL;
 }
 
 export const MODEL_FAST = "deepseek-flash";

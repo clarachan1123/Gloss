@@ -55,7 +55,7 @@ export default function GlossPanel({
   onRetry: () => void;
   /**
    * 被点击的原句。传了就逐字校验标记（标记里的词必须出现在原句里，G-08 验收 a）；
-   * 不传只做「每句最多 3 处」的上限。目前 Reader 还没有传（Reader.tsx 在 G-08 的「不改」清单里，待批准）
+   * 不传只做数量、长度、去重三道检查（Reader 从 2026-09-18 起传入）
    */
   source?: string;
 }) {

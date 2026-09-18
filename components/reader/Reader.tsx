@@ -553,6 +553,8 @@ export default function Reader({ docId }: { docId: string }) {
                   gloss={expanded ? glossView : undefined}
                   glossKey={expanded ? glossKey : undefined}
                   onRetry={expanded ? retryGloss : undefined}
+                  // 被点击的原句，供白话面板逐字校验术语标记（G-08 验收 a）。字符串按值比较，不破坏其余段落的 memo
+                  glossSource={expanded && activeIndex !== null ? sentences[activeIndex]?.text : undefined}
                 />
               );
             })}
@@ -604,10 +606,12 @@ interface ParagraphProps {
   /** undefined：本段未撑开；null：撑开区放在整段之后；数字：在该偏移处行尾拆分 */
   splitAt: number | null | undefined;
   panelRef: Ref<HTMLDivElement>;
-  /** 以下三项只有撑开的段落才有 */
+  /** 以下四项只有撑开的段落才有 */
   gloss?: GlossView;
   glossKey?: string;
   onRetry?: () => void;
+  /** 被点击的原句：白话里的术语标记必须逐字出自这里 */
+  glossSource?: string;
 }
 
 const noop = () => {};
@@ -638,6 +642,7 @@ const Paragraph = memo(function Paragraph({
   gloss,
   glossKey,
   onRetry,
+  glossSource,
 }: ParagraphProps) {
   const Tag: ElementType = heading ? HEADING_TAGS[Math.min(Math.max(heading.level, 1), 6) - 1] : "p";
   const className = heading ? "reader-heading" : "reader-para";
@@ -662,7 +667,13 @@ const Paragraph = memo(function Paragraph({
       >
         {renderPieces(head)}
       </Tag>
-      <GlossPanel key={glossKey} ref={panelRef} view={gloss ?? LOADING_VIEW} onRetry={onRetry ?? noop} />
+      <GlossPanel
+        key={glossKey}
+        ref={panelRef}
+        view={gloss ?? LOADING_VIEW}
+        onRetry={onRetry ?? noop}
+        source={glossSource}
+      />
       {tail.length > 0 && (
         <p data-para={paraIndex} className="reader-para reader-para-cont">
           {renderPieces(tail)}

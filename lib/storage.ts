@@ -1,4 +1,5 @@
 import type { ParsedDocument, ParsedFootnote, ParsedHeading } from "./parse/validate";
+import type { Sentence } from "./segment";
 
 /**
  * 本地存储：文档与阅读位置（G-04）、全书结构摘要（G-07）。白话存储不在这里（G-10）。
@@ -14,7 +15,9 @@ import type { ParsedDocument, ParsedFootnote, ParsedHeading } from "./parse/vali
 const DOC_PREFIX = "gloss:doc:";
 const POS_PREFIX = "gloss:pos:";
 const STRUCTURE_PREFIX = "gloss:structure:";
+const SAVED_GLOSS_PREFIX = "gloss:saved:";
 const SCHEMA_VERSION = 1;
+const SAVED_GLOSS_SCHEMA_VERSION = 1;
 
 export interface StoredDocument {
   version: typeof SCHEMA_VERSION;
@@ -24,6 +27,23 @@ export interface StoredDocument {
   footnotes: ParsedFootnote[];
   meta: ParsedDocument["meta"];
   savedAt: number;
+}
+
+export type SavedGlossKind = "saved" | "edited";
+
+/** 已保存白话的身份基于原文字符区间，不依赖会话用的全局句序号。 */
+export interface SavedGloss {
+  paraIndex: number;
+  start: number;
+  sourceHash: string;
+  text: string;
+  savedAt: number;
+  kind: SavedGlossKind;
+}
+
+interface SavedGlossRecord {
+  version: typeof SAVED_GLOSS_SCHEMA_VERSION;
+  entries: SavedGloss[];
 }
 
 /** PRD 3.9：E1 存储已满；E2 存储不可用（被禁用、隐私模式等） */
@@ -59,6 +79,107 @@ function getStorage(): Storage {
 function isQuotaError(err: unknown): boolean {
   const name = (err as { name?: unknown } | null)?.name;
   return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
+}
+
+function savedGlossKey(docId: string): string {
+  return SAVED_GLOSS_PREFIX + docId;
+}
+
+async function hashSentence(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function readSavedGlossRecord(docId: string): SavedGlossRecord {
+  const raw = getStorage().getItem(savedGlossKey(docId));
+  if (raw === null) return { version: SAVED_GLOSS_SCHEMA_VERSION, entries: [] };
+  try {
+    const record = JSON.parse(raw) as Partial<SavedGlossRecord> | null;
+    if (record?.version !== SAVED_GLOSS_SCHEMA_VERSION || !Array.isArray(record.entries)) {
+      return { version: SAVED_GLOSS_SCHEMA_VERSION, entries: [] };
+    }
+    return {
+      version: SAVED_GLOSS_SCHEMA_VERSION,
+      entries: record.entries.filter(isSavedGloss),
+    };
+  } catch {
+    return { version: SAVED_GLOSS_SCHEMA_VERSION, entries: [] };
+  }
+}
+
+function isSavedGloss(value: unknown): value is SavedGloss {
+  const item = value as Partial<SavedGloss> | null;
+  return (
+    typeof item?.paraIndex === "number" &&
+    Number.isInteger(item.paraIndex) &&
+    item.paraIndex >= 0 &&
+    typeof item.start === "number" &&
+    Number.isInteger(item.start) &&
+    item.start >= 0 &&
+    typeof item.sourceHash === "string" &&
+    typeof item.text === "string" &&
+    typeof item.savedAt === "number" &&
+    (item.kind === "saved" || item.kind === "edited")
+  );
+}
+
+function writeSavedGlossRecord(docId: string, record: SavedGlossRecord): void {
+  try {
+    getStorage().setItem(savedGlossKey(docId), JSON.stringify(record));
+  } catch (err) {
+    throw new StorageError(isQuotaError(err) ? "E1" : "E2", err);
+  }
+}
+
+/**
+ * 只对该文档已有的保存记录计算当前候选句的 hash。无效记录留在本地，供未来断句变化后的重新对位使用。
+ */
+export async function loadSavedGlosses(docId: string, sentences: readonly Sentence[]): Promise<Map<number, SavedGloss>> {
+  const record = readSavedGlossRecord(docId);
+  const byLocation = new Map(sentences.map((sentence) => [`${sentence.paraIndex}:${sentence.start}`, sentence]));
+  const matches = await Promise.all(
+    record.entries.map(async (entry) => {
+      const sentence = byLocation.get(`${entry.paraIndex}:${entry.start}`);
+      if (!sentence || (await hashSentence(sentence.text)) !== entry.sourceHash) return null;
+      return [sentence.index, entry] as const;
+    }),
+  );
+  return new Map(matches.filter((match): match is readonly [number, SavedGloss] => match !== null));
+}
+
+/** 保存当时屏幕显示的原始白话文本；编辑版字段仅预留，G-17 才会写入 edited。 */
+export async function saveSavedGloss(
+  docId: string,
+  sentence: Pick<Sentence, "paraIndex" | "start" | "text">,
+  text: string,
+  kind: SavedGlossKind = "saved",
+): Promise<SavedGloss> {
+  const entry: SavedGloss = {
+    paraIndex: sentence.paraIndex,
+    start: sentence.start,
+    sourceHash: await hashSentence(sentence.text),
+    text,
+    savedAt: Date.now(),
+    kind,
+  };
+  const record = readSavedGlossRecord(docId);
+  record.entries = record.entries.filter((item) => item.paraIndex !== entry.paraIndex || item.start !== entry.start);
+  record.entries.push(entry);
+  writeSavedGlossRecord(docId, record);
+  return entry;
+}
+
+/** 取消当前字符区间的保存；写入成功后调用方才可以切换 UI 状态。 */
+export async function removeSavedGloss(
+  docId: string,
+  sentence: Pick<Sentence, "paraIndex" | "start" | "text">,
+): Promise<void> {
+  const sourceHash = await hashSentence(sentence.text);
+  const record = readSavedGlossRecord(docId);
+  record.entries = record.entries.filter(
+    (entry) => entry.paraIndex !== sentence.paraIndex || entry.start !== sentence.start || entry.sourceHash !== sourceHash,
+  );
+  writeSavedGlossRecord(docId, record);
 }
 
 /** 保存文档，返回 docId。存储已满抛 StorageError("E1")，不可用抛 StorageError("E2") */

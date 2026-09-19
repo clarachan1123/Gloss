@@ -155,6 +155,35 @@ body {
   white-space: nowrap;
 }
 
+/* G-10a：轻量操作，和正文争夺注意力时仍保持全描边、非主按钮。 */
+.settings-cache-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.settings-cache-button,
+.action-row-save {
+  padding: 4px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.settings-cache-result,
+.action-row-notice {
+  color: var(--gloss);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 /* ---------------- 正文排版（PRD 3.10） ---------------- */
 
 /*
@@ -311,6 +340,29 @@ body {
   text-decoration: none;
   cursor: default;
   opacity: 0.6;
+}
+
+/* 操作行从撑开区出现时就占位；提示绝对定位，不改变正文布局。 */
+.action-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  margin-top: 0.5em;
+}
+
+.action-row-save:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.action-row-notice {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 1;
+  padding: 2px 4px;
+  background: var(--paper);
 }
 
 .reader-notes {

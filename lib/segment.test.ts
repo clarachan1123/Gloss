@@ -308,3 +308,40 @@ describe("B2 超长句切分", () => {
     expect(texts([chunk(120) + "，" + chunk(128) + "。"])).toHaveLength(1);
   });
 });
+
+describe("G-10a 段内 UTF-16 起始下标", () => {
+  const expectOriginalSlices = (paragraphs: string[]) => {
+    for (const sentence of sentencesOf(paragraphs)) {
+      expect(paragraphs[sentence.paraIndex].slice(sentence.start, sentence.start + sentence.text.length)).toBe(sentence.text);
+    }
+  };
+
+  it("普通多句、段首全角空格与重复句都按原段落精确定位", () => {
+    const paragraphs = ["　　甲。甲。", "重复。重复。"];
+    const sentences = sentencesOf(paragraphs);
+    expect(sentences.map((s) => [s.paraIndex, s.start, s.text])).toEqual([
+      [0, 0, "　　甲。"],
+      [0, 4, "甲。"],
+      [1, 0, "重复。"],
+      [1, 3, "重复。"],
+    ]);
+    expectOriginalSlices(paragraphs);
+  });
+
+  it("B2 二次切分的每一片仍能用起始下标切回原文", () => {
+    const long = Array.from({ length: 6 }, () => chunk(100) + "，").join("") + chunk(10) + "。";
+    const sentences = sentencesOf([long]);
+    expect(sentences).toHaveLength(3);
+    expect(sentences.map((s) => s.start)).toEqual([0, sentences[0].text.length, sentences[0].text.length + sentences[1].text.length]);
+    expectOriginalSlices([long]);
+  });
+
+  it("非 BMP 字符按 JS UTF-16 下标累计", () => {
+    const paragraphs = ["😀甲。😀乙。"];
+    expect(sentencesOf(paragraphs).map((s) => [s.start, s.text])).toEqual([
+      [0, "😀甲。"],
+      [4, "😀乙。"],
+    ]);
+    expectOriginalSlices(paragraphs);
+  });
+});

@@ -2,14 +2,18 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assembleDocument, type ParseFormat } from "./parse/validate";
+import { segmentParagraphs } from "./segment";
 import {
   StorageError,
   computeDocId,
   loadDocument,
   loadReadingPosition,
+  loadSavedGlosses,
   loadStructure,
+  removeSavedGloss,
   saveDocument,
   saveReadingPosition,
+  saveSavedGloss,
   saveStructure,
 } from "./storage";
 
@@ -264,5 +268,60 @@ describe("meta.skipped 随文档存取，老记录照常打开", () => {
     const loaded = loadDocument("old00000");
     expect(loaded?.paragraphs).toEqual(["甲。", "乙。"]);
     expect(loaded?.meta.skipped).toBeUndefined();
+  });
+});
+
+describe("G-10a 保存白话身份", () => {
+  const docId = "saved000";
+  const savedKey = `gloss:saved:${docId}`;
+
+  it("只在 docId、段落、起点与原句 hash 都一致时显示，并保留术语定界符原样文本", async () => {
+    const paragraphs = ["甲。乙。"];
+    const sentence = segmentParagraphs(paragraphs).sentences[1];
+    await saveSavedGloss(docId, sentence, "〔乙〕就是第二句。");
+    const visible = await loadSavedGlosses(docId, segmentParagraphs(paragraphs).sentences);
+    expect(visible.get(1)?.text).toBe("〔乙〕就是第二句。");
+    expect(JSON.parse(localStorage.getItem(savedKey) ?? "{}").entries[0]).toMatchObject({
+      paraIndex: 0,
+      start: 2,
+      kind: "saved",
+    });
+  });
+
+  it("起点不存在或同起点 hash 不同都隐藏，原记录不删除", async () => {
+    const original = segmentParagraphs(["甲。乙。"]).sentences[1];
+    await saveSavedGloss(docId, original, "保存版");
+
+    expect(await loadSavedGlosses(docId, segmentParagraphs(["甲。"]).sentences)).toEqual(new Map());
+    expect(localStorage.getItem(savedKey)).not.toBeNull();
+    expect(await loadSavedGlosses(docId, segmentParagraphs(["甲。丙。乙。"]).sentences)).toEqual(new Map());
+    expect(localStorage.getItem(savedKey)).not.toBeNull();
+  });
+
+  it("重复句只匹配各自的段内起点，全局句序号变化不参与持久身份", async () => {
+    const paragraphs = ["重复。重复。"];
+    const original = segmentParagraphs(paragraphs).sentences;
+    await saveSavedGloss(docId, original[1], "第二个重复句的保存版");
+
+    const shiftedIndexes = original.map((sentence) => ({ ...sentence, index: sentence.index + 20 }));
+    const visible = await loadSavedGlosses(docId, shiftedIndexes);
+    expect(visible.size).toBe(1);
+    expect(visible.get(21)?.text).toBe("第二个重复句的保存版");
+    expect(visible.get(20)).toBeUndefined();
+  });
+
+  it("取消保存只删除当前句，写入失败不会伪装成已保存", async () => {
+    const sentences = segmentParagraphs(["甲。乙。"]).sentences;
+    await saveSavedGloss(docId, sentences[0], "甲版");
+    await saveSavedGloss(docId, sentences[1], "乙版");
+    await removeSavedGloss(docId, sentences[0]);
+    const remaining = await loadSavedGlosses(docId, sentences);
+    expect([...remaining.values()].map((entry) => entry.text)).toEqual(["乙版"]);
+
+    vi.stubGlobal("localStorage", {
+      getItem: () => null,
+      setItem: () => { throw new DOMException("full", "QuotaExceededError"); },
+    });
+    await expect(saveSavedGloss(docId, sentences[0], "不会保存")).rejects.toMatchObject({ code: "E1" });
   });
 });

@@ -15,6 +15,7 @@ import {
   type Ref,
 } from "react";
 import Notice from "@/components/Notice";
+import SettingsPanel from "@/components/settings/SettingsPanel";
 import {
   lookupPreloadedGloss,
   mergePreloadedGlosses,
@@ -31,16 +32,18 @@ import {
   StorageError,
   loadDocument,
   loadReadingPosition,
+  loadSavedGlosses,
   loadStructure,
+  removeSavedGloss,
+  saveSavedGloss,
   saveReadingPosition,
   saveStructure,
+  type SavedGloss,
+  type StorageErrorCode,
   type StoredDocument,
 } from "@/lib/storage";
 import GlossPanel, { LOADING_VIEW, type GlossView } from "./GlossPanel";
 import Sentence from "./Sentence";
-
-/** PRD 3.5 M1 设置面板六项。本 issue 只做骨架，无控件 */
-const SETTINGS = ["呈现模式", "保存形态", "导出形态", "字号", "行距", "纸面底色"];
 
 /** 滚动停下多久后保存阅读位置 */
 const SAVE_DELAY_MS = 300;
@@ -59,7 +62,7 @@ const VISIBLE_MARGIN_PX = 16;
 
 type LoadState =
   | { status: "loading" }
-  | { status: "ready"; doc: StoredDocument }
+  | { status: "ready"; doc: StoredDocument; savedGlosses: Map<number, SavedGloss> }
   | { status: "missing" }
   | { status: "unavailable" };
 
@@ -108,6 +111,20 @@ interface Animation {
   timer?: number;
 }
 
+const EMPTY_SAVED_GLOSSES = new Map<number, SavedGloss>();
+
+/** 取消保存后保留正在看的版本，仅供本会话再次打开命中；绝不写入 IndexedDB。 */
+export function retainGlossAfterUnsave(
+  memory: Map<number, MemoryGloss>,
+  index: number,
+  view: GlossView,
+  hasStructure: boolean,
+): void {
+  if (!memory.has(index) && view.status === "done") {
+    memory.set(index, { text: view.text, hasStructure, source: "session", shown: true });
+  }
+}
+
 export default function Reader({ docId }: { docId: string }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [expansion, setExpansion] = useState<Expansion | null>(null);
@@ -124,22 +141,47 @@ export default function Reader({ docId }: { docId: string }) {
   const [retryCount, setRetryCount] = useState(0);
   /** 本次会话与 IndexedDB 预载的自动白话；只放 ref，预载完成不触发段落重渲染。 */
   const glossMemoRef = useRef(new Map<number, MemoryGloss>());
+  /** 保存区更新只供点击与请求 effect 查询；不会因保存／取消保存重跑请求 effect。 */
+  const savedGlossesRef = useRef<Map<number, SavedGloss>>(EMPTY_SAVED_GLOSSES);
   const glossAbortRef = useRef<AbortController | null>(null);
   /** 全书结构摘要；开书时后台算，算好之前为 null */
   const structureRef = useRef<string | null>(null);
   const cachePreloadTokenRef = useRef(0);
 
   useEffect(() => {
+    let cancelled = false;
+    savedGlossesRef.current = EMPTY_SAVED_GLOSSES;
     try {
       const doc = loadDocument(docId);
-      setState(doc ? { status: "ready", doc } : { status: "missing" });
+      if (!doc) {
+        setState({ status: "missing" });
+        return;
+      }
+      // Web Crypto 的身份核对完成前不提交正文，避免先出现原文、随后插入保存白话。
+      const currentSentences = segmentParagraphs(doc.paragraphs).sentences;
+      void loadSavedGlosses(docId, currentSentences)
+        .then((savedGlosses) => {
+          if (cancelled) return;
+          savedGlossesRef.current = savedGlosses;
+          setState({ status: "ready", doc, savedGlosses });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // 保存区损坏或核对失败不能阻塞阅读；本次按空保存区继续，原记录仍不删除。
+          savedGlossesRef.current = EMPTY_SAVED_GLOSSES;
+          setState({ status: "ready", doc, savedGlosses: EMPTY_SAVED_GLOSSES });
+        });
     } catch (err) {
       if (!(err instanceof StorageError)) throw err;
       setState({ status: "unavailable" });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [docId]);
 
   const doc = state.status === "ready" ? state.doc : null;
+  const savedGlosses = state.status === "ready" ? state.savedGlosses : EMPTY_SAVED_GLOSSES;
 
   // 不存 sentences，每次加载重算（G-03 保证确定性）
   const sentences = useMemo(() => (doc ? segmentParagraphs(doc.paragraphs).sentences : []), [doc]);
@@ -285,12 +327,17 @@ export default function Reader({ docId }: { docId: string }) {
     const splitAt = headingByParagraph.has(sentence.paraIndex)
       ? null
       : measureSplit(body, sentence.paraIndex, index);
-    const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null);
     // 命中必须和撑开状态同一批 React 更新：第一次 DOM 更新直接放完整白话，不先经过加载态。
-    if (cacheLookup.status === "hit") {
-      const entry = glossMemoRef.current.get(index);
-      if (entry) entry.shown = true;
-      setGloss({ index, view: { status: "done", text: cacheLookup.entry.text, failure: null, instant: true } });
+    const saved = savedGlosses.get(index);
+    if (saved) {
+      setGloss({ index, view: { status: "done", text: saved.text, failure: null, instant: true } });
+    } else {
+      const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null);
+      if (cacheLookup.status === "hit") {
+        const entry = glossMemoRef.current.get(index);
+        if (entry) entry.shown = true;
+        setGloss({ index, view: { status: "done", text: cacheLookup.entry.text, failure: null, instant: true } });
+      }
     }
     // 切换句子时，前一个撑开区在同一次提交里直接移除（不播收起动画），参照物是新点的这一行
     commit(
@@ -473,6 +520,8 @@ export default function Reader({ docId }: { docId: string }) {
   const activeIndex = expansion?.index ?? null;
   useEffect(() => {
     if (activeIndex === null) return;
+    // 保存区优先于预载缓存；命中时既不读缓存，也不请求接口。
+    if (savedGlossesRef.current.has(activeIndex)) return;
     const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, activeIndex, structureRef.current !== null);
     if (cacheLookup.status === "hit") {
       return;
@@ -502,6 +551,40 @@ export default function Reader({ docId }: { docId: string }) {
 
   const retryGloss = useCallback(() => setRetryCount((n) => n + 1), []);
   const glossView = gloss && gloss.index === activeIndex ? gloss.view : LOADING_VIEW;
+  const currentSaved = activeIndex !== null && savedGlosses.has(activeIndex);
+  const toggleSavedGloss = useCallback(async (): Promise<"saved" | "removed" | StorageErrorCode> => {
+    if (activeIndex === null) return "E2";
+    const sentence = sentences[activeIndex];
+    if (!sentence) return "E2";
+
+    try {
+      if (savedGlosses.has(activeIndex)) {
+        await removeSavedGloss(docId, sentence);
+        // 取消保存是读者自己的操作，但不应替换眼前的白话或触发新请求。
+        retainGlossAfterUnsave(glossMemoRef.current, activeIndex, glossView, structureRef.current !== null);
+        const next = new Map(savedGlossesRef.current);
+        next.delete(activeIndex);
+        savedGlossesRef.current = next;
+        setState((current) => {
+          if (current.status !== "ready") return current;
+          return { ...current, savedGlosses: next };
+        });
+        return "removed";
+      }
+      if (glossView.status !== "done") return "E2";
+      const entry = await saveSavedGloss(docId, sentence, glossView.text);
+      const next = new Map(savedGlossesRef.current).set(activeIndex, entry);
+      savedGlossesRef.current = next;
+      setState((current) => {
+        if (current.status !== "ready") return current;
+        return { ...current, savedGlosses: next };
+      });
+      return "saved";
+    } catch (err) {
+      if (!(err instanceof StorageError)) throw err;
+      return err.code;
+    }
+  }, [activeIndex, docId, glossView, savedGlosses, sentences]);
   // 每次重试换一个 key，撑开区重新挂载，逐块放字的进度从头开始
   const glossKey = `${activeIndex}:${retryCount}`;
 
@@ -594,6 +677,8 @@ export default function Reader({ docId }: { docId: string }) {
                   gloss={expanded ? glossView : undefined}
                   glossKey={expanded ? glossKey : undefined}
                   onRetry={expanded ? retryGloss : undefined}
+                  saved={expanded ? currentSaved : false}
+                  onSave={expanded ? toggleSavedGloss : undefined}
                   // 被点击的原句，供白话面板逐字校验术语标记（G-08 验收 a）。字符串按值比较，不破坏其余段落的 memo
                   glossSource={expanded && activeIndex !== null ? sentences[activeIndex]?.text : undefined}
                 />
@@ -614,14 +699,7 @@ export default function Reader({ docId }: { docId: string }) {
       </main>
 
       <aside className="col col-right" aria-labelledby="settings-title">
-        <h2 id="settings-title" className="side-title">
-          设置
-        </h2>
-        <ul className="settings-skeleton">
-          {SETTINGS.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
+        <SettingsPanel />
       </aside>
     </div>
   );
@@ -651,11 +729,14 @@ interface ParagraphProps {
   gloss?: GlossView;
   glossKey?: string;
   onRetry?: () => void;
+  saved: boolean;
+  onSave?: () => Promise<"saved" | "removed" | StorageErrorCode>;
   /** 被点击的原句：白话里的术语标记必须逐字出自这里 */
   glossSource?: string;
 }
 
 const noop = () => {};
+const unavailableSave = async (): Promise<StorageErrorCode> => "E2";
 
 /** 功能一的上下文窗口：目标句 + 前后各至多 2 句（跨段照取）+ 全书结构摘要 */
 function glossInput(sentences: SentenceData[], index: number, structure: string | null) {
@@ -683,6 +764,8 @@ const Paragraph = memo(function Paragraph({
   gloss,
   glossKey,
   onRetry,
+  saved,
+  onSave,
   glossSource,
 }: ParagraphProps) {
   const Tag: ElementType = heading ? HEADING_TAGS[Math.min(Math.max(heading.level, 1), 6) - 1] : "p";
@@ -713,6 +796,8 @@ const Paragraph = memo(function Paragraph({
         ref={panelRef}
         view={gloss ?? LOADING_VIEW}
         onRetry={onRetry ?? noop}
+        saved={saved}
+        onSave={onSave ?? unavailableSave}
         source={glossSource}
       />
       {tail.length > 0 && (

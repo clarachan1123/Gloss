@@ -26,6 +26,11 @@ export interface Sentence {
   index: number;
   /** 所在段落在 paragraphs 中的下标 */
   paraIndex: number;
+  /**
+   * 本句在原始 paragraphs[paraIndex] 中的 JS 字符串下标（UTF-16 code unit）。
+   * 保存白话用它区分同段内的重复句；它不参与切句规则。
+   */
+  start: number;
   /** 原文原样，含段首全角空格 */
   text: string;
   /** countChars(text)，与 G-02 的 charCount 同一口径 */
@@ -69,6 +74,9 @@ export function segmentParagraphs(paragraphs: string[]): SegmentResult {
   paragraphs.forEach((paragraph, paraIndex) => {
     if (paragraph.trim() === "") return;
 
+    // splitByTerminators / splitLong 都只切分、不改写字符；累加 .length 即为原段落的 UTF-16 下标。
+    let start = 0;
+
     const chars = Array.from(paragraph);
     let { pieces, unclosed } = splitByTerminators(chars, true);
     const pairsTrusted = !unclosed;
@@ -79,7 +87,8 @@ export function segmentParagraphs(paragraphs: string[]): SegmentResult {
 
     for (const piece of pieces) {
       for (const text of splitLong(piece, pairsTrusted)) {
-        const sentence = { index: sentences.length, paraIndex, text, charCount: countChars(text) };
+        const sentence = { index: sentences.length, paraIndex, start, text, charCount: countChars(text) };
+        start += text.length;
         if (sentence.charCount > MAX_SENTENCE_CHARS) {
           console.warn(`[Gloss] 句子超过 ${MAX_SENTENCE_CHARS} 字且无可切点（整句在成对标点内或无句中标点）`, {
             index: sentence.index,

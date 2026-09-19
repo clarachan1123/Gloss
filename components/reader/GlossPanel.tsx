@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import type { GlossFailure } from "@/lib/gloss-client";
 import { limitTerms, splitTerms } from "@/lib/output";
+import type { StorageErrorCode } from "@/lib/storage";
+import ActionRow from "./ActionRow";
 import TermMark from "./TermMark";
 
 /**
@@ -54,11 +56,15 @@ export default function GlossPanel({
   ref,
   view,
   onRetry,
+  saved,
+  onSave,
   source,
 }: {
   ref?: Ref<HTMLDivElement>;
   view: GlossView;
   onRetry: () => void;
+  saved: boolean;
+  onSave: () => Promise<"saved" | "removed" | StorageErrorCode>;
   /**
    * 被点击的原句。传了就逐字校验标记（标记里的词必须出现在原句里，G-08 验收 a）；
    * 不传只做数量、长度、去重三道检查（Reader 从 2026-09-18 起传入）
@@ -170,6 +176,7 @@ export default function GlossPanel({
           )}
         </p>
       )}
+      <ActionRow saved={saved} disabled={view.status !== "done" || revealing} onToggle={onSave} />
     </div>
   );
 }

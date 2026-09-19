@@ -3,7 +3,6 @@ import {
   CURRENT_GLOSS_CACHE_RUNTIME,
   GLOSS_CACHE_SCHEMA_VERSION,
   addRecord,
-  discardUnshownNoStructurePreloads,
   hashGlossContext,
   lookupPreloadedGloss,
   makeGlossCacheKey,
@@ -31,18 +30,6 @@ async function record(hasStructure: boolean, text: string): Promise<GlossCacheRe
 }
 
 describe("G-09 自动缓存键", () => {
-  it("摘要就绪后保留本会话已看过的无摘要白话，仍命中而不请求", () => {
-    const memory = new Map([[1, { text: "会话白话", hasStructure: false, source: "session" as const, shown: true }]]);
-    discardUnshownNoStructurePreloads(memory);
-    expect(lookupPreloadedGloss(memory, 1, true).status).toBe("hit");
-  });
-
-  it("摘要就绪后保留已展示的无摘要预载白话，仍命中而不请求", () => {
-    const memory = new Map([[1, { text: "已展示预载", hasStructure: false, source: "preload" as const, shown: true }]]);
-    discardUnshownNoStructurePreloads(memory);
-    expect(lookupPreloadedGloss(memory, 1, true)).toMatchObject({ status: "hit", entry: { text: "已展示预载" } });
-  });
-
   it("预载晚于成功生成时不丢会话结果，也不覆盖已有条目", () => {
     const memory = new Map([[2, { text: "刚生成", hasStructure: false, source: "session" as const, shown: true }]]);
     mergePreloadedGlosses(memory, new Map([[2, { text: "旧预载", hasStructure: true }], [3, { text: "新预载", hasStructure: true }]]));
@@ -50,21 +37,15 @@ describe("G-09 自动缓存键", () => {
     expect(memory.get(3)?.text).toBe("新预载");
   });
 
-  it("摘要就绪只删除未展示的无摘要预载条目", () => {
-    const memory = new Map([
-      [1, { text: "未展示", hasStructure: false, source: "preload" as const, shown: false }],
-      [2, { text: "已展示", hasStructure: false, source: "preload" as const, shown: true }],
-    ]);
-    discardUnshownNoStructurePreloads(memory);
-    expect([...memory.keys()]).toEqual([2]);
-  });
-  it("暴露命中 / 未命中接口给 G-15，带摘要时不采用无摘要条目", () => {
+  it("暴露命中 / 未命中接口给 G-15，当前摘要状态不拒绝无摘要条目", () => {
     const entries = new Map([[3, { text: "已缓存", hasStructure: false }]]);
-    expect(lookupPreloadedGloss(entries, 3, false)).toEqual({
-      status: "hit",
-      entry: { text: "已缓存", hasStructure: false },
-    });
-    expect(lookupPreloadedGloss(entries, 3, true)).toEqual({ status: "miss" });
+    expect(lookupPreloadedGloss(entries, 3, false)).toEqual({ status: "hit", entry: { text: "已缓存", hasStructure: false } });
+    expect(lookupPreloadedGloss(entries, 3, true)).toEqual({ status: "hit", entry: { text: "已缓存", hasStructure: false } });
+  });
+
+  it("只有无摘要条目且当前有摘要状态时查找命中", () => {
+    const entries = new Map([[4, { text: "无摘要白话", hasStructure: false }]]);
+    expect(lookupPreloadedGloss(entries, 4, true)).toEqual({ status: "hit", entry: { text: "无摘要白话", hasStructure: false } });
   });
 
   it("两个只差一个空白字符的实际请求得到不同上下文 hash", async () => {
@@ -73,7 +54,7 @@ describe("G-09 自动缓存键", () => {
     expect(left).not.toBe(right);
   });
 
-  it("有摘要时只接受有摘要条目；无摘要时优先有摘要条目", async () => {
+  it("两种条目都有时预载优先带摘要条目", async () => {
     const withStructure = await record(true, "带摘要白话");
     const withoutStructure = await record(false, "无摘要白话");
     const contextHash = await hashGlossContext(input);
@@ -81,11 +62,20 @@ describe("G-09 自动缓存键", () => {
       text: "带摘要白话",
       hasStructure: true,
     });
-    expect(selectRecord([withoutStructure], "12345678", contextHash, CURRENT_GLOSS_CACHE_RUNTIME, true)).toBeNull();
+    expect(selectRecord([withoutStructure], "12345678", contextHash, CURRENT_GLOSS_CACHE_RUNTIME, true)).toEqual({
+      text: "无摘要白话",
+      hasStructure: false,
+    });
     expect(selectRecord([withoutStructure, withStructure], "12345678", contextHash, CURRENT_GLOSS_CACHE_RUNTIME, false)).toEqual({
       text: "带摘要白话",
       hasStructure: true,
     });
+  });
+
+  it("摘要后来就绪时，未展示的无摘要预载由带摘要预载替换", () => {
+    const memory = new Map([[5, { text: "无摘要白话", hasStructure: false, source: "preload" as const, shown: false }]]);
+    mergePreloadedGlosses(memory, new Map([[5, { text: "带摘要白话", hasStructure: true }]]));
+    expect(memory.get(5)).toMatchObject({ text: "带摘要白话", hasStructure: true, source: "preload", shown: false });
   });
 });
 

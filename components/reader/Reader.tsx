@@ -167,8 +167,10 @@ export default function Reader({ docId }: { docId: string }) {
   const preloadAutoGloss = useCallback(
     (structure: string | null) => {
       const token = ++cachePreloadTokenRef.current;
+      performance.mark("gloss:preload:start");
       void preloadGlossCache(docId, cacheInputs, structure).then((entries) => {
         if (cachePreloadTokenRef.current === token) glossMemoRef.current = entries;
+        performance.mark("gloss:preload:end");
       });
     },
     [cacheInputs, docId],

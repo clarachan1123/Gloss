@@ -302,6 +302,8 @@ gloss/
 - [ ] **用户编辑版本绝不写入自动缓存**（D12）
 - [ ] 带摘要时只接受带摘要条目；无摘要时优先带摘要条目、没有才取无摘要条目。结构摘要就绪后无摘要候选失效
 - [ ] 只缓存收到上游 `[DONE]` 后的完整成功输出；中止、超时、失败、离页中断、未收到 `[DONE]` 均不写入
+      。未收到 `[DONE]` 且首字前 EOF 时沿用既有“暂时无法生成。”；首字后 EOF 时沿用既有“网络中断，这段白话没有写完。”；两者均不触发 G-34 重试。
+      结构摘要未收到 `[DONE]` 时按失败处理，不保存半截摘要
 - [ ] 命中时点击与撑开状态同一批 DOM 更新即显示完整白话（instant），不先显示加载态；开书预载只写 ref，不触发段落重渲染。
       预载未完成的点击按未命中立即生成，允许这个短窗口内重复调用
 - [ ] 读写失败（含无痕、存储禁用）按未命中静默降级；QuotaExceededError 时先删非当前版本条目、重试一次，仍失败放弃；不做 LRU
@@ -313,6 +315,11 @@ gloss/
 `lib/output.ts`、`lib/output.test.ts`、`components/reader/Reader.tsx`、`KANBAN.md`、`PRD.md`
 **不改**：`app/api/gloss/route.ts`、`lib/gloss-client.ts`、`lib/storage.ts`、`components/reader/GlossPanel.tsx`、`styles/**`、`lib/prompts/**`、`package.json`
 **回滚**：`git revert`。缓存可直接清空，无数据迁移风险
+
+**已知风险（2026-09-19，仅记录，不开卡）**：上传与阅读器文档仍依赖 localStorage。`lib/storage.ts` 的 `getStorage()` 读取
+`globalThis.localStorage`；不可用时抛 E2，上传页显示“当前浏览器禁止本地存储，暂时无法打开阅读器。”，不会进入阅读器。
+按 5 MiB = 5 × 1024 × 1024 = 5,242,880 bytes、UTF-16 localStorage 约每字符 2 bytes，且暂不计 JSON key / 元数据：
+3037 字序言约 6,074 bytes，第 863 本后约剩 1,018 bytes、第 864 本触发 5 MiB；50,000 字书约 100,000 bytes，第 52 本后约剩 42,880 bytes、第 53 本触发 5 MiB。
 
 ---
 

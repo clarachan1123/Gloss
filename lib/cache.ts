@@ -58,14 +58,13 @@ export function mergePreloadedGlosses(
   preloaded: ReadonlyMap<number, PreloadedGloss>,
 ): void {
   for (const [index, entry] of preloaded) {
-    if (!memory.has(index)) memory.set(index, { ...entry, source: "preload", shown: false });
-  }
-}
-
-/** 摘要就绪后仅丢弃未展示的无摘要预载候选；会话结果永远保留。 */
-export function discardUnshownNoStructurePreloads(memory: Map<number, MemoryGloss>): void {
-  for (const [index, entry] of memory) {
-    if (entry.source === "preload" && !entry.shown && !entry.hasStructure) memory.delete(index);
+    const existing = memory.get(index);
+    if (!existing) {
+      memory.set(index, { ...entry, source: "preload", shown: false });
+    } else if (existing.source === "preload" && !existing.shown && !existing.hasStructure && entry.hasStructure) {
+      // R2：摘要后来就绪时，用优先级更高的带摘要预载替换尚未展示的无摘要预载。
+      memory.set(index, { ...entry, source: "preload", shown: false });
+    }
   }
 }
 
@@ -77,12 +76,11 @@ export type GlossCacheLookup =
 export function lookupPreloadedGloss(
   entries: ReadonlyMap<number, PreloadedGloss>,
   index: number,
-  hasStructure: boolean,
+  _hasStructure: boolean,
 ): GlossCacheLookup {
   const entry = entries.get(index);
-  // R2 只约束尚未展示的 IndexedDB 预载候选；本会话已展示的完整结果必须始终稳定。
-  const isShown = entry && "shown" in entry && entry.shown;
-  if (!entry || (hasStructure && !entry.hasStructure && !isShown)) return { status: "miss" };
+  // R2：无论当前摘要状态，优先带摘要；没有才回退到无摘要，避免重开书后二次生成。
+  if (!entry) return { status: "miss" };
   return { status: "hit", entry };
 }
 
@@ -170,19 +168,18 @@ export function selectRecord(
   docId: string,
   contextHash: string,
   runtime: GlossCacheRuntime,
-  currentHasStructure: boolean,
+  _currentHasStructure: boolean,
 ): PreloadedGloss | null {
   const withStructureKey = makeGlossCacheKey({ docId, contextHash, runtime, hasStructure: true });
   const withoutStructureKey = makeGlossCacheKey({ docId, contextHash, runtime, hasStructure: false });
   const withStructure = records.find((record) => record.key === withStructureKey);
-  if (currentHasStructure) return withStructure ? { text: withStructure.text, hasStructure: true } : null;
   if (withStructure) return { text: withStructure.text, hasStructure: true };
   const withoutStructure = records.find((record) => record.key === withoutStructureKey);
   return withoutStructure ? { text: withoutStructure.text, hasStructure: false } : null;
 }
 
 /**
- * 预载只写 ref 的调用方内存，不触发 React state。带摘要时严格只取带摘要条目；无摘要时优先旧的带摘要条目。
+ * 预载只写 ref 的调用方内存，不触发 React state。无论当前摘要状态都优先带摘要条目；没有才取无摘要条目。
  */
 export async function preloadGlossCache(
   docId: string,

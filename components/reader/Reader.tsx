@@ -16,7 +16,6 @@ import {
 } from "react";
 import Notice from "@/components/Notice";
 import {
-  discardUnshownNoStructurePreloads,
   lookupPreloadedGloss,
   mergePreloadedGlosses,
   preloadGlossCache,
@@ -460,8 +459,6 @@ export default function Reader({ docId }: { docId: string }) {
       if (!result || controller.signal.aborted) return;
       structureRef.current = result.structure;
       saveStructure(docId, result.prompt, result.structure);
-      // R2：结构摘要就绪后，无摘要候选全部失效，只接受带摘要的自动缓存。
-      discardUnshownNoStructurePreloads(glossMemoRef.current);
       preloadAutoGloss(result.structure);
     });
     return () => controller.abort();

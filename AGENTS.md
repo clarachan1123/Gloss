@@ -18,6 +18,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## 协作流程
 
+0. 切新分支前必须先执行 `git fetch origin`，确认本地 `main` 与 `origin/main` 一致；新分支基线一律使用 `origin/main`。
 1. 每个 issue 开工前，复述任务、验收项、会改文件清单，并一次问完问题，等确认后才改动。
 2. 交付的 diff 必须与开工复述一致；交付对照表必须逐项对照“复述清单 / 实际改动”，每一处不一致（包括计划新建文件但实际复用已有文件）都单独说明原因，不能只列实际文件。
 3. 不接受“顺手修一下”。中途发现的问题记进 KANBAN.md 对应 issue 或新卡，按顺序处理，不塞进当前改动。

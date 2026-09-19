@@ -15,7 +15,14 @@ import {
   type Ref,
 } from "react";
 import Notice from "@/components/Notice";
-import { lookupPreloadedGloss, preloadGlossCache, saveGlossCache, type PreloadedGloss } from "@/lib/cache";
+import {
+  discardUnshownNoStructurePreloads,
+  lookupPreloadedGloss,
+  mergePreloadedGlosses,
+  preloadGlossCache,
+  saveGlossCache,
+  type MemoryGloss,
+} from "@/lib/cache";
 import { MAX_AFTER, MAX_BEFORE } from "@/lib/context";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
 import { skippedSummary, type ParsedHeading } from "@/lib/parse/validate";
@@ -117,7 +124,7 @@ export default function Reader({ docId }: { docId: string }) {
   const [gloss, setGloss] = useState<{ index: number; view: GlossView } | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   /** 本次会话与 IndexedDB 预载的自动白话；只放 ref，预载完成不触发段落重渲染。 */
-  const glossMemoRef = useRef(new Map<number, PreloadedGloss>());
+  const glossMemoRef = useRef(new Map<number, MemoryGloss>());
   const glossAbortRef = useRef<AbortController | null>(null);
   /** 全书结构摘要；开书时后台算，算好之前为 null */
   const structureRef = useRef<string | null>(null);
@@ -169,7 +176,7 @@ export default function Reader({ docId }: { docId: string }) {
       const token = ++cachePreloadTokenRef.current;
       performance.mark("gloss:preload:start");
       void preloadGlossCache(docId, cacheInputs, structure).then((entries) => {
-        if (cachePreloadTokenRef.current === token) glossMemoRef.current = entries;
+        if (cachePreloadTokenRef.current === token) mergePreloadedGlosses(glossMemoRef.current, entries);
         performance.mark("gloss:preload:end");
       });
     },
@@ -282,6 +289,8 @@ export default function Reader({ docId }: { docId: string }) {
     const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null);
     // 命中必须和撑开状态同一批 React 更新：第一次 DOM 更新直接放完整白话，不先经过加载态。
     if (cacheLookup.status === "hit") {
+      const entry = glossMemoRef.current.get(index);
+      if (entry) entry.shown = true;
       setGloss({ index, view: { status: "done", text: cacheLookup.entry.text, failure: null, instant: true } });
     }
     // 切换句子时，前一个撑开区在同一次提交里直接移除（不播收起动画），参照物是新点的这一行
@@ -452,7 +461,7 @@ export default function Reader({ docId }: { docId: string }) {
       structureRef.current = result.structure;
       saveStructure(docId, result.prompt, result.structure);
       // R2：结构摘要就绪后，无摘要候选全部失效，只接受带摘要的自动缓存。
-      glossMemoRef.current = new Map();
+      discardUnshownNoStructurePreloads(glossMemoRef.current);
       preloadAutoGloss(result.structure);
     });
     return () => controller.abort();
@@ -460,7 +469,6 @@ export default function Reader({ docId }: { docId: string }) {
 
   useEffect(() => {
     // 预载尚未完成的点击按未命中处理；这里不写 state，段落不会因预载重渲染。
-    glossMemoRef.current = new Map();
     preloadAutoGloss(structureRef.current);
   }, [preloadAutoGloss]);
 
@@ -484,7 +492,7 @@ export default function Reader({ docId }: { docId: string }) {
     }).then((result) => {
       if (result.status === "aborted" || controller.signal.aborted) return;
       if (result.status === "done") {
-        const remembered = { text: result.text, hasStructure: input.structure !== null };
+        const remembered = { text: result.text, hasStructure: input.structure !== null, source: "session" as const, shown: true };
         glossMemoRef.current.set(activeIndex, remembered);
         void saveGlossCache(docId, input, result.text);
         show({ status: "done", text: result.text, failure: null, instant: false });

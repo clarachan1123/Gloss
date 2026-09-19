@@ -47,6 +47,28 @@ export interface PreloadedGloss {
   hasStructure: boolean;
 }
 
+export interface MemoryGloss extends PreloadedGloss {
+  source: "preload" | "session";
+  shown: boolean;
+}
+
+/** 预载只填本会话尚无的句子，绝不覆盖已生成 / 已展示的白话。 */
+export function mergePreloadedGlosses(
+  memory: Map<number, MemoryGloss>,
+  preloaded: ReadonlyMap<number, PreloadedGloss>,
+): void {
+  for (const [index, entry] of preloaded) {
+    if (!memory.has(index)) memory.set(index, { ...entry, source: "preload", shown: false });
+  }
+}
+
+/** 摘要就绪后仅丢弃未展示的无摘要预载候选；会话结果永远保留。 */
+export function discardUnshownNoStructurePreloads(memory: Map<number, MemoryGloss>): void {
+  for (const [index, entry] of memory) {
+    if (entry.source === "preload" && !entry.shown && !entry.hasStructure) memory.delete(index);
+  }
+}
+
 /** G-15 接入埋点时使用；本卡只暴露结果，不建立客户端埋点通道。 */
 export type GlossCacheLookup =
   | { status: "hit"; entry: PreloadedGloss }
@@ -58,7 +80,9 @@ export function lookupPreloadedGloss(
   hasStructure: boolean,
 ): GlossCacheLookup {
   const entry = entries.get(index);
-  if (!entry || (hasStructure && !entry.hasStructure)) return { status: "miss" };
+  // R2 只约束 IndexedDB 预载候选；本会话已生成的完整结果必须始终稳定。
+  const isSession = entry && "source" in entry && entry.source === "session";
+  if (!entry || (hasStructure && !entry.hasStructure && !isSession)) return { status: "miss" };
   return { status: "hit", entry };
 }
 

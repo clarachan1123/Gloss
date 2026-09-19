@@ -312,6 +312,9 @@ gloss/
 - [ ] 性能同机、同浏览器、同样本复测 main 对照、冷启动未命中、会话内命中、跨会话命中，分别报告中位数 / p90 / 最大值；
       另报告 1800 句规模预载耗时与预载完成时段落重渲染数
 
+**性能验收状态（2026-09-19）**：命中与未命中的计时**未验**；持久化 Chrome profile 下的测量工具未能取到上传文档 / 缓存数据。
+重渲染数改由 React DevTools 的高亮检查加代码审查验收，不以本轮自动化数字代替。
+
 **会改**：`lib/cache.ts`、`lib/cache.test.ts`、`lib/models.ts`、`lib/deepseek.ts`、`lib/deepseek.test.ts`、
 `lib/output.ts`、`lib/output.test.ts`、`components/reader/Reader.tsx`、`KANBAN.md`、`PRD.md`
 **不改**：`app/api/gloss/route.ts`、`lib/gloss-client.ts`、`lib/storage.ts`、`components/reader/GlossPanel.tsx`、`styles/**`、`lib/prompts/**`、`package.json`
@@ -336,6 +339,19 @@ gloss/
 **开工前重新核对**：服务端命中仍消耗 WAF 额度、第三方持久化与隐私边界、供应商费用 / 消费上限、原文与白话外发范围。
 
 **会改**：待开工时复述并确认
+**回滚**：`git revert`
+
+---
+
+### G-36 · 修复 scripts/perf 持久化测量流程
+**P2** ｜ 依赖 G-09 ｜ 分支待定
+
+**可验证增量**：同一个持久化 Chrome profile 完成 dev 灌缓存后，在同端口 production 页面可读到同源 IndexedDB 条目并产出四组性能 JSON。
+
+**待验证假设（未验证）**：灌缓存与只读检查可能分别使用了 `localhost` 和 `127.0.0.1`；浏览器将两者视为不同源，因而未读到彼此的 localStorage / IndexedDB。
+
+**会改**：待开工复述并确认
+**不改**：本轮不修 `scripts/perf/**`、Reader 或缓存代码
 **回滚**：`git revert`
 
 ---

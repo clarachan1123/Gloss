@@ -23,6 +23,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 2. 交付的 diff 必须与开工复述一致；交付对照表必须逐项对照“复述清单 / 实际改动”，每一处不一致（包括计划新建文件但实际复用已有文件）都单独说明原因，不能只列实际文件。
 3. 不接受“顺手修一下”。中途发现的问题记进 KANBAN.md 对应 issue 或新卡，按顺序处理，不塞进当前改动。
 4. 不改 PRD.md。实现发现需求问题时，先停下说明。
+5. 只改文档（`KANBAN.md`、`PRD.md`、`HANDOFF.md`、`AGENTS.md`）的提交直接提交到本地 `main`，不开分支、不开 PR，由 Clara 推送 `main`；涉及代码的改动仍走分支加 PR。
 
 ## 验收与数字
 

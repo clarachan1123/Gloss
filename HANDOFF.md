@@ -213,7 +213,7 @@ npm run build
   - 设环境变量写 `$env:NAME="值"`。
 - **Git Bash：** 本机的 Git Bash 里 `gh` 不在 PATH 上，本轮会话遇到过。
   - 查 GitHub 状态时改用 curl，或用 Node 脚本调 GitHub API。
-- **Git 网络（2026-09-19 更新）：** Clara 已清除 Git 的代理配置；当前 Git 直连 GitHub，不走 `127.0.0.1:10910`。
+- **Git 网络（2026-09-19 更新）：** Git 已配置全局代理 `http://127.0.0.1:10909`（`http.proxy` 与 `https.proxy`），因为直连 GitHub 常出现 `Connection was reset`。关掉代理软件后 Git 会失败；届时执行 `git config --global --unset http.proxy` 和 `git config --global --unset https.proxy`。
 - **中文路径：** 仓库里有中文文件名（`test-fixtures/政治经济学批判-序言.docx`、`Claude outputs/` 下的文件）。
   - git 默认会把非 ASCII 路径转义显示，所以 key 扫描要加 `-c core.quotepath=false`（见第 7.4 节）。
 - **换行符：** 本机 `core.autocrlf` 的值是 `input`（2026-09-18 实测）。

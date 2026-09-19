@@ -3,7 +3,9 @@ import { spawn, spawnSync } from "node:child_process";
 
 const APP_PORT = 3430;
 const MOCK_PORT = 3431;
-const FIRST_TOKEN_DELAY_MS = 12_000;
+const DEFAULT_FIRST_TOKEN_DELAY_MS = 12_000;
+const configuredDelay = Number(process.env.SLOW_GLOSS_FIRST_TOKEN_DELAY_MS ?? DEFAULT_FIRST_TOKEN_DELAY_MS);
+const FIRST_TOKEN_DELAY_MS = Number.isFinite(configuredDelay) && configuredDelay >= 0 ? configuredDelay : DEFAULT_FIRST_TOKEN_DELAY_MS;
 let callNumber = 0;
 
 const copied = spawnSync(process.execPath, ["scripts/copy-pdfjs-assets.mjs"], { stdio: "inherit" });
@@ -19,7 +21,7 @@ const mock = http.createServer((request, response) => {
   response.on("close", () => {
     closed = true;
   });
-  const responseText = `【模拟#${++callNumber}】本地慢上游在十二秒后给出首字。`;
+  const responseText = `【模拟#${++callNumber}】本地慢上游在${FIRST_TOKEN_DELAY_MS}毫秒后给出首字。`;
   setTimeout(() => {
     if (closed) return;
     response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });

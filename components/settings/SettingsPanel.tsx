@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
 import { clearAllGlossCache } from "@/lib/cache";
 
-const SETTINGS = ["呈现模式", "保存形态", "导出形态", "字号", "行距", "纸面底色"];
+const SETTINGS = ["呈现模式", "导出形态", "字号", "行距", "纸面底色"];
 const CONFIRM_MS = 5_000;
 const RESULT_MS = 3_000;
 
-export default function SettingsPanel() {
+export default function SettingsPanel({
+  glossShape,
+  onGlossShapeChange,
+}: {
+  glossShape: "inline" | "bubble";
+  onGlossShapeChange: (shape: "inline" | "bubble") => void;
+}) {
   const [state, setState] = useState<"idle" | "confirm" | "cleared" | "failed">("idle");
 
   useEffect(() => {
@@ -32,6 +38,17 @@ export default function SettingsPanel() {
         设置
       </h2>
       <ul className="settings-skeleton">
+        <li className="settings-saved-shape">
+          <span>白话显示形态</span>
+          <div role="group" aria-label="白话显示形态">
+            <button type="button" aria-pressed={glossShape === "inline"} onClick={() => onGlossShapeChange("inline")}>
+              inline 小字
+            </button>
+            <button type="button" aria-pressed={glossShape === "bubble"} onClick={() => onGlossShapeChange("bubble")}>
+              气泡
+            </button>
+          </div>
+        </li>
         {SETTINGS.map((item) => (
           <li key={item}>{item}</li>
         ))}

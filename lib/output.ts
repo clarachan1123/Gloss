@@ -9,6 +9,8 @@ import { GLOSS_REFUSAL_MARKER, TERM_CLOSE, TERM_OPEN } from "./prompts/gloss";
 export const MAX_GLOSS_CHARS = 150;
 export const CHUNK_MIN_CHARS = 3;
 export const CHUNK_MAX_CHARS = 5;
+/** 输出处理（清洗、拒答、截断、分块）改变时递增，供本地自动缓存失效。 */
+export const GLOSS_OUTPUT_VERSION = "gloss-output-v1";
 
 /**
  * 行首可能构成 markdown 标记的前缀：标题 #、引用 >、无序列表 - * +、有序列表 1. 1) 1、 1），

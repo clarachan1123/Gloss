@@ -37,6 +37,12 @@ describe("G-09 自动缓存键", () => {
     expect(lookupPreloadedGloss(memory, 1, true).status).toBe("hit");
   });
 
+  it("摘要就绪后保留已展示的无摘要预载白话，仍命中而不请求", () => {
+    const memory = new Map([[1, { text: "已展示预载", hasStructure: false, source: "preload" as const, shown: true }]]);
+    discardUnshownNoStructurePreloads(memory);
+    expect(lookupPreloadedGloss(memory, 1, true)).toMatchObject({ status: "hit", entry: { text: "已展示预载" } });
+  });
+
   it("预载晚于成功生成时不丢会话结果，也不覆盖已有条目", () => {
     const memory = new Map([[2, { text: "刚生成", hasStructure: false, source: "session" as const, shown: true }]]);
     mergePreloadedGlosses(memory, new Map([[2, { text: "旧预载", hasStructure: true }], [3, { text: "新预载", hasStructure: true }]]));

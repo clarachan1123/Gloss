@@ -80,9 +80,9 @@ export function lookupPreloadedGloss(
   hasStructure: boolean,
 ): GlossCacheLookup {
   const entry = entries.get(index);
-  // R2 只约束 IndexedDB 预载候选；本会话已生成的完整结果必须始终稳定。
-  const isSession = entry && "source" in entry && entry.source === "session";
-  if (!entry || (hasStructure && !entry.hasStructure && !isSession)) return { status: "miss" };
+  // R2 只约束尚未展示的 IndexedDB 预载候选；本会话已展示的完整结果必须始终稳定。
+  const isShown = entry && "shown" in entry && entry.shown;
+  if (!entry || (hasStructure && !entry.hasStructure && !isShown)) return { status: "miss" };
   return { status: "hit", entry };
 }
 

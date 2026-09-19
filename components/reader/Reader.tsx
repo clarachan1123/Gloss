@@ -15,6 +15,7 @@ import {
   type Ref,
 } from "react";
 import Notice from "@/components/Notice";
+import { lookupPreloadedGloss, preloadGlossCache, saveGlossCache, type PreloadedGloss } from "@/lib/cache";
 import { MAX_AFTER, MAX_BEFORE } from "@/lib/context";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
 import { skippedSummary, type ParsedHeading } from "@/lib/parse/validate";
@@ -115,11 +116,12 @@ export default function Reader({ docId }: { docId: string }) {
   // 功能一（G-07）
   const [gloss, setGloss] = useState<{ index: number; view: GlossView } | null>(null);
   const [retryCount, setRetryCount] = useState(0);
-  /** 本次会话里已生成的白话：同一句重复点击不再发请求（跨会话缓存是 G-09） */
-  const glossMemoRef = useRef(new Map<number, string>());
+  /** 本次会话与 IndexedDB 预载的自动白话；只放 ref，预载完成不触发段落重渲染。 */
+  const glossMemoRef = useRef(new Map<number, PreloadedGloss>());
   const glossAbortRef = useRef<AbortController | null>(null);
   /** 全书结构摘要；开书时后台算，算好之前为 null */
   const structureRef = useRef<string | null>(null);
+  const cachePreloadTokenRef = useRef(0);
 
   useEffect(() => {
     try {
@@ -155,6 +157,21 @@ export default function Reader({ docId }: { docId: string }) {
   const headingByParagraph = useMemo(
     () => new Map((doc?.headings ?? []).map((h) => [h.paraIndex, h])),
     [doc],
+  );
+
+  const cacheInputs = useMemo(
+    () => sentences.map((_, index) => ({ index, input: glossInput(sentences, index, null) })),
+    [sentences],
+  );
+
+  const preloadAutoGloss = useCallback(
+    (structure: string | null) => {
+      const token = ++cachePreloadTokenRef.current;
+      void preloadGlossCache(docId, cacheInputs, structure).then((entries) => {
+        if (cachePreloadTokenRef.current === token) glossMemoRef.current = entries;
+      });
+    },
+    [cacheInputs, docId],
   );
 
   // 阅读位置：恢复到保存的句子；滚动时记录视口顶部所在的句子；布局变化时保持它在视口中的位置
@@ -260,6 +277,11 @@ export default function Reader({ docId }: { docId: string }) {
     const splitAt = headingByParagraph.has(sentence.paraIndex)
       ? null
       : measureSplit(body, sentence.paraIndex, index);
+    const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null);
+    // 命中必须和撑开状态同一批 React 更新：第一次 DOM 更新直接放完整白话，不先经过加载态。
+    if (cacheLookup.status === "hit") {
+      setGloss({ index, view: { status: "done", text: cacheLookup.entry.text, failure: null, instant: true } });
+    }
     // 切换句子时，前一个撑开区在同一次提交里直接移除（不播收起动画），参照物是新点的这一行
     commit(
       { index, paraIndex: sentence.paraIndex, splitAt },
@@ -414,6 +436,7 @@ export default function Reader({ docId }: { docId: string }) {
     const cached = loadStructure(docId, STRUCTURE_PROMPT_VERSION);
     if (cached) {
       structureRef.current = cached;
+      preloadAutoGloss(cached);
       return;
     }
     const controller = new AbortController();
@@ -426,17 +449,25 @@ export default function Reader({ docId }: { docId: string }) {
       if (!result || controller.signal.aborted) return;
       structureRef.current = result.structure;
       saveStructure(docId, result.prompt, result.structure);
+      // R2：结构摘要就绪后，无摘要候选全部失效，只接受带摘要的自动缓存。
+      glossMemoRef.current = new Map();
+      preloadAutoGloss(result.structure);
     });
     return () => controller.abort();
-  }, [doc, docId]);
+  }, [doc, docId, preloadAutoGloss]);
+
+  useEffect(() => {
+    // 预载尚未完成的点击按未命中处理；这里不写 state，段落不会因预载重渲染。
+    glossMemoRef.current = new Map();
+    preloadAutoGloss(structureRef.current);
+  }, [preloadAutoGloss]);
 
   // 撑开一句就请求它的白话；收起、切换句子、离开页面时中止（D3 / D4）
   const activeIndex = expansion?.index ?? null;
   useEffect(() => {
     if (activeIndex === null) return;
-    const remembered = glossMemoRef.current.get(activeIndex);
-    if (remembered !== undefined) {
-      setGloss({ index: activeIndex, view: { status: "done", text: remembered, failure: null, instant: true } });
+    const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, activeIndex, structureRef.current !== null);
+    if (cacheLookup.status === "hit") {
       return;
     }
 
@@ -444,20 +475,23 @@ export default function Reader({ docId }: { docId: string }) {
     glossAbortRef.current = controller;
     setGloss({ index: activeIndex, view: LOADING_VIEW });
     const show = (view: GlossView) => setGloss({ index: activeIndex, view });
-    void streamGloss(glossInput(sentences, activeIndex, structureRef.current), {
+    const input = glossInput(sentences, activeIndex, structureRef.current);
+    void streamGloss(input, {
       signal: controller.signal,
       onText: (text) => show({ status: "streaming", text, failure: null, instant: false }),
     }).then((result) => {
       if (result.status === "aborted" || controller.signal.aborted) return;
       if (result.status === "done") {
-        glossMemoRef.current.set(activeIndex, result.text);
+        const remembered = { text: result.text, hasStructure: input.structure !== null };
+        glossMemoRef.current.set(activeIndex, remembered);
+        void saveGlossCache(docId, input, result.text);
         show({ status: "done", text: result.text, failure: null, instant: false });
       } else {
         show({ status: "failed", text: result.text, failure: result.failure, instant: false });
       }
     });
     return () => controller.abort();
-  }, [activeIndex, retryCount, sentences]);
+  }, [activeIndex, docId, retryCount, sentences]);
 
   const retryGloss = useCallback(() => setRetryCount((n) => n + 1), []);
   const glossView = gloss && gloss.index === activeIndex ? gloss.view : LOADING_VIEW;

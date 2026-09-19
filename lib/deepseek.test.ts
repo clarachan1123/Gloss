@@ -140,6 +140,13 @@ describe("streamChat 正常路径", () => {
     fetchMock.mockResolvedValue(sse([delta("斯宾诺莎"), delta("的实体。"), DONE], { byteByByte: true }));
     expect((await collect(streamChat(options()))).join("")).toBe("斯宾诺莎的实体。");
   });
+
+  it("上游在 [DONE] 之前 EOF：作为 api_error，不能被本地缓存当成完整结果", async () => {
+    fetchMock.mockResolvedValue(sse([delta("只到一半") ]));
+    const error = (await rejection(collect(streamChat(options())))) as AiError;
+    expect(error.type).toBe("api_error");
+    expect(error.detail).toBe("stream ended before [DONE]");
+  });
 });
 
 describe("本地慢上游地址只在开发环境生效", () => {

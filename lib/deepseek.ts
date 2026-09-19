@@ -28,6 +28,8 @@
  * 隐私：key 只从环境变量读，不进日志；上游错误的响应体可能回显请求内容，只记状态码，不透传给前端。
  */
 
+import { MODEL_FAST, MODEL_STRONG } from "./models";
+
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 
 /**
@@ -49,8 +51,7 @@ function baseUrl(): string {
   return DEFAULT_BASE_URL;
 }
 
-export const MODEL_FAST = "deepseek-flash";
-export const MODEL_STRONG = "deepseek-v4-pro";
+export { MODEL_FAST, MODEL_STRONG };
 
 /** PRD 3.9 C 类里能在调用层判定的几种；C4 返回为空、C5 超长由调用方根据输出判定 */
 export type AiErrorType = "timeout" | "api_error" | "rate_limited" | "refused";
@@ -182,7 +183,7 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<st
         } catch (error) {
           throw fail(error);
         }
-        if (chunk.done) return;
+        if (chunk.done) throw new AiError("api_error", "stream ended before [DONE]");
         buffer += chunk.value;
 
         let newline: number;

@@ -287,21 +287,48 @@ gloss/
 ### G-09 · 跨会话缓存
 **P0** ｜ 依赖 G-06 ｜ 分支 `feat/g09-cache`
 
-**可验证增量**：同一句点第二次，**300ms 内出现且无新的 AI 调用**（Network 面板可验证）。
+**方案修订（2026-09-19）**：改为当前读者浏览器内的 IndexedDB 自动缓存，不做服务端 KV、不同读者之间不共享。
+原因：服务端命中仍消耗 WAF 额度；会新增第三方持久化；当前单人使用没有共享收益。跨读者服务端缓存另列 G-35。
+
+**可验证增量**：重开同一文档后点同一句，**300ms 内完整出现，且 Network 面板没有新的 `/api/gloss`**。
 
 **验收**
-- [ ] key = 句 hash + 上下文指纹；**value 只存白话，不存原文明文**
+- [ ] IndexedDB 数据库 `gloss-auto-cache` 的 object store `ai-gloss-auto-cache`：key 由缓存 schema / 输出处理版本、docId、
+      目标句及实际发送前后文的完整 SHA-256、功能一提示词版本、结构摘要提示词版本、temperature、模型名、是否带结构摘要组成；
+      输入按原样 JSON 序列化，不折叠空白。value 只存完整 AI 白话、结构摘要 hash 与非明文诊断字段，不存原文明文
 - [ ] 命中时 ≤300ms 完整显示
 - [ ] **同一句在同一会话内白话完全相同，不重新生成、不重复计费**
-- [ ] 缓存命中率可观测（埋点 `sentence_click.cache_hit`）
-- [ ] **用户编辑版本绝不写入共享缓存**（D12）
-- [ ] **上下文指纹必须包含**：提示词版本、temperature、**本次请求是否带了结构摘要**。
-      G-07 定案：结构摘要开书时后台计算，算好之前的点击不带摘要照常发——同一本书里，开头几次点击的输入
-      与后面的不同。指纹不区分这一点，前几次的结果就会被当成后面的命中
+- [ ] 命中 / 未命中状态作为接口留给 G-15；`sentence_click.cache_hit` 正式埋点**移交 G-15**，本卡不新建客户端埋点通道
+- [ ] **用户编辑版本绝不写入自动缓存**（D12）
+- [ ] 带摘要时只接受带摘要条目；无摘要时优先带摘要条目、没有才取无摘要条目。结构摘要就绪后无摘要候选失效
+- [ ] 只缓存收到上游 `[DONE]` 后的完整成功输出；中止、超时、失败、离页中断、未收到 `[DONE]` 均不写入
+- [ ] 命中时点击与撑开状态同一批 DOM 更新即显示完整白话（instant），不先显示加载态；开书预载只写 ref，不触发段落重渲染。
+      预载未完成的点击按未命中立即生成，允许这个短窗口内重复调用
+- [ ] 读写失败（含无痕、存储禁用）按未命中静默降级；QuotaExceededError 时先删非当前版本条目、重试一次，仍失败放弃；不做 LRU
+- [ ] 写入只用 add：同键已有条目时静默忽略，先到结果不被后到结果覆盖
+- [ ] 性能同机、同浏览器、同样本复测 main 对照、冷启动未命中、会话内命中、跨会话命中，分别报告中位数 / p90 / 最大值；
+      另报告 1800 句规模预载耗时与预载完成时段落重渲染数
 
-**会改**：`lib/cache.ts`、`app/api/gloss/route.ts`
-**不改**：`components/**`、`lib/prompts/**`
+**会改**：`lib/cache.ts`、`lib/cache.test.ts`、`lib/models.ts`、`lib/deepseek.ts`、`lib/deepseek.test.ts`、
+`lib/output.ts`、`lib/output.test.ts`、`components/reader/Reader.tsx`、`KANBAN.md`、`PRD.md`
+**不改**：`app/api/gloss/route.ts`、`lib/gloss-client.ts`、`lib/storage.ts`、`components/reader/GlossPanel.tsx`、`styles/**`、`lib/prompts/**`、`package.json`
 **回滚**：`git revert`。缓存可直接清空，无数据迁移风险
+
+---
+
+### G-35 · 跨读者共享的服务端缓存
+**阻塞 / 待触发** ｜ 依赖 G-09 ｜ 分支待定
+
+> G-09 只做当前读者浏览器内的 IndexedDB 自动缓存。本卡不得提前实现或预设 Redis / KV 供应商。
+
+**阻塞条件（缺一不可）**
+- [ ] 出现多名真实读者，已能证明存在跨读者共享收益
+- [ ] Clara 已在控制台设置消费上限
+
+**开工前重新核对**：服务端命中仍消耗 WAF 额度、第三方持久化与隐私边界、供应商费用 / 消费上限、原文与白话外发范围。
+
+**会改**：待开工时复述并确认
+**回滚**：`git revert`
 
 ---
 
@@ -324,6 +351,7 @@ gloss/
 
 **会改**：`lib/storage.ts`、`components/reader/GlossPanel.tsx`、`components/settings/SettingsPanel.tsx`
 **不改**：`lib/cache.ts`、`app/api/**`
+**移交自 G-09**：设置面板增加“清除自动缓存”入口；只能清 IndexedDB 自动缓存，不删除已保存白话、编辑版本、阅读位置、原文或功能二结果。
 **回滚**：`git revert`
 
 ---
@@ -429,6 +457,7 @@ gloss/
 - [ ] **生成失败能按 C1–C6 分类统计**
 - [ ] 北极星（白话读完率）可计算
 - [ ] `sentence_reclick` 与 `lock_expand` 可关联查询（否则前者会误导）
+- [ ] 接入 G-09 留出的命中 / 未命中状态，发送 `sentence_click.cache_hit`；本项只接通埋点，不改变缓存行为
 - [ ] 无 PII 上报
 - [ ] **线上首字延迟 P90 ≤2.5s**（来自 G-07：G-07 只有本地实测）
 - [ ] **线上单次调用成本**，用于校准 PRD 3.8 的额度阈值（来自 G-07：G-07 只有本地日志的数字）

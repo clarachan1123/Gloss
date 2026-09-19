@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CHUNK_MAX_CHARS,
   CHUNK_MIN_CHARS,
+  GLOSS_OUTPUT_VERSION,
   GlossOutput,
   MAX_GLOSS_CHARS,
   MAX_TERM_CHARS,
@@ -27,6 +28,10 @@ const stripInPieces = (pieces: string[]) => {
   const stripper = new MarkdownStripper();
   return pieces.map((p) => stripper.push(p)).join("") + stripper.end();
 };
+
+it("G-09 输出处理版本存在，截断或分块规则变更时必须同步递增", () => {
+  expect(GLOSS_OUTPUT_VERSION).toMatch(/^gloss-output-v\d+$/);
+});
 
 /* ---------------- C8：markdown 清洗 ---------------- */
 

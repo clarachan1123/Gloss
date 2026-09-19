@@ -163,6 +163,20 @@ function openCache(): Promise<IDBDatabase> {
   });
 }
 
+/** 清除全部浏览器自动缓存；不触碰 localStorage 中的保存白话、原文、位置或结构摘要。 */
+export function clearAllGlossCache(): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const request = indexedDB.deleteDatabase(GLOSS_CACHE_DB);
+      request.onsuccess = () => resolve(true);
+      request.onerror = () => resolve(false);
+      request.onblocked = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 export function selectRecord(
   records: readonly GlossCacheRecord[],
   docId: string,

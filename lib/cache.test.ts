@@ -1,8 +1,10 @@
+// @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
 import {
   CURRENT_GLOSS_CACHE_RUNTIME,
   GLOSS_CACHE_SCHEMA_VERSION,
   addRecord,
+  clearAllGlossCache,
   hashGlossContext,
   lookupPreloadedGloss,
   makeGlossCacheKey,
@@ -94,5 +96,26 @@ describe("G-09 写入保留先到结果", () => {
     expect(await addRecord(fakeStore, await record(false, "后到的结果"))).toBe("exists");
     expect(add).toHaveBeenCalledTimes(1);
     expect(put).not.toHaveBeenCalled();
+  });
+});
+
+describe("G-10a 清除自动缓存", () => {
+  it("只删除 IndexedDB 自动缓存数据库；不触碰 localStorage 的保存区、原文、位置或结构摘要", async () => {
+    localStorage.setItem("gloss:saved:12345678", "保存白话");
+    localStorage.setItem("gloss:doc:12345678", "原文");
+    localStorage.setItem("gloss:pos:12345678", "4");
+    localStorage.setItem("gloss:structure:12345678", "摘要");
+    const request = {} as IDBOpenDBRequest;
+    const deleteDatabase = vi.fn(() => request);
+    vi.stubGlobal("indexedDB", { deleteDatabase });
+    const result = clearAllGlossCache();
+    request.onsuccess?.(new Event("success"));
+    expect(await result).toBe(true);
+    expect(deleteDatabase).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem("gloss:saved:12345678")).toBe("保存白话");
+    expect(localStorage.getItem("gloss:doc:12345678")).toBe("原文");
+    expect(localStorage.getItem("gloss:pos:12345678")).toBe("4");
+    expect(localStorage.getItem("gloss:structure:12345678")).toBe("摘要");
+    vi.unstubAllGlobals();
   });
 });

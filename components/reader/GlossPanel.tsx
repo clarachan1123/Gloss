@@ -7,7 +7,7 @@ import TermMark from "./TermMark";
 
 /**
  * 撑开区。插在被点击句所在的「行尾」之后，占据布局空间、推动下文（D9）。
- * PRD 3.10：不加框、不加底色，仅一条左竖线；白话与正文同字号，仅颜色浅一档。
+ * 临时撑开区不加框、不加底色，仅一条左竖线；G-10b 决定白话统一为 14px。
  *
  * 白话按 3–5 字一块逐步出现（PRD 3.7）。服务端已按这个粒度切块，但传输层会把几块并成一次到达，
  * 视觉节奏只能在这里保证：收到的字先进队列，按固定节奏放出来。
@@ -59,6 +59,8 @@ export default function GlossPanel({
   saved,
   onSave,
   source,
+  presentation = "inline",
+  actionVisible = true,
 }: {
   ref?: Ref<HTMLDivElement>;
   view: GlossView;
@@ -70,6 +72,9 @@ export default function GlossPanel({
    * 不传只做数量、长度、去重三道检查（Reader 从 2026-09-18 起传入）
    */
   source?: string;
+  /** G-10b：所有白话共用显示形态；已保存与否只影响颜色与操作行。 */
+  presentation?: "inline" | "bubble";
+  actionVisible?: boolean;
 }) {
   const chars = Array.from(view.text);
   const [reducedMotion] = useState(prefersReducedMotion);
@@ -100,7 +105,8 @@ export default function GlossPanel({
   }, [busy, visible]);
 
   /*
-   * 撑开期间高度只增不减（决议：生成结束不是用户操作，由它引起的位移违反产品不变量）。
+   * 仅未保存的 transient 撑开期间高度只增不减（决议：生成结束不是用户操作，由它引起的位移违反产品不变量）。
+   * 常驻区的操作行是读者显式显示／隐藏的 UI，必须按实际高度收缩，并由 Reader 事务锚定。
    * 生成中按 CSS 预留 3 行；写完的白话不足 3 行、或换成一行失败提示时，内容会变矮——
    * 每次渲染后、绘制前量一次高度，比历史最高矮就用 min-height 顶住，下方内容不动。
    * 收起时撑开区整个移除，自然缩回；重试会换 key 重新挂载，从头计算（那是读者自己的操作）。
@@ -119,6 +125,11 @@ export default function GlossPanel({
   useLayoutEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
+    if (saved) {
+      tallestRef.current = 0;
+      panel.style.minHeight = "";
+      return;
+    }
     const height = panel.getBoundingClientRect().height;
     if (height >= tallestRef.current) {
       tallestRef.current = height;
@@ -138,7 +149,7 @@ export default function GlossPanel({
   return (
     <div
       ref={setPanelRef}
-      className="gloss-panel"
+      className={`gloss-panel gloss-panel-${presentation}${saved ? " gloss-panel-saved" : ""}`}
       role="region"
       aria-label="白话"
       aria-busy={busy}
@@ -176,7 +187,7 @@ export default function GlossPanel({
           )}
         </p>
       )}
-      <ActionRow saved={saved} disabled={view.status !== "done" || revealing} onToggle={onSave} />
+      {actionVisible && <ActionRow saved={saved} disabled={view.status !== "done" || revealing} onToggle={onSave} />}
     </div>
   );
 }

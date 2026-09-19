@@ -239,6 +239,7 @@ gloss/
 - [ ] 窄视口下三栏布局塌掉：375px 宽时左 184 + 右 140 已占满，中栏只剩 18px，正文逐字换行
       （G-08 测行末移行时发现）。PRD 的主场景下限是 1024px，手机不在 MVP 范围内，
       但至少要有一个可读的降级：比如某个宽度以下自动收起侧栏
+- [ ] `.gitignore` 加入 `tmp-*.log`
 
 **会改**：待开工时复述
 **回滚**：`git revert`
@@ -325,27 +326,6 @@ gloss/
 
 **验收**：待开工时复述并确认
 **会改**：待开工时确认
-**回滚**：`git revert`
-
----
-
-### G-10a · 保存白话（数据层）
-**P0** ｜ 依赖 G-08 ｜ 分支 `feat/g10a-save-data`
-
-**可验证增量**：保存一句白话、清除自动缓存、关闭标签页重开同一本书后，点该句仍显示当时保存的同一版本；取消保存后刷新再点，重新生成。
-
-**验收**
-- [ ] 保存版优先于自动缓存与现场生成；刷新后恢复（D5）
-- [ ] 保存记录按 `docId + paraIndex + 段内起始下标 + 句子 hash` 识别；不一致时不显示、不删除
-- [ ] 保存的是当时显示的原样白话（含术语定界符），自动缓存更新不改变保存版；类型字段预留编辑版
-- [ ] 保存入口只在完整白话放出后可用；写入成功后才显示「已保存」，再点取消保存
-- [ ] E1/E2：存储满或被禁用时提示，功能不阻断；导出入口依赖 G-14，本卡不实现
-- [ ] 设置面板只有“清除自动缓存”：两步确认、只清 IndexedDB 自动缓存，不删除已保存白话、编辑版本、阅读位置、原文或功能二结果；当前内存预载 Map 不变，下次开书生效
-
-**会改**：`lib/segment.ts`、`lib/storage.ts`、`lib/cache.ts`（仅新增清除全部自动缓存导出）、`components/reader/{Reader,GlossPanel,ActionRow}.tsx`、`components/settings/SettingsPanel.tsx`、`styles/reader.css`
-**不改**：G-09 的缓存键、查找、写入、预载与过期清理；`app/api/**`、提示词、导出、编辑 UI
-**身份说明**：保存白话的身份将 PRD 3.8「句 hash」细化为 `docId＋paraIndex＋段内起始下标＋句子 hash`；PRD 本轮不修改。
-**待定事项**：已决定：单句重新生成不在 G-10 范围。
 **回滚**：`git revert`
 
 ---
@@ -698,6 +678,29 @@ gloss/
 _（完成的 issue 移到这里，保留验收清单）_
 
 > W1 完成记录更正：W1 在 F2 的 AI 断句未实现的情况下宣告完成，遗漏已补记为 G-28；已完成 issue 的勾选保持不变。
+
+### G-10a · 保存白话（数据层）
+**P0** ｜ 依赖 G-08 ｜ 分支 `feat/g10a-save-data`
+
+**可验证增量**：保存一句白话、清除自动缓存、关闭标签页重开同一本书后，点该句仍显示当时保存的同一版本；取消保存后刷新再点，重新生成。
+
+**验收**
+- [x] 保存版优先于自动缓存与现场生成；刷新后恢复（D5）——Clara 亲验（本地 slow-gloss）
+- [x] 保存记录按 `docId + paraIndex + 段内起始下标 + 句子 hash` 识别；不一致时不显示、不删除——Codex 自测（单元测试）
+- [x] 保存的是当时显示的原样白话（含术语定界符），自动缓存更新不改变保存版；类型字段预留编辑版——Codex 自测（单元测试）
+- [x] 保存入口只在完整白话放出后可用；写入成功后才显示「已保存」，再点取消保存——Clara 亲验（本地，失败态按钮不可点）＋ Codex 自测
+- [x] E1/E2：存储满或被禁用时提示，功能不阻断；导出入口依赖 G-14，本卡不实现——Codex 自测（单元测试）
+- [x] 设置面板只有“清除自动缓存”：两步确认、只清 IndexedDB 自动缓存，不删除已保存白话、编辑版本、阅读位置、原文或功能二结果；当前内存预载 Map 不变，下次开书生效——Clara 亲验（本地 slow-gloss）
+
+**会改**：`lib/segment.ts`、`lib/storage.ts`、`lib/cache.ts`（仅新增清除全部自动缓存导出）、`components/reader/{Reader,GlossPanel,ActionRow}.tsx`、`components/reader/Reader.test.ts`、`components/settings/SettingsPanel.tsx`、`styles/reader.css`
+**不改**：G-09 的缓存键、查找、写入、预载与过期清理；`app/api/**`、提示词、导出、编辑 UI
+**身份说明**：保存白话的身份将 PRD 3.8「句 hash」细化为 `docId＋paraIndex＋段内起始下标＋句子 hash`；PRD 本轮不修改。
+**合并记录**：PR #3 的 `b9e84b5 Merge pull request #3 from clarachan1123/feat/g10a-save-data`。
+**遗留**：
+- 无效 key 时服务端日志的 `detail` 是否为 `"HTTP 401"` 未核实（上游 401 在 `lib/deepseek.ts` 统一转为 502，401 只出现在 detail 字段）；下次本地起服务时由 Clara 在自己的 PowerShell 日志中确认。
+- 本地 slow-gloss 必须用 [http://localhost:3430](http://localhost:3430) 访问；用 127.0.0.1 时 Next 16 拦截开发资源，页面无法交互。
+- 仓库根目录的 `tmp-*.log` 测试日志未被 `.gitignore` 覆盖，记入 G-26。
+**回滚**：`git revert`
 
 ### G-09 · 跨会话缓存
 **P0** ｜ 依赖 G-06 ｜ 分支 `feat/g09-cache`

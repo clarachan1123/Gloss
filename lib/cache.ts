@@ -177,6 +177,34 @@ export function clearAllGlossCache(): Promise<boolean> {
   });
 }
 
+/** 删除一本文档的自动白话，不影响其他文档的 IndexedDB 缓存。 */
+export async function clearGlossCacheForDocument(docId: string): Promise<boolean> {
+  try {
+    const db = await openCache();
+    try {
+      const transaction = db.transaction(GLOSS_CACHE_STORE, "readwrite");
+      const store = transaction.objectStore(GLOSS_CACHE_STORE);
+      const index = store.index("docId");
+      const cursor = index.openCursor(IDBKeyRange.only(docId));
+      await new Promise<void>((resolve, reject) => {
+        cursor.onsuccess = () => {
+          const current = cursor.result;
+          if (!current) return resolve();
+          current.delete();
+          current.continue();
+        };
+        cursor.onerror = () => reject(cursor.error);
+      });
+      await transactionDone(transaction);
+      return true;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 export function selectRecord(
   records: readonly GlossCacheRecord[],
   docId: string,

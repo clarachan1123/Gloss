@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Cinzel, JetBrains_Mono } from "next/font/google";
 import "../styles/tokens.css";
 import "../styles/reader.css";
+import "../styles/shelf.css";
 
 const cinzel = Cinzel({
   subsets: ["latin"],

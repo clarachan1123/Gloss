@@ -42,6 +42,7 @@ import {
   saveReadingPosition,
   saveExplanation,
   saveStructure,
+  touchShelfEntry,
   type SavedGloss,
   type StorageErrorCode,
   type StoredDocument,
@@ -296,6 +297,11 @@ export default function Reader({ docId }: { docId: string }) {
 
   const doc = state.status === "ready" ? state.doc : null;
   const savedGlosses = state.status === "ready" ? state.savedGlosses : EMPTY_SAVED_GLOSSES;
+
+  // G-13：只有文档已成功载入才计作一次打开，避免无效路由污染最近阅读。
+  useEffect(() => {
+    if (doc) touchShelfEntry(docId);
+  }, [doc, docId]);
 
   // 本机中文字体没有可可靠等待的浏览器事件；这里只等 Next 注入的拉丁字体完成，
   // 实际拆行永远读取真实正文 DOM 的 getClientRects()，不把 fonts.ready 当作中文字体证明。
@@ -1101,9 +1107,8 @@ export default function Reader({ docId }: { docId: string }) {
   return (
     <div className="shell">
       <aside className="col col-left">
-        <Link href="/" className="wordmark">
-          Gloss
-        </Link>
+        <Link href="/" className="wordmark">Gloss</Link>
+        <Link href="/" className="reader-shelf-back">← 回到书架</Link>
 
         <div className="mode-switch" role="group" aria-label="白话阅读模式">
           <button

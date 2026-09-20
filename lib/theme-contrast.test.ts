@@ -175,6 +175,34 @@ describe("三套主题的对比度", () => {
   });
 });
 
+describe("G-13 书架色板对比度", () => {
+  const books = Array.from({ length: 11 }, (_, index) => {
+    const match = new RegExp(`--shelf-book-${index}:\\s*(#[0-9A-Fa-f]{6})`).exec(CSS);
+    if (!match) throw new Error(`缺少书色 ${index}`);
+    return match[1];
+  });
+  const inkOnDark = /--shelf-ink-on-dark:\s*(#[0-9A-Fa-f]{6})/.exec(CSS)?.[1] ?? "";
+  const cover = /--shelf-cover:\s*(#[0-9A-Fa-f]{6})/.exec(CSS)?.[1] ?? "";
+  const mix = (paper: string, book: string) => {
+    const channels = [0, 1, 2].map((i) => Math.round(parseInt(paper.slice(1 + i * 2, 3 + i * 2), 16) * .94 + parseInt(book.slice(1 + i * 2, 3 + i * 2), 16) * .06));
+    return `#${channels.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+  };
+
+  it.each(THEMES)("%s：每个书色混入页面背景后，正文与次级字均达 AA", (theme) => {
+    const c = themeColors(theme);
+    for (const book of books) {
+      const background = mix(c["--paper-main"], book);
+      expect(contrast(c["--ink"], background)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      expect(contrast(c["--gloss"], background)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    }
+  });
+
+  it("每个书脊与书名、选中封面与封面字均达 AA", () => {
+    for (const book of books) expect(contrast(book, inkOnDark)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    expect(contrast(cover, inkOnDark)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+  });
+});
+
 /**
  * 标记的视觉只有颜色（2026-09-18 Clara 定）：不要底色、下划线、边框、图标。
  * white-space: nowrap 保留（整词不折行）。reader.css 里 .gloss-term 多一条别的属性，这里就失败。

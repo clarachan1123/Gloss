@@ -10,6 +10,7 @@ import {
   loadExplanations,
   loadReadingPosition,
   loadSavedGlosses,
+  loadShelf,
   loadStructure,
   removeSavedGloss,
   saveDocument,
@@ -17,6 +18,8 @@ import {
   saveReadingPosition,
   saveSavedGloss,
   saveStructure,
+  touchShelfEntry,
+  removeShelfDocument,
 } from "./storage";
 
 const make = (paragraphs: string[], fileName: string | null = "a.docx", format: ParseFormat = "docx") =>
@@ -139,6 +142,41 @@ describe("文档存取", () => {
     vi.stubGlobal("localStorage", undefined);
     await expect(saveDocument(make(["甲。"]))).rejects.toMatchObject({ code: "E2" });
     expect(() => loadDocument("00000000")).toThrow(StorageError);
+  });
+});
+
+describe("G-13 书架索引迁移", () => {
+  it("首次迁移只新增索引，既有文档、位置、白话、整句理解和结构摘要逐字不变", async () => {
+    const docId = await saveDocument(make(["标题", "正文第一段用于书名回退。"], null));
+    saveReadingPosition(docId, 1);
+    localStorage.setItem(`gloss:saved:${docId}`, '{"version":1,"entries":[]}');
+    localStorage.setItem(`gloss:explain:${docId}`, '{"version":1,"entries":[]}');
+    localStorage.setItem(`gloss:structure:${docId}`, '{"version":1,"prompt":"p","structure":"s","savedAt":1}');
+    localStorage.removeItem("gloss:shelf:v1");
+    const before = Object.fromEntries(Object.keys(localStorage).filter((key) => key !== "gloss:shelf:v1").map((key) => [key, localStorage.getItem(key)]));
+    const shelf = loadShelf();
+    const after = Object.fromEntries(Object.keys(localStorage).filter((key) => key !== "gloss:shelf:v1").map((key) => [key, localStorage.getItem(key)]));
+    expect(shelf.entries).toHaveLength(1);
+    expect(shelf.entries[0].title).toBe("标题…");
+    expect(after).toEqual(before);
+  });
+
+  it("打开只更新最近时间，不改变书脊 addedAt 顺序", async () => {
+    const first = await saveDocument(make(["甲。"], "甲.docx"));
+    const second = await saveDocument(make(["乙。"], "乙.docx"));
+    const before = loadShelf().entries.map((entry) => entry.docId);
+    touchShelfEntry(first);
+    expect(loadShelf().entries.map((entry) => entry.docId)).toEqual(before);
+    expect(loadShelf().entries.map((entry) => entry.docId)).toContain(second);
+  });
+
+  it("移除只删除目标书的所有 localStorage 关联记录", async () => {
+    const first = await saveDocument(make(["甲。"], "甲.docx"));
+    const second = await saveDocument(make(["乙。"], "乙.docx"));
+    for (const prefix of ["gloss:pos:", "gloss:saved:", "gloss:explain:", "gloss:structure:"]) localStorage.setItem(prefix + first, "x");
+    expect(removeShelfDocument(first)).toBe(true);
+    for (const prefix of ["gloss:doc:", "gloss:pos:", "gloss:saved:", "gloss:explain:", "gloss:structure:"]) expect(localStorage.getItem(prefix + first)).toBeNull();
+    expect(localStorage.getItem(`gloss:doc:${second}`)).not.toBeNull();
   });
 });
 

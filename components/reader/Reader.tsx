@@ -1413,8 +1413,8 @@ export function buildExplainInput(
 }
 
 /**
- * 正常情况完整带三段。超出 2,000 字时，当前段优先并围绕目标句裁剪；
- * 上一段保留靠近当前段的末尾，下一段保留开头。省略号是明确的裁剪提示。
+ * 正常情况完整带三段。超出 2,000 字时，当前段最多占 1,200 字并优先保留；
+ * 余量默认均分给相邻段，一侧不够时回流到另一侧。省略号是明确的裁剪提示。
  */
 export function cropExplainContext(
   paragraphs: readonly string[],
@@ -1425,17 +1425,37 @@ export function cropExplainContext(
   const next = sentence.paraIndex + 1 < paragraphs.length ? paragraphs[sentence.paraIndex + 1]?.trim() || null : null;
   if (contextChars(previous, current, next) <= MAX_EXPLAIN_CONTEXT_CHARS) return { previous, current, next };
 
-  const previousBudget = Math.min(400, countChars(previous ?? ""));
-  const nextBudget = Math.min(400, countChars(next ?? ""));
-  const currentBudget = MAX_EXPLAIN_CONTEXT_CHARS - previousBudget - nextBudget;
   const rawCurrent = paragraphs[sentence.paraIndex] ?? sentence.text;
   const targetStart = Math.max(0, sentence.start);
   const targetEnd = Math.min(rawCurrent.length, targetStart + sentence.text.length);
+  const currentBudget = Math.min(1200, countChars(current));
+  const croppedCurrent = countChars(current) <= currentBudget
+    ? current
+    : cropAroundSentence(rawCurrent, targetStart, targetEnd, currentBudget);
+  const remainingBudget = MAX_EXPLAIN_CONTEXT_CHARS - countChars(croppedCurrent);
+  const { previousBudget, nextBudget } = distributeNeighborBudget(
+    countChars(previous ?? ""),
+    countChars(next ?? ""),
+    remainingBudget,
+  );
   return {
     previous: previous ? cropTail(previous, previousBudget) : null,
-    current: cropAroundSentence(rawCurrent, targetStart, targetEnd, currentBudget),
+    current: croppedCurrent,
     next: next ? cropHead(next, nextBudget) : null,
   };
+}
+
+function distributeNeighborBudget(previousChars: number, nextChars: number, total: number): { previousBudget: number; nextBudget: number } {
+  const preferredPrevious = Math.floor(total / 2);
+  const preferredNext = total - preferredPrevious;
+  let previousBudget = Math.min(previousChars, preferredPrevious);
+  let nextBudget = Math.min(nextChars, preferredNext);
+  let remaining = total - previousBudget - nextBudget;
+  const previousExtra = Math.min(previousChars - previousBudget, remaining);
+  previousBudget += previousExtra;
+  remaining -= previousExtra;
+  nextBudget += Math.min(nextChars - nextBudget, remaining);
+  return { previousBudget, nextBudget };
 }
 
 function contextChars(previous: string | null, current: string, next: string | null): number {
@@ -1468,7 +1488,8 @@ function takeCodePoints(text: string, limit: number): string {
   return Array.from(text).slice(0, limit).join("");
 }
 
-function takeCodePointsFromEnd(text: string, limit: number): string {
+export function takeCodePointsFromEnd(text: string, limit: number): string {
+  if (limit <= 0) return "";
   return Array.from(text).slice(-limit).join("");
 }
 

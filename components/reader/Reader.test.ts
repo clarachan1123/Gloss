@@ -3,7 +3,7 @@ import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadSavedGlosses } from "@/lib/storage";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import { anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorExplainMutation, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, type Region } from "./Reader";
+import { anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorExplainMutation, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
 
 describe("G-10a 取消保存", () => {
   it("保留当前显示文本为会话内存命中：取消后不需要发请求", () => {
@@ -231,6 +231,33 @@ describe("G-11 explain-v3 三段上下文与白话输入", () => {
     expect(context.current).toMatch(/……/u);
     expect(context.next).toMatch(/……$/u);
     expect([context.previous, context.current, context.next].join("").replace(/\s/g, "").length).toBeLessThanOrEqual(2000);
+  });
+
+  it("当前段完整保留后，邻段默认均分剩余预算且短的一侧把余量让给另一侧", () => {
+    const previous = "前".repeat(1200);
+    const current = `${"中".repeat(296)}目标句。`;
+    const next = "后".repeat(800);
+    const context = cropExplainContext([previous, current, next], { paraIndex: 1, start: 296, text: "目标句。" });
+    expect(context.current).toBe(current);
+    expect(context.current).toContain("目标句。");
+    expect(context.previous?.replace("……", "").length).toBe(898);
+    expect(context.previous?.length).toBe(900);
+    expect(context.next?.length).toBe(800);
+    expect([context.previous, context.current, context.next].join("").length).toBe(2000);
+  });
+
+  it("一侧为空时另一侧获得全部剩余预算", () => {
+    const current = `${"中".repeat(296)}目标句。`;
+    const context = cropExplainContext(["前".repeat(1900), current], { paraIndex: 1, start: 296, text: "目标句。" });
+    expect(context.next).toBeNull();
+    expect(context.previous?.length).toBe(1700);
+    expect(context.current).toBe(current);
+    expect([context.previous, context.current].join("").length).toBe(2000);
+  });
+
+  it("从末尾截取的预算为 0 时返回空字符串，不触发 slice(-0)", () => {
+    expect(takeCodePointsFromEnd("整段原文", 0)).toBe("");
+    expect(takeCodePointsFromEnd("整段原文", -1)).toBe("");
   });
 
   it("上一段或下一段为空时归一为 null，保存白话优先于自动版且发送时移除术语定界符", () => {

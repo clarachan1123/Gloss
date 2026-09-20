@@ -392,6 +392,10 @@ function readShelfRecord(storage: Storage): ShelfRecord | null {
 function reconcileShelf(storage: Storage): ShelfRecord {
   const existing = readShelfRecord(storage);
   const entries = { ...(existing?.entries ?? {}) };
+  // 索引不拥有文档：若正文已被用户或浏览器清掉，书架不得显示幽灵书。
+  for (const docId of Object.keys(entries)) {
+    if (storage.getItem(DOC_PREFIX + docId) === null) delete entries[docId];
+  }
   for (let index = 0; index < storage.length; index++) {
     const key = storage.key(index);
     if (!key?.startsWith(DOC_PREFIX)) continue;
@@ -401,7 +405,7 @@ function reconcileShelf(storage: Storage): ShelfRecord {
     if (doc) entries[docId] = shelfEntryForDocument(doc);
   }
   const next: ShelfRecord = { version: 1, migratedAt: existing?.migratedAt ?? Date.now(), entries };
-  if (!existing || Object.keys(entries).length !== Object.keys(existing.entries).length) {
+  if (!existing || JSON.stringify(entries) !== JSON.stringify(existing.entries)) {
     storage.setItem(SHELF_KEY, JSON.stringify(next));
   }
   return next;

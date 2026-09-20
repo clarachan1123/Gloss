@@ -178,6 +178,15 @@ describe("G-13 书架索引迁移", () => {
     for (const prefix of ["gloss:doc:", "gloss:pos:", "gloss:saved:", "gloss:explain:", "gloss:structure:"]) expect(localStorage.getItem(prefix + first)).toBeNull();
     expect(localStorage.getItem(`gloss:doc:${second}`)).not.toBeNull();
   });
+
+  it("索引中的幽灵书不会显示", async () => {
+    localStorage.setItem("gloss:shelf:v1", JSON.stringify({
+      version: 1,
+      migratedAt: 1,
+      entries: { deadbeef: { docId: "deadbeef", title: "已删", author: null, addedAt: 1, lastOpenedAt: 1, colorId: "book-0", widthSeed: 1 } },
+    }));
+    expect(loadShelf().entries).toEqual([]);
+  });
 });
 
 /* ---------------- 阅读位置 ---------------- */

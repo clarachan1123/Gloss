@@ -182,6 +182,7 @@ describe("G-13 书架色板对比度", () => {
     return match[1];
   });
   const inkOnDark = /--shelf-ink-on-dark:\s*(#[0-9A-Fa-f]{6})/.exec(CSS)?.[1] ?? "";
+  const inkOnDarkMuted = /--shelf-ink-on-dark-muted:\s*(#[0-9A-Fa-f]{6})/.exec(CSS)?.[1] ?? "";
   const cover = /--shelf-cover:\s*(#[0-9A-Fa-f]{6})/.exec(CSS)?.[1] ?? "";
   const mix = (paper: string, book: string) => {
     const channels = [0, 1, 2].map((i) => Math.round(parseInt(paper.slice(1 + i * 2, 3 + i * 2), 16) * .94 + parseInt(book.slice(1 + i * 2, 3 + i * 2), 16) * .06));
@@ -197,8 +198,9 @@ describe("G-13 书架色板对比度", () => {
     }
   });
 
-  it("每个书脊与书名、选中封面与封面字均达 AA", () => {
+  it("每个书脊与书名、导入年月、选中封面与封面字均达 AA", () => {
     for (const book of books) expect(contrast(book, inkOnDark)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    for (const book of books) expect(contrast(book, inkOnDarkMuted)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
     expect(contrast(cover, inkOnDark)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 });

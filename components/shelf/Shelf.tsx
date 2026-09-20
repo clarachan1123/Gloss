@@ -41,8 +41,10 @@ export default function Shelf() {
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const shelfRef = useRef<HTMLElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
   const previewTimer = useRef<number | null>(null);
   const spineRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [overflowing, setOverflowing] = useState(false);
 
   const refresh = () => {
     const next = loadShelf();
@@ -53,6 +55,20 @@ export default function Shelf() {
 
   useEffect(() => { refresh(); }, []);
   useEffect(() => () => { if (previewTimer.current !== null) window.clearTimeout(previewTimer.current); }, []);
+  useEffect(() => {
+    const shelf = shelfRef.current;
+    const track = trackRef.current;
+    if (!shelf || !track) return;
+    const measure = () => {
+      const next = track.scrollWidth > shelf.clientWidth + 1;
+      setOverflowing((current) => current === next ? current : next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(shelf);
+    observer.observe(track);
+    return () => observer.disconnect();
+  }, [entries.length]);
   useEffect(() => {
     const close = () => setMenuId((id) => { if (id) spineRefs.current.get(id)?.focus(); return null; });
     window.addEventListener("scroll", close, true);
@@ -89,8 +105,8 @@ export default function Shelf() {
       <div className="shelf-frame">
       <header className="shelf-heading"><span className="wordmark">Gloss</span><h1>我的书架</h1>{entries.length > 0 && <p>{entries.length} 本书。点开任意一本，接着上次的地方读。</p>}</header>
       {recent && <Link className="continue-reading" href={`/read/${recent.docId}`}><span className="continue-cover" style={{ background: BOOK_COLORS[Number(recent.colorId.slice(5))] }} /><span className="continue-copy"><strong>{recent.title}</strong><small>{lastReads.get(recent.docId)}</small></span><span className="continue-action">继续阅读　→</span></Link>}
-      <section className={entries.length === 0 ? "shelf empty-shelf" : "shelf"} ref={shelfRef} tabIndex={-1} aria-label="我的书架" onKeyDown={(event) => { if (event.key === "Escape") setMenuId((id) => { if (id) spineRefs.current.get(id)?.focus(); return null; }); }} onClick={(event) => { if (event.target === event.currentTarget) setMenuId(null); }}>
-        <div className="shelf-track">
+      <section className={`${entries.length === 0 ? "shelf empty-shelf" : "shelf"}${overflowing ? " shelf-overflowing" : ""}`} ref={shelfRef} tabIndex={-1} aria-label="我的书架" onKeyDown={(event) => { if (event.key === "Escape") setMenuId((id) => { if (id) spineRefs.current.get(id)?.focus(); return null; }); }} onClick={(event) => { if (event.target === event.currentTarget) setMenuId(null); }}>
+        <div className="shelf-track" ref={trackRef}>
         {entries.map((entry) => {
           const color = BOOK_COLORS[Number(entry.colorId.slice(5))];
           const open = selectedId === entry.docId || previewId === entry.docId;

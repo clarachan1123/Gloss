@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadSavedGlosses } from "@/lib/storage";
-import { buildSavedRegionsByParagraph, groupRegions, paragraphOriginalFragments, readGlossShape, retainGlossAfterUnsave, shouldRenderTransient, splitFragmentClassName, type Region } from "./Reader";
+import { buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, type Region } from "./Reader";
 
 describe("G-10a 取消保存", () => {
   it("保留当前显示文本为会话内存命中：取消后不需要发请求", () => {
@@ -125,6 +125,54 @@ describe("G-10b 未拆分测量态", () => {
     expect(shouldRenderTransient(expansion, savedLayouts, 0)).toBe(false);
     expect(shouldRenderTransient(expansion, null, null)).toBe(false);
     expect(shouldRenderTransient(expansion, savedLayouts, 1)).toBe(true);
+  });
+});
+
+describe("G-10c 阅读与复习模式", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([null, "reading", "other", "READING"])('模式值 %j 读取为 reading', (value) => {
+    vi.stubGlobal("localStorage", { getItem: () => value });
+    expect(readReadingMode()).toBe("reading");
+  });
+
+  it("读取 review，读取异常时回退 reading", () => {
+    vi.stubGlobal("localStorage", { getItem: () => "review" });
+    expect(readReadingMode()).toBe("review");
+    vi.stubGlobal("localStorage", { getItem: () => { throw new Error("blocked"); } });
+    expect(readReadingMode()).toBe("reading");
+  });
+
+  it("阅读模式只把未展开保存项变成微标记，复习模式没有微标记", () => {
+    const sentences = [
+      { index: 0, paraIndex: 0, start: 0, text: "甲。", charCount: 2 },
+      { index: 1, paraIndex: 1, start: 0, text: "乙。", charCount: 2 },
+    ];
+    const entry = { paraIndex: 0, start: 0, sourceHash: "x", text: "白话", savedAt: 0, kind: "saved" as const };
+    const saved = new Map([[0, entry], [1, { ...entry, paraIndex: 1 }]]);
+
+    expect(buildSavedMarkersByParagraph([], 2, sentences, saved, "reading", 0)).toEqual([[], [1]]);
+    expect(buildSavedMarkersByParagraph([], 2, sentences, saved, "review", null)).toEqual([[], []]);
+  });
+
+  it("阅读模式只显示当前展开 Region；复习模式复用全部 Region", () => {
+    const view = { status: "done" as const, text: "白话", failure: null, instant: true };
+    const regions = [
+      [{ index: 0, splitAt: 2, view, saved: true, presentation: "inline" as const, actionVisible: false }],
+      [{ index: 1, splitAt: null, view, saved: true, presentation: "inline" as const, actionVisible: false }],
+    ];
+
+    expect(selectVisibleSavedRegions(regions, "reading", 1).map((items) => items.map((item) => item.index))).toEqual([[], [1]]);
+    expect(selectVisibleSavedRegions(regions, "review", null)).toBe(regions);
+  });
+
+  it("句子被撑开边界切片时，微标记只跟在最后一个片段后", () => {
+    const markers = new Set([3]);
+    const ends = new Map([[3, 8]]);
+    expect(shouldRenderSavedMarker({ index: 3, start: 0, text: "前半" }, markers, ends)).toBe(false);
+    expect(shouldRenderSavedMarker({ index: 3, start: 2, text: "后半部分文字" }, markers, ends)).toBe(true);
   });
 });
 

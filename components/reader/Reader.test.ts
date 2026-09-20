@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadSavedGlosses } from "@/lib/storage";
-import { buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, type Region } from "./Reader";
+import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
+import { anchorScrollDelta, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, type Region } from "./Reader";
 
 describe("G-10a 取消保存", () => {
   it("保留当前显示文本为会话内存命中：取消后不需要发请求", () => {
@@ -28,8 +29,8 @@ describe("G-10b 同段多常驻区", () => {
 
   it("同一拆分点的两句保持独立并按句序排列", () => {
     const regions: Region[] = [
-      { index: 8, splitAt: 42, view, saved: true, presentation: "inline", actionVisible: false },
-      { index: 3, splitAt: 42, view, saved: true, presentation: "inline", actionVisible: false },
+      { index: 8, splitAt: 42, view, saved: true, presentation: "inline", actionVisible: false, explainView: IDLE_EXPLAIN_VIEW },
+      { index: 3, splitAt: 42, view, saved: true, presentation: "inline", actionVisible: false, explainView: IDLE_EXPLAIN_VIEW },
     ];
     const groups = groupRegions(regions);
     expect([...groups.keys()]).toEqual([42]);
@@ -39,8 +40,8 @@ describe("G-10b 同段多常驻区", () => {
 
   it("不同拆分点按原文顺序，段尾 null 最后插入", () => {
     const regions: Region[] = [
-      { index: 4, splitAt: null, view, saved: true, presentation: "bubble", actionVisible: false },
-      { index: 2, splitAt: 17, view, saved: true, presentation: "inline", actionVisible: false },
+      { index: 4, splitAt: null, view, saved: true, presentation: "bubble", actionVisible: false, explainView: IDLE_EXPLAIN_VIEW },
+      { index: 2, splitAt: 17, view, saved: true, presentation: "inline", actionVisible: false, explainView: IDLE_EXPLAIN_VIEW },
     ];
     expect([...groupRegions(regions).keys()]).toEqual([17, null]);
   });
@@ -160,8 +161,8 @@ describe("G-10c 阅读与复习模式", () => {
   it("阅读模式只显示当前展开 Region；复习模式复用全部 Region", () => {
     const view = { status: "done" as const, text: "白话", failure: null, instant: true };
     const regions = [
-      [{ index: 0, splitAt: 2, view, saved: true, presentation: "inline" as const, actionVisible: false }],
-      [{ index: 1, splitAt: null, view, saved: true, presentation: "inline" as const, actionVisible: false }],
+      [{ index: 0, splitAt: 2, view, saved: true, presentation: "inline" as const, actionVisible: false, explainView: IDLE_EXPLAIN_VIEW }],
+      [{ index: 1, splitAt: null, view, saved: true, presentation: "inline" as const, actionVisible: false, explainView: IDLE_EXPLAIN_VIEW }],
     ];
 
     expect(selectVisibleSavedRegions(regions, "reading", 1).map((items) => items.map((item) => item.index))).toEqual([[], [1]]);
@@ -173,6 +174,24 @@ describe("G-10c 阅读与复习模式", () => {
     const ends = new Map([[3, 8]]);
     expect(shouldRenderSavedMarker({ index: 3, start: 0, text: "前半" }, markers, ends)).toBe(false);
     expect(shouldRenderSavedMarker({ index: 3, start: 2, text: "后半部分文字" }, markers, ends)).toBe(true);
+  });
+});
+
+describe("G-11 逐句追加复用字符锚定", () => {
+  it("面板在视口内时，参照字位置不变，补偿 0px、可见内容位移 0px", () => {
+    const before = 96;
+    const afterAppend = 96;
+    const compensation = anchorScrollDelta(before, afterAppend);
+    expect(compensation).toBe(0);
+    expect(afterAppend - before - compensation).toBe(0);
+  });
+
+  it("面板在视口上方增长 28px 时，补偿 28px、可见内容位移 0px", () => {
+    const before = 96;
+    const afterAppend = 124;
+    const compensation = anchorScrollDelta(before, afterAppend);
+    expect(compensation).toBe(28);
+    expect(afterAppend - before - compensation).toBe(0);
   });
 });
 

@@ -17,6 +17,7 @@ const POS_PREFIX = "gloss:pos:";
 const STRUCTURE_PREFIX = "gloss:structure:";
 const SAVED_GLOSS_PREFIX = "gloss:saved:";
 const EXPLAIN_PREFIX = "gloss:explain:";
+const SHELF_KEY = "gloss:shelf:v1";
 const SCHEMA_VERSION = 1;
 const SAVED_GLOSS_SCHEMA_VERSION = 1;
 const EXPLAIN_SCHEMA_VERSION = 1;
@@ -29,6 +30,27 @@ export interface StoredDocument {
   footnotes: ParsedFootnote[];
   meta: ParsedDocument["meta"];
   savedAt: number;
+}
+
+export interface ShelfEntry {
+  docId: string;
+  title: string;
+  author: string | null;
+  addedAt: number;
+  lastOpenedAt: number;
+  colorId: string;
+  widthSeed: number;
+}
+
+interface ShelfRecord {
+  version: 1;
+  migratedAt: number;
+  entries: Record<string, ShelfEntry>;
+}
+
+export interface ShelfSnapshot {
+  entries: ShelfEntry[];
+  unavailable: boolean;
 }
 
 export type SavedGlossKind = "saved" | "edited";
@@ -294,6 +316,10 @@ export async function saveDocument(doc: ParsedDocument): Promise<string> {
   } catch (err) {
     throw new StorageError(isQuotaError(err) ? "E1" : "E2", err);
   }
+  // 书架索引只是加速层：索引满或暂不可写时仍保住刚导入的原文，下一次书架对账会补回。
+  try {
+    upsertShelfEntry(record);
+  } catch {}
   return docId;
 }
 
@@ -321,6 +347,126 @@ export function loadDocument(docId: string): StoredDocument | null {
       errName: err instanceof Error ? err.name : typeof err,
     });
     return null;
+  }
+}
+
+function titleForDocument(doc: StoredDocument): string {
+  const fileName = doc.meta.fileName?.replace(/\.[^.]+$/, "").trim();
+  if (fileName) return fileName;
+  const heading = doc.headings[0]?.text.trim();
+  if (heading) return heading;
+  const firstParagraph = doc.paragraphs.find((paragraph) => paragraph.trim())?.trim();
+  if (firstParagraph) return `${Array.from(firstParagraph).slice(0, 12).join("")}…`;
+  return "未命名文档";
+}
+
+function seedForDoc(docId: string): number {
+  return Number.parseInt(docId, 16) >>> 0;
+}
+
+function shelfEntryForDocument(doc: StoredDocument): ShelfEntry {
+  return {
+    docId: doc.docId,
+    title: titleForDocument(doc),
+    author: null,
+    addedAt: doc.savedAt,
+    lastOpenedAt: doc.savedAt,
+    colorId: `book-${seedForDoc(doc.docId) % 11}`,
+    widthSeed: seedForDoc(doc.docId),
+  };
+}
+
+function readShelfRecord(storage: Storage): ShelfRecord | null {
+  const raw = storage.getItem(SHELF_KEY);
+  if (raw === null) return null;
+  try {
+    const record = JSON.parse(raw) as Partial<ShelfRecord> | null;
+    if (record?.version !== 1 || typeof record.migratedAt !== "number" || !record.entries) return null;
+    return { version: 1, migratedAt: record.migratedAt, entries: record.entries };
+  } catch {
+    return null;
+  }
+}
+
+/** 第一次书架打开才扫描旧文档；只写 gloss:shelf:v1，绝不回写任何既有记录。 */
+function reconcileShelf(storage: Storage): ShelfRecord {
+  const existing = readShelfRecord(storage);
+  const entries = { ...(existing?.entries ?? {}) };
+  // 索引不拥有文档：若正文已被用户或浏览器清掉，书架不得显示幽灵书。
+  for (const docId of Object.keys(entries)) {
+    if (storage.getItem(DOC_PREFIX + docId) === null) delete entries[docId];
+  }
+  for (let index = 0; index < storage.length; index++) {
+    const key = storage.key(index);
+    if (!key?.startsWith(DOC_PREFIX)) continue;
+    const docId = key.slice(DOC_PREFIX.length);
+    if (entries[docId]) continue;
+    const doc = loadDocument(docId);
+    if (doc) entries[docId] = shelfEntryForDocument(doc);
+  }
+  const next: ShelfRecord = { version: 1, migratedAt: existing?.migratedAt ?? Date.now(), entries };
+  if (!existing || JSON.stringify(entries) !== JSON.stringify(existing.entries)) {
+    storage.setItem(SHELF_KEY, JSON.stringify(next));
+  }
+  return next;
+}
+
+function upsertShelfEntry(doc: StoredDocument): void {
+  const storage = getStorage();
+  const record = readShelfRecord(storage) ?? { version: 1 as const, migratedAt: Date.now(), entries: {} };
+  const previous = record.entries[doc.docId];
+  record.entries[doc.docId] = previous ?? shelfEntryForDocument(doc);
+  storage.setItem(SHELF_KEY, JSON.stringify(record));
+}
+
+/** 书架加载与遗留文档对账；E2 由调用方显示明确提示。 */
+export function loadShelf(): ShelfSnapshot {
+  try {
+    const record = reconcileShelf(getStorage());
+    return { entries: Object.values(record.entries).sort((a, b) => a.addedAt - b.addedAt), unavailable: false };
+  } catch {
+    return { entries: [], unavailable: true };
+  }
+}
+
+/** 文档已成功显示后触发；不影响书脊排序。 */
+export function touchShelfEntry(docId: string): void {
+  try {
+    const storage = getStorage();
+    const record = reconcileShelf(storage);
+    const entry = record.entries[docId];
+    if (!entry) return;
+    record.entries[docId] = { ...entry, lastOpenedAt: Date.now() };
+    storage.setItem(SHELF_KEY, JSON.stringify(record));
+  } catch {}
+}
+
+export function setShelfColor(docId: string, colorId: string): void {
+  try {
+    const storage = getStorage();
+    const record = reconcileShelf(storage);
+    const entry = record.entries[docId];
+    if (!entry) return;
+    record.entries[docId] = { ...entry, colorId };
+    storage.setItem(SHELF_KEY, JSON.stringify(record));
+  } catch {}
+}
+
+/** 删除一本文档所有 localStorage 关联记录；IndexedDB 自动白话由调用方随后按 docId 删除。 */
+export function removeShelfDocument(docId: string): boolean {
+  try {
+    const storage = getStorage();
+    const record = reconcileShelf(storage);
+    storage.removeItem(DOC_PREFIX + docId);
+    storage.removeItem(POS_PREFIX + docId);
+    storage.removeItem(STRUCTURE_PREFIX + docId);
+    storage.removeItem(SAVED_GLOSS_PREFIX + docId);
+    storage.removeItem(EXPLAIN_PREFIX + docId);
+    delete record.entries[docId];
+    storage.setItem(SHELF_KEY, JSON.stringify(record));
+    return true;
+  } catch {
+    return false;
   }
 }
 

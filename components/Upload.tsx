@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import Notice from "./Notice";
 import styles from "./Upload.module.css";
 import { parseDocx } from "@/lib/parse/docx";
@@ -29,7 +29,7 @@ interface UploadNotice {
 
 /** 本 issue 只做阻断提示；导出入口、删除旧文档入口留给后续 issue */
 const STORAGE_MESSAGES: Record<StorageErrorCode, string> = {
-  E1: "本地存储空间已满，暂时无法打开阅读器。",
+  E1: "本地存储空间已满，请先从书架移除不再需要的书。",
   E2: "当前浏览器禁止本地存储，暂时无法打开阅读器。",
 };
 
@@ -53,13 +53,20 @@ const fromParseNotice = (n: NoticeContent): UploadNotice => ({
  * 不调用 Server Action、不请求任何 API，文件内容不离开本页。
  * 解析成功后存入 localStorage：无警告直接进入阅读器；有警告（A9）留在本页，由用户点「开始阅读」。
  */
-export default function Upload() {
+interface UploadProps {
+  onStorageFull?: () => void;
+  droppedFile?: File | null;
+  onDroppedFileHandled?: () => void;
+}
+
+export default function Upload({ onStorageFull, droppedFile, onDroppedFileHandled }: UploadProps = {}) {
   const router = useRouter();
   const [notices, setNotices] = useState<UploadNotice[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
   const [readyDocId, setReadyDocId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pasteRef = useRef<HTMLTextAreaElement>(null);
+  const handledDropRef = useRef<File | null>(null);
 
   function reset() {
     setNotices([]);
@@ -104,11 +111,7 @@ export default function Upload() {
     setSummary(null);
   }
 
-  async function handleFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-
+  async function ingestFile(file: File) {
     setBusy(true);
     reset();
     try {
@@ -128,6 +131,18 @@ export default function Upload() {
       setBusy(false);
     }
   }
+
+  async function handleFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) await ingestFile(file);
+  }
+
+  useEffect(() => {
+    if (!droppedFile || handledDropRef.current === droppedFile) return;
+    handledDropRef.current = droppedFile;
+    void ingestFile(droppedFile).finally(onDroppedFileHandled);
+  }, [droppedFile, onDroppedFileHandled]);
 
   async function handlePaste() {
     setBusy(true);
@@ -169,7 +184,9 @@ export default function Upload() {
             key={n.key}
             tone={n.tone}
             message={n.message}
-            action={n.offerPaste ? { label: "改用粘贴文本", onClick: focusPaste } : undefined}
+            action={n.key === "E1" && onStorageFull
+              ? { label: "去书架删除", onClick: onStorageFull }
+              : n.offerPaste ? { label: "改用粘贴文本", onClick: focusPaste } : undefined}
           />
         ))}
       </div>

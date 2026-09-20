@@ -62,4 +62,19 @@
 :root {
   --font-serif-cjk: "Noto Serif CJK SC", "Source Han Serif SC",
                     "Songti SC", "SimSun", "Noto Serif SC", serif;
+  --font-serif: var(--font-serif-cjk);
+  --shelf-book-0: #3B3A36;
+  --shelf-book-1: #655A52;
+  --shelf-book-2: #2E3338;
+  --shelf-book-3: #53433F;
+  --shelf-book-4: #42493E;
+  --shelf-book-5: #786146;
+  --shelf-book-6: #5C574F;
+  --shelf-book-7: #3E474D;
+  --shelf-book-8: #4F3F45;
+  --shelf-book-9: #615C42;
+  --shelf-book-10: #2A312E;
+  --shelf-cover: #25282A;
+  --shelf-ink-on-dark: #F8F6F0;
+  --shelf-ink-on-dark-muted: #F2EEE6;
 }

@@ -60,6 +60,8 @@ body {
   text-decoration: none;
 }
 
+.reader-shelf-back { display: block; margin-top: 4px; color: var(--gloss); font-size: 12px; text-decoration: none; }
+
 /* ---------------- 侧栏骨架 ---------------- */
 
 .mode-switch {

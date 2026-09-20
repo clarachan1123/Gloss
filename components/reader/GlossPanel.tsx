@@ -239,21 +239,23 @@ export default function GlossPanel({
           {explainView.status === "failed" && explainView.failure && (
             <p className="explain-result-note">
               {EXPLAIN_NOTES[explainView.failure]}
-              <button
-                type="button"
-                className="gloss-panel-retry"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onExplainRetry(sentenceIndex);
-                }}
-              >
-                重试
-              </button>
+              {explainView.failure !== "throttled" && explainView.failure !== "refused" && (
+                <button
+                  type="button"
+                  className="gloss-panel-retry"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onExplainRetry(sentenceIndex);
+                  }}
+                >
+                  重试
+                </button>
+              )}
             </p>
           )}
         </section>
       )}
-      {actionVisible && actionsReady && (
+      {actionVisible && (
         <ActionRow
           saved={saved}
           disabled={view.status !== "done" || revealing}
@@ -261,6 +263,7 @@ export default function GlossPanel({
           explainStatus={explainView.status}
           onExplain={() => onExplain(sentenceIndex)}
           onExplainBlocked={() => onExplainBlocked(sentenceIndex)}
+          explainVisible={actionsReady}
         />
       )}
     </div>

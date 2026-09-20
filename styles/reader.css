@@ -460,6 +460,11 @@ body {
   cursor: default;
 }
 
+.action-row-explain[aria-hidden="true"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .action-row-save,
 .action-row-explain {
   font-size: 14px;

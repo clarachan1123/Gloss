@@ -1,11 +1,13 @@
 import { parseGlossRequest, type GlossRequest } from "@/lib/context";
 import { AiError, MODEL_STRONG, logAiEvent, streamChat, type ChatMessage, type Usage } from "@/lib/deepseek";
 import { countChars } from "@/lib/parse/validate";
+import { MarkdownStripper } from "@/lib/output";
 import {
   EXPLAIN_EXTENSION_LEADS,
   EXPLAIN_MAX_CHARS,
   EXPLAIN_MAX_TOKENS,
   EXPLAIN_PROMPT_VERSION,
+  EXPLAIN_REFUSAL_MARKER,
   EXPLAIN_SYSTEM_PROMPT,
   EXPLAIN_TEMPERATURE,
 } from "@/lib/prompts/explain";
@@ -59,6 +61,37 @@ export class CompleteSentenceBuffer {
   }
 }
 
+/** 只判断清洗后输出的开头；标记跨上游 chunk 时先扣住，避免正文误发。 */
+class ExplainRefusalGate {
+  refused = false;
+  private decided = false;
+  private held = "";
+
+  push(text: string): string {
+    if (this.refused) return "";
+    if (this.decided) return text;
+    this.held += text;
+    const head = this.held.replace(/^\s+/u, "");
+    if (head.startsWith(EXPLAIN_REFUSAL_MARKER)) {
+      this.refused = true;
+      this.held = "";
+      return "";
+    }
+    if (EXPLAIN_REFUSAL_MARKER.startsWith(head)) return "";
+    this.decided = true;
+    this.held = "";
+    return head;
+  }
+
+  end(): string {
+    if (this.refused || this.decided) return "";
+    this.decided = true;
+    const text = this.held.replace(/^\s+/u, "");
+    this.held = "";
+    return text;
+  }
+}
+
 export function buildExplainMessages(input: GlossRequest): ChatMessage[] {
   return [
     { role: "system", content: EXPLAIN_SYSTEM_PROMPT },
@@ -107,6 +140,8 @@ export async function POST(request: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const buffer = new CompleteSentenceBuffer();
+      const stripper = new MarkdownStripper();
+      const refusalGate = new ExplainRefusalGate();
       let acceptedText = "";
       let sentenceCount = 0;
       let closed = false;
@@ -150,6 +185,19 @@ export async function POST(request: Request): Promise<Response> {
         send({ type: "sentence", text: sentence });
         return "accepted";
       };
+      const acceptCleanText = (text: string): "accepted" | "cut" | "refused" => {
+        const safeText = refusalGate.push(text);
+        if (refusalGate.refused) {
+          upstream.abort();
+          send({ type: "error", error: "refused" });
+          close();
+          return "refused";
+        }
+        for (const sentence of buffer.push(safeText)) {
+          if (accept(sentence) === "cut") return "cut";
+        }
+        return "accepted";
+      };
 
       try {
         const pieces = streamChat({
@@ -166,9 +214,18 @@ export async function POST(request: Request): Promise<Response> {
         });
 
         for await (const piece of pieces) {
-          for (const sentence of buffer.push(piece)) {
-            if (accept(sentence) === "cut") return;
-          }
+          const result = acceptCleanText(stripper.push(piece));
+          if (result !== "accepted") return;
+        }
+
+        const finalText = refusalGate.push(stripper.end()) + refusalGate.end();
+        if (refusalGate.refused) {
+          send({ type: "error", error: "refused" });
+          close();
+          return;
+        }
+        for (const sentence of buffer.push(finalText)) {
+          if (accept(sentence) === "cut") return;
         }
 
         const tail = buffer.finish();

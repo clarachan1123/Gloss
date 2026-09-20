@@ -10,6 +10,7 @@ export default function ActionRow({
   explainStatus,
   onExplain,
   onExplainBlocked,
+  explainVisible,
 }: {
   saved: boolean;
   disabled: boolean;
@@ -17,6 +18,7 @@ export default function ActionRow({
   explainStatus: "idle" | "loading" | "streaming" | "done" | "failed";
   onExplain: () => void;
   onExplainBlocked: () => void;
+  explainVisible: boolean;
 }) {
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -51,10 +53,13 @@ export default function ActionRow({
       <button
         type="button"
         className="action-row-explain"
-        aria-disabled={explainStatus === "done" || explainStatus === "loading" || explainStatus === "streaming"}
+        aria-hidden={!explainVisible}
+        aria-disabled={!explainVisible || explainStatus === "done" || explainStatus === "loading" || explainStatus === "streaming"}
         aria-busy={explainStatus === "loading" || explainStatus === "streaming"}
+        tabIndex={explainVisible ? 0 : -1}
         onClick={(event) => {
           event.stopPropagation();
+          if (!explainVisible) return;
           if (explainStatus === "done") {
             onExplainBlocked();
             return;

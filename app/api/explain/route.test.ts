@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { streamExplain } from "@/lib/explain-client";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadExplanations, saveExplanation } from "@/lib/storage";
+import { EXPLAIN_REFUSAL_MARKER } from "@/lib/prompts/explain";
 import { POST, type ExplainStreamEvent } from "./route";
 
 const input = {
@@ -94,6 +95,32 @@ describe("G-11 /api/explain 逐句安全流", () => {
     expect(sentences.map((event) => event.text).join("")).toBe(full);
     expect(sentences.slice(1).every((event) => !/^[”’」』】）》）］]/u.test(event.text))).toBe(true);
     expect(output.at(-1)).toEqual({ type: "done" });
+  });
+
+  it("先清洗标题、列表和行内 Markdown，再逐句发送；清洗后仍不丢字、不重复", async () => {
+    const chunks = ["# **甲句。", "**\n- 乙句！\n> `丙句？`"];
+    vi.stubGlobal("fetch", vi.fn(async () => upstreamResponse(chunks)));
+
+    const output = await events(await POST(request()));
+    const sentences = output.filter((event): event is Extract<ExplainStreamEvent, { type: "sentence" }> => event.type === "sentence");
+    const displayed = sentences.map((event) => event.text).join("");
+    expect(displayed).toBe("甲句。乙句！丙句？");
+    expect(displayed).not.toMatch(/[#*`>-]/u);
+    expect(output.at(-1)).toEqual({ type: "done" });
+  });
+
+  it.each([
+    ["首个 chunk", [EXPLAIN_REFUSAL_MARKER]],
+    ["标记切在两个 chunk", [EXPLAIN_REFUSAL_MARKER.slice(0, 3), EXPLAIN_REFUSAL_MARKER.slice(3)]],
+  ] as const)("拒答标记在%s时不发正文并返回 refused", async (_name, chunks) => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return upstreamResponse([...chunks]);
+    }));
+
+    expect(await events(await POST(request()))).toEqual([{ type: "error", error: "refused" }]);
+    expect(signal?.aborted).toBe(true);
   });
 
   it("延伸句式从命中句起丢弃，中止上游，已发完整前缀成功结束", async () => {

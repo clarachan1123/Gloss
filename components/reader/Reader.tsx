@@ -889,12 +889,15 @@ export default function Reader({ docId }: { docId: string }) {
 
   const retryGloss = useCallback(() => setRetryCount((n) => n + 1), []);
 
-  /** 功能二的每次可见变化都复用正文字符锚定；面板在锚点下方时计算出的补偿自然为 0。 */
+  /**
+   * 只有整块面板已经在视口上方时才建立字符锚定：视口顶边切在面板内时，
+   * 读者正看的是整句理解，追加必须只向下生长，不能反向滚动这块内容。
+   */
   const stageExplainView = useCallback((runDocId: string, index: number, view: ExplainView) => {
     if (!mountedRef.current || explainContextRef.current.docId !== runDocId) return;
     const body = bodyRef.current;
     const panel = body?.querySelector<HTMLElement>(`.gloss-panel[data-sentence-index="${index}"]`);
-    if (body && panel) {
+    if (body && panel && shouldAnchorExplainMutation(panel.getBoundingClientRect().bottom)) {
       transactionRef.current = { anchor: anchorAtViewportTop(body), animateOpen: false, adjustVisibility: false };
     }
     const next = new Map(explainViewsRef.current).set(index, view);
@@ -1247,6 +1250,11 @@ export function countCompleteSentences(text: string): number {
 export function anchorScrollDelta(previousViewportTop: number, nextViewportTop: number): number {
   const delta = nextViewportTop - previousViewportTop;
   return Math.abs(delta) > 0.5 ? delta : 0;
+}
+
+/** 功能二追加只在整块面板已经离开视口上方时补偿正文字符锚点。 */
+export function shouldAnchorExplainMutation(panelBottom: number): boolean {
+  return panelBottom <= 0;
 }
 
 /** 测量中的段落必须保持为原始、未拆分 DOM，不能残留 transient 插入区。 */

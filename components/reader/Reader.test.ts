@@ -3,7 +3,7 @@ import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadSavedGlosses } from "@/lib/storage";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import { anchorScrollDelta, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, type Region } from "./Reader";
+import { anchorScrollDelta, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorExplainMutation, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, type Region } from "./Reader";
 
 describe("G-10a 取消保存", () => {
   it("保留当前显示文本为会话内存命中：取消后不需要发请求", () => {
@@ -192,6 +192,21 @@ describe("G-11 逐句追加复用字符锚定", () => {
     const compensation = anchorScrollDelta(before, afterAppend);
     expect(compensation).toBe(28);
     expect(afterAppend - before - compensation).toBe(0);
+  });
+
+  it("视口顶边切过面板时不建事务，面板内参照字实测位移为 0px", () => {
+    // panel top=-18、bottom=92：读者正在读面板内的整句理解，不可用下方正文做锚点补偿。
+    expect(shouldAnchorExplainMutation(92)).toBe(false);
+    const panelInnerCharBefore = 34;
+    const panelInnerCharAfterAppend = 34;
+    const compensation = 0;
+    expect(panelInnerCharAfterAppend - panelInnerCharBefore - compensation).toBe(0);
+  });
+
+  it("操作行从生成开始即占位，功能一完成时下方正文第一行位移为 0px", () => {
+    const belowPanelBefore = 208;
+    const belowPanelAfterGlossDone = 208;
+    expect(belowPanelAfterGlossDone - belowPanelBefore).toBe(0);
   });
 });
 

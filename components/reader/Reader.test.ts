@@ -3,7 +3,7 @@ import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadSavedGlosses } from "@/lib/storage";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import { anchorScrollDelta, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorExplainMutation, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, type Region } from "./Reader";
+import { anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorExplainMutation, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, type Region } from "./Reader";
 
 describe("G-10a 取消保存", () => {
   it("保留当前显示文本为会话内存命中：取消后不需要发请求", () => {
@@ -207,6 +207,41 @@ describe("G-11 逐句追加复用字符锚定", () => {
     const belowPanelBefore = 208;
     const belowPanelAfterGlossDone = 208;
     expect(belowPanelAfterGlossDone - belowPanelBefore).toBe(0);
+  });
+});
+
+describe("G-11 explain-v3 三段上下文与白话输入", () => {
+  it("段首、段尾和只有一段时正确保留可用的相邻段", () => {
+    const paragraphs = ["第一段。", "第二段。", "第三段。"];
+    const sentences = segmentParagraphs(paragraphs).sentences;
+    expect(cropExplainContext(paragraphs, sentences[0]!)).toEqual({ previous: null, current: "第一段。", next: "第二段。" });
+    expect(cropExplainContext(paragraphs, sentences[2]!)).toEqual({ previous: "第二段。", current: "第三段。", next: null });
+    const only = segmentParagraphs(["只有一段。"]).sentences[0]!;
+    expect(cropExplainContext(["只有一段。"], only)).toEqual({ previous: null, current: "只有一段。", next: null });
+  });
+
+  it("当前段超长时围绕目标句裁剪，上一段取尾、下一段取头，总计不超过 2000 字", () => {
+    const previous = `甲${"前".repeat(600)}`;
+    const current = `${"左".repeat(950)}目标句。${"右".repeat(950)}`;
+    const next = `${"后".repeat(600)}乙`;
+    const context = cropExplainContext([previous, current, next], { paraIndex: 1, start: 950, text: "目标句。" });
+    expect(context.previous).toMatch(/^……/u);
+    expect(context.previous).toContain("前");
+    expect(context.current).toContain("目标句。");
+    expect(context.current).toMatch(/……/u);
+    expect(context.next).toMatch(/……$/u);
+    expect([context.previous, context.current, context.next].join("").replace(/\s/g, "").length).toBeLessThanOrEqual(2000);
+  });
+
+  it("上一段或下一段为空时归一为 null，保存白话优先于自动版且发送时移除术语定界符", () => {
+    const paragraphs = ["　", "目标句。", "\n"];
+    const sentences = segmentParagraphs(paragraphs).sentences;
+    const saved = new Map([[0, { paraIndex: 1, start: 0, sourceHash: "x", text: "保存的⟦概念⟧白话。", savedAt: 0, kind: "saved" as const }]]);
+    const automatic = new Map<number, MemoryGloss>([[0, { text: "自动白话。", hasStructure: false, source: "session", shown: true }]]);
+    const input = buildExplainInput(paragraphs, sentences, 0, null, saved, automatic);
+    expect(input.context).toEqual({ previous: null, current: "目标句。", next: null });
+    expect(input.gloss).toBe("保存的概念白话。");
+    expect(buildExplainInput(paragraphs, sentences, 0, null, new Map(), new Map()).gloss).toBeNull();
   });
 });
 

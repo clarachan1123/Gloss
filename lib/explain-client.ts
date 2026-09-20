@@ -2,8 +2,13 @@
 
 export interface ExplainInput {
   sentence: string;
-  before: string[];
-  after: string[];
+  context: {
+    previous: string | null;
+    current: string;
+    next: string | null;
+  };
+  /** 读者当时已看到的白话；术语定界符已由 Reader 去除。 */
+  gloss: string | null;
   structure: string | null;
 }
 

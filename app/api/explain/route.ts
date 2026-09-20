@@ -1,4 +1,4 @@
-import { parseGlossRequest, type GlossRequest } from "@/lib/context";
+import { parseExplainRequest, type ExplainRequest } from "@/lib/context";
 import { AiError, MODEL_STRONG, logAiEvent, streamChat, type ChatMessage, type Usage } from "@/lib/deepseek";
 import { countChars } from "@/lib/parse/validate";
 import { MarkdownStripper } from "@/lib/output";
@@ -92,14 +92,15 @@ class ExplainRefusalGate {
   }
 }
 
-export function buildExplainMessages(input: GlossRequest): ChatMessage[] {
+export function buildExplainMessages(input: ExplainRequest): ChatMessage[] {
   return [
     { role: "system", content: EXPLAIN_SYSTEM_PROMPT },
     { role: "user", content: `【全书结构摘要】\n${input.structure ?? "暂无"}` },
     {
       role: "user",
-      content: `【前文】\n${input.before.length > 0 ? input.before.join("\n") : "暂无"}\n\n【后文】\n${input.after.length > 0 ? input.after.join("\n") : "暂无"}`,
+      content: `【上一段】\n${input.context.previous ?? "暂无"}\n\n【当前段】\n${input.context.current}\n\n【下一段】\n${input.context.next ?? "暂无"}`,
     },
+    { role: "user", content: `【读者已读白话】\n${input.gloss ?? "未提供白话"}` },
     { role: "user", content: `【目标句】\n${input.sentence}` },
   ];
 }
@@ -128,7 +129,7 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return Response.json({ error: "bad_request", message: "请求体不是合法的 JSON" }, { status: 400 });
   }
-  const parsed = parseGlossRequest(body);
+  const parsed = parseExplainRequest(body);
   if (!parsed.ok) return Response.json({ error: "bad_request", message: parsed.reason }, { status: 400 });
 
   const input = parsed.value;

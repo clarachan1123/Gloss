@@ -3,13 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { streamExplain } from "@/lib/explain-client";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadExplanations, saveExplanation } from "@/lib/storage";
-import { EXPLAIN_REFUSAL_MARKER } from "@/lib/prompts/explain";
+import { EXPLAIN_REFUSAL_MARKER, EXPLAIN_SYSTEM_PROMPT } from "@/lib/prompts/explain";
 import { POST, type ExplainStreamEvent } from "./route";
 
 const input = {
   sentence: "目标句。",
-  before: ["前一句。"],
-  after: ["后一句。"],
+  context: { previous: "上一段。", current: "当前段里有目标句。", next: "下一段。" },
+  gloss: "读者已经明白的字面意思。",
   structure: "结构摘要。",
 };
 
@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe("G-11 /api/explain 逐句安全流", () => {
-  it("固定 prompt 最前、结构摘要其次、前后文随后、目标句最后，并使用强模型关闭 thinking", async () => {
+  it("固定 prompt 最前、结构摘要其次、三段上下文、白话、目标句最后，并使用强模型关闭 thinking", async () => {
     let upstreamBody: Record<string, unknown> | null = null;
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       upstreamBody = JSON.parse(String(init?.body));
@@ -72,11 +72,36 @@ describe("G-11 /api/explain 逐句安全流", () => {
       stream: true,
     });
     const messages = (upstreamBody as unknown as { messages: { role: string; content: string }[] }).messages;
-    expect(messages[0]).toMatchObject({ role: "system" });
-    expect(messages[1].content).toBe("【全书结构摘要】\n结构摘要。");
-    expect(messages[2].content).toContain("【前文】\n前一句。");
-    expect(messages[2].content).toContain("【后文】\n后一句。");
-    expect(messages.at(-1)?.content).toBe("【目标句】\n目标句。");
+    expect(messages).toEqual([
+      { role: "system", content: EXPLAIN_SYSTEM_PROMPT },
+      { role: "user", content: "【全书结构摘要】\n结构摘要。" },
+      { role: "user", content: "【上一段】\n上一段。\n\n【当前段】\n当前段里有目标句。\n\n【下一段】\n下一段。" },
+      { role: "user", content: "【读者已读白话】\n读者已经明白的字面意思。" },
+      { role: "user", content: "【目标句】\n目标句。" },
+    ]);
+  });
+
+  it("虚构文本的完整 messages 数组可作为真实请求结构样例，未提供白话仍保留固定消息位置", async () => {
+    const fictional = {
+      sentence: "于是港口暂缓开放。",
+      context: { previous: "晨雾遮住了航道。", current: "值班员看见信号旗没有升起。于是港口暂缓开放。", next: "午后风向改变，船只重新排队。" },
+      gloss: null,
+      structure: "虚构海港故事：天气变化让港口的秩序不断调整。",
+    };
+    let upstreamBody: Record<string, unknown> | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      upstreamBody = JSON.parse(String(init?.body));
+      return upstreamResponse(["这句把决定落到具体措施上。"]);
+    }));
+
+    await (await POST(new Request("http://localhost/api/explain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(fictional) }))).text();
+    expect((upstreamBody as unknown as { messages: unknown[] }).messages).toEqual([
+      { role: "system", content: EXPLAIN_SYSTEM_PROMPT },
+      { role: "user", content: "【全书结构摘要】\n虚构海港故事：天气变化让港口的秩序不断调整。" },
+      { role: "user", content: "【上一段】\n晨雾遮住了航道。\n\n【当前段】\n值班员看见信号旗没有升起。于是港口暂缓开放。\n\n【下一段】\n午后风向改变，船只重新排队。" },
+      { role: "user", content: "【读者已读白话】\n未提供白话" },
+      { role: "user", content: "【目标句】\n于是港口暂缓开放。" },
+    ]);
   });
 
   it.each([

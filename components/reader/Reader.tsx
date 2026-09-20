@@ -23,10 +23,11 @@ import {
   saveGlossCache,
   type MemoryGloss,
 } from "@/lib/cache";
-import { MAX_AFTER, MAX_BEFORE } from "@/lib/context";
-import { streamExplain } from "@/lib/explain-client";
+import { MAX_AFTER, MAX_BEFORE, MAX_EXPLAIN_CONTEXT_CHARS } from "@/lib/context";
+import { streamExplain, type ExplainInput } from "@/lib/explain-client";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
-import { skippedSummary, type ParsedHeading } from "@/lib/parse/validate";
+import { countChars, skippedSummary, type ParsedHeading } from "@/lib/parse/validate";
+import { TERM_CLOSE, TERM_OPEN } from "@/lib/prompts/gloss";
 import { STRUCTURE_PROMPT_VERSION } from "@/lib/prompts/structure";
 import { segmentParagraphs, type Sentence as SentenceData } from "@/lib/segment";
 import {
@@ -218,7 +219,7 @@ export default function Reader({ docId }: { docId: string }) {
   const explainViewsRef = useRef<ReadonlyMap<number, ExplainView>>(EMPTY_EXPLAIN_VIEWS);
   const explainRunsRef = useRef(new Map<string, number>());
   const explainRunIdRef = useRef(0);
-  const explainContextRef = useRef<{ docId: string; sentences: readonly SentenceData[] }>({ docId, sentences: [] });
+  const explainContextRef = useRef<{ docId: string; sentences: readonly SentenceData[]; paragraphs: readonly string[] }>({ docId, sentences: [], paragraphs: [] });
   const mountedRef = useRef(false);
 
   // 功能一（G-07）
@@ -316,7 +317,7 @@ export default function Reader({ docId }: { docId: string }) {
 
   // 不存 sentences，每次加载重算（G-03 保证确定性）
   const sentences = useMemo(() => (doc ? segmentParagraphs(doc.paragraphs).sentences : []), [doc]);
-  explainContextRef.current = { docId, sentences };
+  explainContextRef.current = { docId, sentences, paragraphs: doc?.paragraphs ?? [] };
   explainViewsRef.current = explainViews;
 
   const piecesByParagraph = useMemo(() => {
@@ -916,7 +917,14 @@ export default function Reader({ docId }: { docId: string }) {
     const runId = ++explainRunIdRef.current;
     explainRunsRef.current.set(key, runId);
     stageExplainView(context.docId, index, { status: "loading", text: "", sentenceCount: 0, failure: null });
-    const input = glossInput(context.sentences, index, structureRef.current);
+    const input = buildExplainInput(
+      context.paragraphs,
+      context.sentences,
+      index,
+      structureRef.current,
+      savedGlossesRef.current,
+      glossMemoRef.current,
+    );
 
     void streamExplain(input, (_sentence, fullText) => {
       if (explainRunsRef.current.get(key) !== runId) return;
@@ -1381,6 +1389,87 @@ function glossInput(sentences: readonly SentenceData[], index: number, structure
     after: range(index + 1, Math.min(sentences.length, index + 1 + MAX_AFTER)),
     structure,
   };
+}
+
+/** 功能二独立使用“上一段／当前段／下一段”，不影响功能一的前后各两句窗口。 */
+export function buildExplainInput(
+  paragraphs: readonly string[],
+  sentences: readonly SentenceData[],
+  index: number,
+  structure: string | null,
+  savedGlosses: ReadonlyMap<number, SavedGloss>,
+  automaticGlosses: ReadonlyMap<number, MemoryGloss>,
+): ExplainInput {
+  const sentence = sentences[index];
+  if (!sentence) throw new Error("explain input requires an existing sentence");
+  const context = cropExplainContext(paragraphs, sentence);
+  const source = savedGlosses.get(index)?.text ?? automaticGlosses.get(index)?.text ?? null;
+  return {
+    sentence: sentence.text.trim(),
+    context,
+    gloss: source ? source.replaceAll(TERM_OPEN, "").replaceAll(TERM_CLOSE, "").trim() || null : null,
+    structure,
+  };
+}
+
+/**
+ * 正常情况完整带三段。超出 2,000 字时，当前段优先并围绕目标句裁剪；
+ * 上一段保留靠近当前段的末尾，下一段保留开头。省略号是明确的裁剪提示。
+ */
+export function cropExplainContext(
+  paragraphs: readonly string[],
+  sentence: Pick<SentenceData, "paraIndex" | "start" | "text">,
+): ExplainInput["context"] {
+  const previous = sentence.paraIndex > 0 ? paragraphs[sentence.paraIndex - 1]?.trim() || null : null;
+  const current = paragraphs[sentence.paraIndex]?.trim() || sentence.text.trim();
+  const next = sentence.paraIndex + 1 < paragraphs.length ? paragraphs[sentence.paraIndex + 1]?.trim() || null : null;
+  if (contextChars(previous, current, next) <= MAX_EXPLAIN_CONTEXT_CHARS) return { previous, current, next };
+
+  const previousBudget = Math.min(400, countChars(previous ?? ""));
+  const nextBudget = Math.min(400, countChars(next ?? ""));
+  const currentBudget = MAX_EXPLAIN_CONTEXT_CHARS - previousBudget - nextBudget;
+  const rawCurrent = paragraphs[sentence.paraIndex] ?? sentence.text;
+  const targetStart = Math.max(0, sentence.start);
+  const targetEnd = Math.min(rawCurrent.length, targetStart + sentence.text.length);
+  return {
+    previous: previous ? cropTail(previous, previousBudget) : null,
+    current: cropAroundSentence(rawCurrent, targetStart, targetEnd, currentBudget),
+    next: next ? cropHead(next, nextBudget) : null,
+  };
+}
+
+function contextChars(previous: string | null, current: string, next: string | null): number {
+  return countChars(previous ?? "") + countChars(current) + countChars(next ?? "");
+}
+
+function cropHead(text: string, budget: number): string {
+  if (countChars(text) <= budget) return text;
+  return `${takeCodePoints(text, Math.max(0, budget - countChars("……")))}……`;
+}
+
+function cropTail(text: string, budget: number): string {
+  if (countChars(text) <= budget) return text;
+  return `……${takeCodePointsFromEnd(text, Math.max(0, budget - countChars("……")))}`;
+}
+
+function cropAroundSentence(text: string, start: number, end: number, budget: number): string {
+  if (countChars(text) <= budget) return text.trim();
+  const target = text.slice(start, end).trim();
+  if (countChars(target) >= budget) return cropHead(target, budget);
+  const remaining = budget - countChars(target);
+  const beforeBudget = Math.floor(remaining / 2);
+  const afterBudget = remaining - beforeBudget;
+  const before = cropTail(text.slice(0, start).trimEnd(), beforeBudget);
+  const after = cropHead(text.slice(end).trimStart(), afterBudget);
+  return `${before}${target}${after}`.trim();
+}
+
+function takeCodePoints(text: string, limit: number): string {
+  return Array.from(text).slice(0, limit).join("");
+}
+
+function takeCodePointsFromEnd(text: string, limit: number): string {
+  return Array.from(text).slice(-limit).join("");
 }
 
 /**

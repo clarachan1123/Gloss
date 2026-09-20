@@ -27,6 +27,10 @@ export const MAX_SENTENCE_CHARS = 1000;
 export const MAX_NEIGHBOR_CHARS = 1000;
 /** 结构摘要本应 ≤300 字；手写的摘要留余量 */
 export const MAX_STRUCTURE_CHARS = 1000;
+/** 功能二三段上下文的合计上限；目标句、白话与结构摘要各自单独校验。 */
+export const MAX_EXPLAIN_CONTEXT_CHARS = 2000;
+/** 功能一白话当前最多 150 字；为将来的编辑版预留，但不让它无边界地增加功能二成本。 */
+export const MAX_EXPLAIN_GLOSS_CHARS = 500;
 /** PRD 3.8 单文档字数上限 */
 export const MAX_DOCUMENT_CHARS = 50_000;
 export const MAX_TITLE_CHARS = 200;
@@ -71,6 +75,65 @@ export function parseGlossRequest(body: unknown): Parsed<GlossRequest> {
   }
 
   return { ok: true, value: { sentence, before: before.value, after: after.value, structure } };
+}
+
+/* ---------------- 功能二 ---------------- */
+
+/**
+ * 功能二不能复用 GlossRequest：它需要三段上下文与读者已经看过的白话，
+ * 而功能一的前后各两句窗口与请求协议必须保持不变。
+ */
+export interface ExplainRequest {
+  sentence: string;
+  context: {
+    previous: string | null;
+    current: string;
+    next: string | null;
+  };
+  /** 已去掉术语定界符的白话；功能一失败时明确传 null。 */
+  gloss: string | null;
+  structure: string | null;
+}
+
+export function parseExplainRequest(body: unknown): Parsed<ExplainRequest> {
+  if (!isRecord(body)) return fail("请求体必须是 JSON 对象");
+
+  const sentence = typeof body.sentence === "string" ? body.sentence.trim() : "";
+  if (countChars(sentence) === 0) return fail("sentence 必须是非空字符串");
+  if (countChars(sentence) > MAX_SENTENCE_CHARS) return fail(`sentence 超过 ${MAX_SENTENCE_CHARS} 字`);
+
+  if (!isRecord(body.context)) return fail("context 必须是对象");
+  const current = typeof body.context.current === "string" ? body.context.current.trim() : "";
+  if (countChars(current) === 0) return fail("context.current 必须是非空字符串");
+  const previous = parseOptionalExplainText(body.context.previous, "context.previous");
+  if (!previous.ok) return previous;
+  const next = parseOptionalExplainText(body.context.next, "context.next");
+  if (!next.ok) return next;
+  const contextChars = countChars(previous.value ?? "") + countChars(current) + countChars(next.value ?? "");
+  if (contextChars > MAX_EXPLAIN_CONTEXT_CHARS) return fail(`context 超过 ${MAX_EXPLAIN_CONTEXT_CHARS} 字`);
+
+  const gloss = parseOptionalExplainText(body.gloss, "gloss");
+  if (!gloss.ok) return gloss;
+  if (gloss.value && countChars(gloss.value) > MAX_EXPLAIN_GLOSS_CHARS) {
+    return fail(`gloss 超过 ${MAX_EXPLAIN_GLOSS_CHARS} 字`);
+  }
+
+  let structure: string | null = null;
+  if (body.structure !== undefined && body.structure !== null) {
+    if (typeof body.structure !== "string") return fail("structure 必须是字符串");
+    structure = body.structure.trim() || null;
+    if (structure && countChars(structure) > MAX_STRUCTURE_CHARS) {
+      return fail(`structure 超过 ${MAX_STRUCTURE_CHARS} 字`);
+    }
+  }
+
+  return { ok: true, value: { sentence, context: { previous: previous.value, current, next: next.value }, gloss: gloss.value, structure } };
+}
+
+function parseOptionalExplainText(value: unknown, name: string): Parsed<string | null> {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  if (typeof value !== "string") return fail(`${name} 必须是字符串`);
+  return { ok: true, value: value.trim() || null };
 }
 
 function parseNeighbors(value: unknown, name: string, max: number): Parsed<string[]> {

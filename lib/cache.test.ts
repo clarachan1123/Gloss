@@ -5,6 +5,7 @@ import {
   GLOSS_CACHE_SCHEMA_VERSION,
   addRecord,
   clearAllGlossCache,
+  clearGlossCacheForDocument,
   hashGlossContext,
   lookupPreloadedGloss,
   makeGlossCacheKey,
@@ -100,6 +101,46 @@ describe("G-09 写入保留先到结果", () => {
 });
 
 describe("G-10a 清除自动缓存", () => {
+  it("删除一本书的自动白话缓存时，另一本书的缓存仍在", async () => {
+    const entries = new Map([["book-a", "甲书缓存"], ["book-b", "乙书缓存"]]);
+    const cursorRequest = {} as IDBRequest<IDBCursorWithValue | null>;
+    const cursor = {
+      delete: vi.fn(() => entries.delete("book-a")),
+      continue: vi.fn(() => {
+        Object.assign(cursorRequest, { result: null });
+        cursorRequest.onsuccess?.(new Event("success"));
+      }),
+    } as unknown as IDBCursorWithValue;
+    Object.assign(cursorRequest, { result: cursor });
+    const transaction = {
+      objectStore: vi.fn(() => ({
+        index: vi.fn(() => ({ openCursor: vi.fn(() => cursorRequest) })),
+      })),
+    } as unknown as IDBTransaction;
+    const database = {
+      transaction: vi.fn(() => transaction),
+      close: vi.fn(),
+    } as unknown as IDBDatabase;
+    const openRequest = {} as IDBOpenDBRequest;
+    const only = vi.fn((docId: string) => docId);
+    vi.stubGlobal("IDBKeyRange", { only });
+    vi.stubGlobal("indexedDB", { open: vi.fn(() => openRequest) });
+
+    const result = clearGlossCacheForDocument("book-a");
+    Object.assign(openRequest, { result: database });
+    openRequest.onsuccess?.(new Event("success"));
+    await Promise.resolve();
+    cursorRequest.onsuccess?.(new Event("success"));
+    await Promise.resolve();
+    transaction.oncomplete?.(new Event("complete"));
+
+    await expect(result).resolves.toBe(true);
+    expect(only).toHaveBeenCalledWith("book-a");
+    expect(entries.get("book-a")).toBeUndefined();
+    expect(entries.get("book-b")).toBe("乙书缓存");
+    vi.unstubAllGlobals();
+  });
+
   it("只删除 IndexedDB 自动缓存数据库；不触碰 localStorage 的保存区、原文、位置或结构摘要", async () => {
     localStorage.setItem("gloss:saved:12345678", "保存白话");
     localStorage.setItem("gloss:doc:12345678", "原文");

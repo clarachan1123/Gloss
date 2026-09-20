@@ -58,6 +58,7 @@ export default function Shelf() {
   const previewTimer = useRef<number | null>(null);
   const previewLeaveTimer = useRef<number | null>(null);
   const spineRefs = useRef(new Map<string, HTMLButtonElement>());
+  const menuRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLButtonElement>(null);
   const importPanelRef = useRef<HTMLElement>(null);
   const [overflowing, setOverflowing] = useState(false);
@@ -113,6 +114,29 @@ export default function Shelf() {
     window.addEventListener("scroll", close, true);
     return () => window.removeEventListener("scroll", close, true);
   }, []);
+  useEffect(() => {
+    if (!menuId) return;
+    const close = () => setMenuId((current) => {
+      if (current !== menuId) return current;
+      spineRefs.current.get(menuId)?.focus();
+      return null;
+    });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) close();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [menuId]);
 
   const selected = entries.find((entry) => entry.docId === selectedId) ?? null;
   const displayed = entries.find((entry) => entry.docId === detailId) ?? null;
@@ -187,7 +211,7 @@ export default function Shelf() {
         {entries.map((entry) => {
           const color = BOOK_COLORS[Number(entry.colorId.slice(5))];
           const open = (previewId ?? selectedId) === entry.docId;
-          return <div className={`book-slot${open ? " book-slot-open" : ""}`} data-doc-id={entry.docId} key={entry.docId} onMouseEnter={() => openPreview(entry.docId)} onMouseLeave={(event) => leaveSlot(entry.docId, event)} onFocus={() => openPreview(entry.docId)} onBlur={(event) => blurSlot(entry.docId, event)}><button ref={(node) => { if (node) spineRefs.current.set(entry.docId, node); else spineRefs.current.delete(entry.docId); }} type="button" className={`book-spine${open ? " selected" : ""}`} style={{ "--book-color": color, "--book-width": `${48 + entry.widthSeed % 5}px`, "--book-height": `${350 + entry.widthSeed % 91}px` } as CSSProperties} onClick={() => { setSelectedId(entry.docId); setPreviewId(null); setDetailId(entry.docId); setMenuId(null); }} onContextMenu={(event) => { event.preventDefault(); setSelectedId(entry.docId); setPreviewId(null); setDetailId(entry.docId); setMenuId(entry.docId); }}><span className="spine-added-at">{importMonth(entry.addedAt)}</span><span className="spine-title">{entry.title}</span></button>{open && <Link className="book-cover" href={`/read/${entry.docId}`} style={{ "--book-color": color } as CSSProperties}><i /><h2>{entry.title}</h2>{entry.author && <p>{entry.author}</p>}<i /><span aria-hidden="true">开始读</span></Link>}{menuId === entry.docId && <div className="spine-menu" role="menu"><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(entry.docId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div><button type="button" onClick={() => { setMenuId(null); setConfirmingId(entry.docId); }}>从书架移除</button></div>}</div>;
+          return <div className={`book-slot${open ? " book-slot-open" : ""}`} data-doc-id={entry.docId} key={entry.docId} onMouseEnter={() => openPreview(entry.docId)} onMouseLeave={(event) => leaveSlot(entry.docId, event)} onFocus={() => openPreview(entry.docId)} onBlur={(event) => blurSlot(entry.docId, event)}><button ref={(node) => { if (node) spineRefs.current.set(entry.docId, node); else spineRefs.current.delete(entry.docId); }} type="button" className={`book-spine${open ? " selected" : ""}`} style={{ "--book-color": color, "--book-width": `${48 + entry.widthSeed % 5}px`, "--book-height": `${350 + entry.widthSeed % 91}px` } as CSSProperties} onClick={() => { setSelectedId(entry.docId); setPreviewId(null); setDetailId(entry.docId); setMenuId(null); }} onContextMenu={(event) => { event.preventDefault(); setSelectedId(entry.docId); setPreviewId(null); setDetailId(entry.docId); setMenuId(entry.docId); }}><span className="spine-added-at">{importMonth(entry.addedAt)}</span><span className="spine-title">{entry.title}</span></button>{open && <Link className="book-cover" href={`/read/${entry.docId}`} style={{ "--book-color": color } as CSSProperties}><i /><h2>{entry.title}</h2>{entry.author && <p>{entry.author}</p>}<i /><span aria-hidden="true">开始读</span></Link>}{menuId === entry.docId && <div ref={menuRef} className="spine-menu" role="menu"><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(entry.docId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div><button type="button" onClick={() => { setMenuId(null); setConfirmingId(entry.docId); }}>从书架移除</button></div>}</div>;
         })}
         <button ref={importRef} type="button" className="import-spine" onClick={() => setShowImport(true)}><span>导入新书</span></button>
         <div className="shelf-ledge" />
@@ -195,7 +219,7 @@ export default function Shelf() {
       </section>
       {entries.length === 0 && <p className="empty-help">拖入或点击上传 · 支持 .docx .txt .pdf</p>}
       {displayed && <section className="book-detail"><div><h2>{displayed.title}</h2>{displayed.author && <p>{displayed.author}</p>}</div><div className="detail-actions"><Link className="read-button" href={`/read/${displayed.docId}`}>开始读</Link><button type="button" className="remove-book" onClick={() => setConfirmingId(displayed.docId)}>从书架移除</button></div><dl>{savedCount(displayed.docId) > 0 && <div><dt>已存白话</dt><dd>{savedCount(displayed.docId)} 处</dd></div>}{lastReads.get(displayed.docId) && <div><dt>上次读到</dt><dd>{lastReads.get(displayed.docId)}</dd></div>}<div><dt>导入日期</dt><dd>{importDate(displayed.addedAt)}</dd></div></dl></section>}
-      {confirmingId && <section className="remove-confirm" role="dialog" aria-modal="true"><p>移除后会删除这本书的正文、阅读位置、结构摘要、已存白话、整句理解和自动白话缓存。</p><div><button type="button" onClick={() => setConfirmingId(null)}>取消</button><button type="button" onClick={() => { const entry = entries.find((item) => item.docId === confirmingId); if (entry) void remove(entry); }}>确认移除</button></div></section>}
+      {confirmingId && <section className="remove-confirm" role="dialog" aria-modal="true"><p>确定移除《{entries.find((item) => item.docId === confirmingId)?.title}》吗？移除后会删除这本书的正文、阅读位置、结构摘要、已存白话、整句理解和自动白话缓存。</p><div><button type="button" onClick={() => setConfirmingId(null)}>取消</button><button type="button" onClick={() => { const entry = entries.find((item) => item.docId === confirmingId); if (entry) void remove(entry); }}>确认移除</button></div></section>}
       {showImport && <div className="import-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeImport(); }}><section ref={importPanelRef} className={`import-panel${draggingImport ? " import-panel-dragging" : ""}`} role="dialog" aria-modal="true" aria-labelledby="import-title" tabIndex={-1} onDragOver={importDragOver} onDragLeave={importDragLeave} onDrop={importDrop}><header><h2 id="import-title">导入新书</h2><button type="button" className="import-close" aria-label="关闭导入新书弹窗" onClick={closeImport}>×</button></header><div className="import-drop-hint" aria-hidden="true">松开以上传文件</div><Upload droppedFile={droppedFile} onDroppedFileHandled={() => setDroppedFile(null)} onStorageFull={() => { closeImport(); shelfRef.current?.focus(); }} /><button type="button" className="paste-link" onClick={() => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()}>改用粘贴文本</button></section></div>}
       </div>
     </main>

@@ -184,7 +184,15 @@ export default function GlossPanel({
             限流过去之后，收起再点这一句就会重新请求（失败结果不进会话缓存）
           */}
           {failure !== "refused" && failure !== "throttled" && (
-            <button type="button" className="gloss-panel-retry" onClick={onRetry} disabled={cooling}>
+            <button
+              type="button"
+              className="gloss-panel-retry"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRetry();
+              }}
+              disabled={cooling}
+            >
               重试
             </button>
           )}

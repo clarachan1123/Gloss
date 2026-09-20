@@ -31,7 +31,15 @@ export default function ActionRow({
 
   return (
     <div className="action-row">
-      <button type="button" className="action-row-save" onClick={() => void toggle()} disabled={disabled || pending}>
+      <button
+        type="button"
+        className="action-row-save"
+        onClick={(event) => {
+          event.stopPropagation();
+          void toggle();
+        }}
+        disabled={disabled || pending}
+      >
         {saved ? "已留下" : "留下"}
       </button>
       {notice && <span className="action-row-notice" role="status">{notice}</span>}

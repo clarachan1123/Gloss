@@ -32,7 +32,7 @@ export default function ActionRow({
   return (
     <div className="action-row">
       <button type="button" className="action-row-save" onClick={() => void toggle()} disabled={disabled || pending}>
-        {saved ? "已保存" : "保存"}
+        {saved ? "已留下" : "留下"}
       </button>
       {notice && <span className="action-row-notice" role="status">{notice}</span>}
     </div>

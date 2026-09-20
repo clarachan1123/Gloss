@@ -70,15 +70,19 @@ body {
 
 /* 「复习态」等标签必须单行显示 */
 .mode-option {
+  appearance: none;
   padding: 2px 10px;
   border: 1px solid var(--rule);
   border-radius: 4px;
+  background: transparent;
   color: var(--gloss);
+  font: inherit;
   font-size: 14px;
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.mode-option-active {
+.mode-option[aria-pressed="true"] {
   border-color: var(--gloss);
   color: var(--ink);
 }
@@ -99,6 +103,33 @@ body {
   margin: 0;
   color: var(--gloss);
   font-size: 14px;
+}
+
+.saved-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.saved-list li + li {
+  margin-top: 6px;
+}
+
+.saved-link {
+  display: -webkit-box;
+  width: 100%;
+  padding: 2px 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 /* 「这份文档」块（G-25）：文件名 / 数字 / 跳过了什么，静态显示，不随滚动变化 */
@@ -297,6 +328,20 @@ body {
   color: var(--hover);
 }
 
+.saved-marker {
+  appearance: none;
+  display: inline;
+  margin: 0 0.15em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--saved-inline);
+  font: inherit;
+  font-size: 14px;
+  line-height: inherit;
+  cursor: pointer;
+}
+
 /* 白话统一 14px；临时撑开区不加框、不加底色，仅一条左竖线。 */
 .gloss-panel {
   margin: 0.3em 0 0.8em;
@@ -406,6 +451,10 @@ body {
 .action-row-save:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.action-row-save {
+  font-size: 14px;
 }
 
 .action-row-notice {

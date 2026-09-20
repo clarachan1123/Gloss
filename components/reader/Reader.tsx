@@ -87,6 +87,7 @@ interface Expansion {
 }
 
 type GlossShape = "inline" | "bubble";
+type ReadingMode = "reading" | "review";
 
 interface SavedRegion {
   index: number;
@@ -106,6 +107,7 @@ interface SaveContext {
   glossView: GlossView;
   savedGlosses: ReadonlyMap<number, SavedGloss>;
   savedRegions: ReadonlyMap<number, SavedRegion> | null;
+  readingMode: ReadingMode;
   sentences: readonly SentenceData[];
 }
 
@@ -147,12 +149,21 @@ interface Animation {
 
 const EMPTY_SAVED_GLOSSES = new Map<number, SavedGloss>();
 const GLOSS_SHAPE_KEY = "gloss:settings:gloss-shape";
+const READING_MODE_KEY = "gloss:settings:reading-mode";
 
 export function readGlossShape(): GlossShape {
   try {
     return globalThis.localStorage?.getItem(GLOSS_SHAPE_KEY) === "bubble" ? "bubble" : "inline";
   } catch {
     return "inline";
+  }
+}
+
+export function readReadingMode(): ReadingMode {
+  try {
+    return globalThis.localStorage?.getItem(READING_MODE_KEY) === "review" ? "review" : "reading";
+  } catch {
+    return "reading";
   }
 }
 
@@ -174,7 +185,9 @@ export default function Reader({ docId }: { docId: string }) {
   const [savedRegions, setSavedRegions] = useState<ReadonlyMap<number, SavedRegion> | null>(null);
   const [measuringParaIndex, setMeasuringParaIndex] = useState<number | null>(null);
   const [activeSavedIndex, setActiveSavedIndex] = useState<number | null>(null);
+  const [expandedSavedIndex, setExpandedSavedIndex] = useState<number | null>(null);
   const [glossShape, setGlossShape] = useState<GlossShape>("inline");
+  const [readingMode, setReadingMode] = useState<ReadingMode>("reading");
   const [fontsReady, setFontsReady] = useState(false);
   const bodyRef = useRef<HTMLElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -188,6 +201,8 @@ export default function Reader({ docId }: { docId: string }) {
   /** 宽度／字体导致全书重量时，事务必须留到最终（已插回）布局才消费。 */
   const pendingMeasureTransactionRef = useRef<Transaction | null>(null);
   const savedRegionArraysRef = useRef<readonly (readonly Region[])[]>([]);
+  const savedMarkerArraysRef = useRef<readonly (readonly number[])[]>([]);
+  const pendingSavedJumpRef = useRef<number | null>(null);
   // Paragraph 是 memo；保存操作的回调也必须恒定，不能因为当前句或保存集合改变而让全书失效。
   const saveContextRef = useRef<SaveContext | null>(null);
 
@@ -209,7 +224,9 @@ export default function Reader({ docId }: { docId: string }) {
     setSavedRegions(null);
     setMeasuringParaIndex(null);
     setActiveSavedIndex(null);
+    setExpandedSavedIndex(null);
     setFontsReady(false);
+    setReadingMode(readReadingMode());
     try {
       const doc = loadDocument(docId);
       if (!doc) {
@@ -365,9 +382,26 @@ export default function Reader({ docId }: { docId: string }) {
     return next;
   }, [doc, glossShape, savedGlosses, savedRegions, sentences]);
 
+  const visibleSavedRegionsByParagraph = useMemo(() => {
+    return selectVisibleSavedRegions(savedRegionsByParagraph, readingMode, expandedSavedIndex);
+  }, [expandedSavedIndex, readingMode, savedRegionsByParagraph]);
+
+  const savedMarkersByParagraph = useMemo(() => {
+    const next = buildSavedMarkersByParagraph(
+      savedMarkerArraysRef.current,
+      doc?.paragraphs.length ?? 0,
+      sentences,
+      savedGlosses,
+      readingMode,
+      expandedSavedIndex,
+    );
+    savedMarkerArraysRef.current = next;
+    return next;
+  }, [doc, expandedSavedIndex, readingMode, savedGlosses, sentences]);
+
   const regionsByParagraph = useMemo(() => {
-    if (!expansion && activeSavedIndex === null && measuringParaIndex === null) return savedRegionsByParagraph;
-    const groups = savedRegionsByParagraph.slice();
+    if (!expansion && activeSavedIndex === null && measuringParaIndex === null) return visibleSavedRegionsByParagraph;
+    const groups = visibleSavedRegionsByParagraph.slice();
     if (measuringParaIndex !== null) groups[measuringParaIndex] = NO_REGIONS;
     if (activeSavedIndex !== null) {
       const sentence = sentences[activeSavedIndex];
@@ -389,7 +423,7 @@ export default function Reader({ docId }: { docId: string }) {
       }];
     }
     return groups;
-  }, [activeSavedIndex, expansion, gloss, glossShape, measuringParaIndex, savedRegions, savedRegionsByParagraph, sentences]);
+  }, [activeSavedIndex, expansion, gloss, glossShape, measuringParaIndex, savedRegions, sentences, visibleSavedRegionsByParagraph]);
 
   const preloadAutoGloss = useCallback(
     (structure: string | null) => {
@@ -526,6 +560,17 @@ export default function Reader({ docId }: { docId: string }) {
     setActiveSavedIndex(index);
   }
 
+  function expandSaved(index: number, options: { anchor?: CharAnchor | null; showActions?: boolean } = {}) {
+    const body = bodyRef.current;
+    transactionRef.current = {
+      anchor: options.anchor ?? (body ? anchorAtViewportTop(body) : null),
+      animateOpen: false,
+    };
+    setExpansion(null);
+    setExpandedSavedIndex(index);
+    setActiveSavedIndex(options.showActions ? index : null);
+  }
+
   function open(index: number, target: HTMLElement, clientX: number, clientY: number) {
     const body = bodyRef.current;
     const sentence = sentences[index];
@@ -594,7 +639,14 @@ export default function Reader({ docId }: { docId: string }) {
   function handleBodyClick(event: ReactMouseEvent<HTMLElement>) {
     // G5：用户划选了文字（复制原文），松开鼠标不触发撑开
     if (hasTextSelection()) return;
-    const target = (event.target as Element).closest<HTMLElement>(".sentence");
+    const eventTarget = event.target as Element;
+    const savedPanel = eventTarget.closest<HTMLElement>(".gloss-panel-saved");
+    if (savedPanel && !eventTarget.closest("button")) {
+      const index = Number(savedPanel.dataset.savedIndex);
+      if (Number.isInteger(index)) commitSaved(activeSavedIndex === index ? null : index);
+      return;
+    }
+    const target = eventTarget.closest<HTMLElement>(".sentence");
     if (!target) return;
     const index = Number(target.dataset.index);
 
@@ -604,9 +656,12 @@ export default function Reader({ docId }: { docId: string }) {
     lastToggleRef.current = { index, time: now };
 
     if (savedRegions?.has(index)) {
-      commitSaved(activeSavedIndex === index ? null : index, {
-        anchor: anchorAtClick(target, event.clientX, event.clientY),
-      });
+      const anchor = anchorAtClick(target, event.clientX, event.clientY);
+      if (readingMode === "reading" && expandedSavedIndex !== index) {
+        expandSaved(index, { anchor, showActions: true });
+      } else {
+        commitSaved(activeSavedIndex === index ? null : index, { anchor });
+      }
     } else if (expansion?.index === index && collapseTimerRef.current === undefined) {
       collapse(true);
     } else {
@@ -620,14 +675,16 @@ export default function Reader({ docId }: { docId: string }) {
     // 真实未拆分 DOM 只供测量，不能在这一次中间提交消费锚定事务。
     if (!body || savedRegions === null || measuringParaIndex !== null) return;
     const transaction = transactionRef.current;
+    const pendingSavedJump = pendingSavedJumpRef.current;
     transactionRef.current = null;
-    if (!transaction) return;
+    pendingSavedJumpRef.current = null;
+    if (!transaction && pendingSavedJump === null) return;
 
     clearAnimation();
 
     // ① 视口锚定（产品不变量）：把参照字滚回 DOM 变化前的位置。
     //    改动在参照字下方时补偿为 0（D13 保证上方的行不重排）；改动在上方时，补偿恰好抵消文档高度的变化
-    if (transaction.anchor) {
+    if (transaction?.anchor) {
       const top = charTop(body, transaction.anchor.paraIndex, transaction.anchor.offset);
       if (top !== null) {
         const delta = top - transaction.anchor.viewportTop;
@@ -638,6 +695,13 @@ export default function Reader({ docId }: { docId: string }) {
     positionRef.current.layout = layoutKey(body);
     positionRef.current.measure = layoutMeasureKey(body);
 
+    if (pendingSavedJump !== null) {
+      body.querySelector<HTMLElement>(`.sentence[data-index="${pendingSavedJump}"]`)?.scrollIntoView({
+        block: "center",
+        behavior: prefersReducedMotion() ? "instant" : "smooth",
+      });
+    }
+
     const panel = panelRef.current;
     if (!expansion || !panel) return;
 
@@ -646,7 +710,7 @@ export default function Reader({ docId }: { docId: string }) {
 
     // ③ 动画：撑开区一次性插入到最终高度（只触发这一次重排），
     //    再让视口内原本就在它下方的元素从旧位置 transform 回来——每帧只动合成层
-    if (transaction.animateOpen) {
+    if (transaction?.animateOpen) {
       const shift = panelShift(panel);
       const elements = elementsBelow(panel, shift, Math.max(adjustment, 0));
       slide(elements, -shift, 0);
@@ -661,7 +725,7 @@ export default function Reader({ docId }: { docId: string }) {
     if (adjustment !== 0) {
       window.scrollBy({ top: adjustment, behavior: prefersReducedMotion() ? "instant" : "smooth" });
     }
-  }, [activeSavedIndex, expansion, glossShape, measuringParaIndex, savedRegions]);
+  }, [activeSavedIndex, expandedSavedIndex, expansion, glossShape, measuringParaIndex, readingMode, savedRegions]);
 
   // 收起条件：点别处、Esc（PRD 3.7）、该句滚出视口（G3）
   useEffect(() => {
@@ -782,11 +846,11 @@ export default function Reader({ docId }: { docId: string }) {
 
   const retryGloss = useCallback(() => setRetryCount((n) => n + 1), []);
   const glossView = gloss && gloss.index === activeIndex ? gloss.view : LOADING_VIEW;
-  saveContextRef.current = { activeIndex, docId, expansion, glossView, savedGlosses, savedRegions, sentences };
+  saveContextRef.current = { activeIndex, docId, expansion, glossView, readingMode, savedGlosses, savedRegions, sentences };
   const toggleSavedGlossFor = useCallback(async (index: number): Promise<"saved" | "removed" | StorageErrorCode> => {
     const context = saveContextRef.current;
     if (!context) return "E2";
-    const { activeIndex, docId, expansion, glossView, savedGlosses, savedRegions, sentences } = context;
+    const { activeIndex, docId, expansion, glossView, readingMode, savedGlosses, savedRegions, sentences } = context;
     const sentence = sentences[index];
     if (!sentence) return "E2";
 
@@ -814,6 +878,7 @@ export default function Reader({ docId }: { docId: string }) {
           layouts.delete(index);
           return layouts;
         });
+        setExpandedSavedIndex((current) => current === index ? null : current);
         commit(
           { index, paraIndex: sentence.paraIndex, splitAt: region?.splitAt ?? null },
           { anchor, animateOpen: false },
@@ -830,6 +895,7 @@ export default function Reader({ docId }: { docId: string }) {
         return { ...current, savedGlosses: next };
       });
       setSavedRegions((current) => new Map(current).set(index, { index, splitAt: expansion.splitAt }));
+      if (readingMode === "reading") setExpandedSavedIndex(index);
       commitSaved(index, { anchor });
       return "saved";
     } catch (err) {
@@ -854,6 +920,41 @@ export default function Reader({ docId }: { docId: string }) {
     }
     setGlossShape(next);
   }, [glossShape]);
+  const changeReadingMode = useCallback((next: ReadingMode) => {
+    if (next === readingMode) return;
+    const body = bodyRef.current;
+    transactionRef.current = { anchor: body ? anchorAtViewportTop(body) : null, animateOpen: false };
+    try {
+      globalThis.localStorage?.setItem(READING_MODE_KEY, next);
+    } catch {
+      // 设置写入失败不妨碍本次阅读；下次仍回退默认阅读模式。
+    }
+    setActiveSavedIndex(null);
+    setExpandedSavedIndex(null);
+    setReadingMode(next);
+  }, [readingMode]);
+  const expandSavedFromMarker = useCallback((index: number) => {
+    expandSaved(index);
+  }, []);
+  const jumpToSaved = useCallback((index: number) => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const needsExpand = readingMode === "reading" && expandedSavedIndex !== index;
+    if (needsExpand || activeSavedIndex !== null) {
+      pendingSavedJumpRef.current = index;
+      transactionRef.current = { anchor: null, animateOpen: false };
+      setActiveSavedIndex(null);
+      if (needsExpand) {
+        setExpansion(null);
+        setExpandedSavedIndex(index);
+      }
+      return;
+    }
+    body.querySelector<HTMLElement>(`.sentence[data-index="${index}"]`)?.scrollIntoView({
+      block: "center",
+      behavior: prefersReducedMotion() ? "instant" : "smooth",
+    });
+  }, [activeSavedIndex, expandedSavedIndex, readingMode]);
   const measuringSavedLayout = savedGlosses.size > 0 && (savedRegions === null || !fontsReady);
 
   return (
@@ -863,9 +964,23 @@ export default function Reader({ docId }: { docId: string }) {
           Gloss
         </Link>
 
-        <div className="mode-switch" aria-label="阅读模式（尚未开放）">
-          <span className="mode-option mode-option-active">阅读态</span>
-          <span className="mode-option">复习态</span>
+        <div className="mode-switch" role="group" aria-label="白话阅读模式">
+          <button
+            type="button"
+            className="mode-option"
+            aria-pressed={readingMode === "reading"}
+            onClick={() => changeReadingMode("reading")}
+          >
+            阅读态
+          </button>
+          <button
+            type="button"
+            className="mode-option"
+            aria-pressed={readingMode === "review"}
+            onClick={() => changeReadingMode("review")}
+          >
+            复习态
+          </button>
         </div>
 
         {doc && (
@@ -906,7 +1021,19 @@ export default function Reader({ docId }: { docId: string }) {
           <h2 id="saved-title" className="side-title">
             本文沉淀
           </h2>
-          <p className="side-empty">还没有保存的白话</p>
+          {savedGlosses.size === 0 ? (
+            <p className="side-empty">还没有保存的白话</p>
+          ) : (
+            <ol className="saved-list">
+              {[...savedGlosses.entries()].sort(([a], [b]) => a - b).map(([index, saved]) => (
+                <li key={index}>
+                  <button type="button" className="saved-link" onClick={() => jumpToSaved(index)}>
+                    {saved.text}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
         </section>
       </aside>
 
@@ -940,10 +1067,14 @@ export default function Reader({ docId }: { docId: string }) {
                   heading={headingByParagraph.get(paraIndex)}
                   pieces={piecesByParagraph[paraIndex] ?? NO_PIECES}
                   regions={regionsByParagraph[paraIndex] ?? NO_REGIONS}
+                  savedMarkers={savedRegions === null || measuringParaIndex === paraIndex
+                    ? NO_INDEXES
+                    : savedMarkersByParagraph[paraIndex] ?? NO_INDEXES}
                   panelRef={panelRef}
                   glossKey={expansion?.paraIndex === paraIndex ? glossKey : undefined}
                   onRetry={retryGloss}
                   onSave={toggleSavedGlossFor}
+                  onExpandSaved={expandSavedFromMarker}
                   sentences={sentences}
                 />
               );
@@ -973,6 +1104,7 @@ export default function Reader({ docId }: { docId: string }) {
 
 const NO_PIECES: Piece[] = [];
 const NO_REGIONS: readonly Region[] = [];
+const NO_INDEXES: readonly number[] = [];
 
 /** 测量中的段落必须保持为原始、未拆分 DOM，不能残留 transient 插入区。 */
 export function shouldRenderTransient(
@@ -1023,6 +1155,41 @@ export function buildSavedRegionsByParagraph(
   });
 }
 
+export function buildSavedMarkersByParagraph(
+  previous: readonly (readonly number[])[],
+  paragraphCount: number,
+  sentences: readonly SentenceData[],
+  savedGlosses: ReadonlyMap<number, SavedGloss>,
+  readingMode: ReadingMode,
+  expandedSavedIndex: number | null,
+): readonly (readonly number[])[] {
+  const candidates: number[][] = Array.from({ length: paragraphCount }, () => []);
+  if (readingMode === "reading") {
+    for (const [index] of savedGlosses) {
+      const sentence = sentences[index];
+      if (sentence && index !== expandedSavedIndex) candidates[sentence.paraIndex]?.push(index);
+    }
+  }
+  return candidates.map((indexes, paraIndex) => {
+    if (indexes.length === 0) return NO_INDEXES;
+    indexes.sort((a, b) => a - b);
+    const old = previous[paraIndex];
+    return old?.length === indexes.length && old.every((index, offset) => index === indexes[offset]) ? old : indexes;
+  });
+}
+
+export function selectVisibleSavedRegions(
+  regionsByParagraph: readonly (readonly Region[])[],
+  readingMode: ReadingMode,
+  expandedSavedIndex: number | null,
+): readonly (readonly Region[])[] {
+  if (readingMode === "review") return regionsByParagraph;
+  return regionsByParagraph.map((regions) => {
+    const visible = regions.filter((region) => region.index === expandedSavedIndex);
+    return visible.length === 0 ? NO_REGIONS : visible;
+  });
+}
+
 /** 左栏第二行：字数 · 段数 ·（PDF 才有的）页数 · 句数。数字口径与上传页一致 */
 function documentStats(doc: StoredDocument, sentenceCount: number): string {
   const n = (value: number) => value.toLocaleString("zh-CN");
@@ -1037,10 +1204,12 @@ interface ParagraphProps {
   heading: ParsedHeading | undefined;
   pieces: Piece[];
   regions: readonly Region[];
+  savedMarkers: readonly number[];
   panelRef: Ref<HTMLDivElement>;
   glossKey?: string;
   onRetry: () => void;
   onSave: (index: number) => Promise<"saved" | "removed" | StorageErrorCode>;
+  onExpandSaved: (index: number) => void;
   sentences: readonly SentenceData[];
 }
 
@@ -1066,19 +1235,23 @@ const Paragraph = memo(function Paragraph({
   heading,
   pieces,
   regions,
+  savedMarkers,
   panelRef,
   glossKey,
   onRetry,
   onSave,
+  onExpandSaved,
   sentences,
 }: ParagraphProps) {
   const Tag: ElementType = heading ? HEADING_TAGS[Math.min(Math.max(heading.level, 1), 6) - 1] : "p";
   const className = heading ? "reader-heading" : "reader-para";
+  const markerIndexes = new Set(savedMarkers);
+  const pieceEnds = new Map(pieces.map((piece) => [piece.index, piece.start + piece.text.length]));
 
   if (regions.length === 0) {
     return (
       <Tag id={`para-${paraIndex}`} data-para={paraIndex} className={className}>
-        {renderPieces(pieces)}
+        {renderPieces(pieces, markerIndexes, pieceEnds, onExpandSaved)}
       </Tag>
     );
   }
@@ -1102,7 +1275,7 @@ const Paragraph = memo(function Paragraph({
                 data-para={paraIndex}
                 className={splitFragmentClassName(className, heading !== undefined, isFirst, hasTail)}
               >
-                {renderPieces(part)}
+                {renderPieces(part, markerIndexes, pieceEnds, onExpandSaved)}
               </Tag>
             )}
             {groups.get(boundary)!.map((region) => (
@@ -1116,6 +1289,7 @@ const Paragraph = memo(function Paragraph({
                   source={sentences[region.index]?.text}
                   presentation={region.presentation}
                   actionVisible={!region.saved || region.actionVisible}
+                  savedIndex={region.saved ? region.index : undefined}
                 />
               ))}
           </Fragment>
@@ -1123,7 +1297,7 @@ const Paragraph = memo(function Paragraph({
       })}
       {hasTrailingFragment && (
         <Tag data-para={paraIndex} className="reader-para reader-para-cont">
-          {renderPieces(fragments[boundaries.length]!)}
+          {renderPieces(fragments[boundaries.length]!, markerIndexes, pieceEnds, onExpandSaved)}
         </Tag>
       )}
     </Fragment>
@@ -1161,8 +1335,38 @@ export function splitFragmentClassName(
   return classes.join(" ");
 }
 
-function renderPieces(pieces: Piece[]) {
-  return pieces.map((p) => <Sentence key={`${p.index}:${p.start}`} index={p.index} offset={p.start} text={p.text} />);
+function renderPieces(
+  pieces: Piece[],
+  markerIndexes: ReadonlySet<number>,
+  pieceEnds: ReadonlyMap<number, number>,
+  onExpandSaved: (index: number) => void,
+) {
+  return pieces.map((p) => (
+    <Fragment key={`${p.index}:${p.start}`}>
+      <Sentence index={p.index} offset={p.start} text={p.text} />
+      {shouldRenderSavedMarker(p, markerIndexes, pieceEnds) && (
+        <button
+          type="button"
+          className="saved-marker"
+          aria-label="展开这句的白话"
+          onClick={(event) => {
+            event.stopPropagation();
+            onExpandSaved(p.index);
+          }}
+        >
+          白
+        </button>
+      )}
+    </Fragment>
+  ));
+}
+
+export function shouldRenderSavedMarker(
+  piece: Piece,
+  markerIndexes: ReadonlySet<number>,
+  pieceEnds: ReadonlyMap<number, number>,
+): boolean {
+  return markerIndexes.has(piece.index) && piece.start + piece.text.length === pieceEnds.get(piece.index);
 }
 
 /**

@@ -61,6 +61,7 @@ export default function GlossPanel({
   source,
   presentation = "inline",
   actionVisible = true,
+  savedIndex,
 }: {
   ref?: Ref<HTMLDivElement>;
   view: GlossView;
@@ -75,6 +76,7 @@ export default function GlossPanel({
   /** G-10b：所有白话共用显示形态；已保存与否只影响颜色与操作行。 */
   presentation?: "inline" | "bubble";
   actionVisible?: boolean;
+  savedIndex?: number;
 }) {
   const chars = Array.from(view.text);
   const [reducedMotion] = useState(prefersReducedMotion);
@@ -154,6 +156,7 @@ export default function GlossPanel({
       aria-label="白话"
       aria-busy={busy}
       data-state={busy ? "busy" : failure ? "failed" : "done"}
+      data-saved-index={savedIndex}
     >
       {visible > 0 && (
         <p className="gloss-panel-text">

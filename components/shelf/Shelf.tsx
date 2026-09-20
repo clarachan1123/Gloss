@@ -70,6 +70,17 @@ export default function Shelf() {
     return () => observer.disconnect();
   }, [entries.length]);
   useEffect(() => {
+    const openId = selectedId ?? previewId;
+    const shelf = shelfRef.current;
+    const slot = openId ? shelf?.querySelector<HTMLElement>(`[data-doc-id="${openId}"]`) : null;
+    if (!shelf || !slot || !overflowing) return;
+    const shelfBox = shelf.getBoundingClientRect();
+    const slotBox = slot.getBoundingClientRect();
+    const inset = 24;
+    if (slotBox.left < shelfBox.left + inset) shelf.scrollBy({ left: slotBox.left - shelfBox.left - inset, behavior: "smooth" });
+    else if (slotBox.right > shelfBox.right - inset) shelf.scrollBy({ left: slotBox.right - shelfBox.right + inset, behavior: "smooth" });
+  }, [overflowing, previewId, selectedId]);
+  useEffect(() => {
     const close = () => setMenuId((id) => { if (id) spineRefs.current.get(id)?.focus(); return null; });
     window.addEventListener("scroll", close, true);
     return () => window.removeEventListener("scroll", close, true);
@@ -110,7 +121,7 @@ export default function Shelf() {
         {entries.map((entry) => {
           const color = BOOK_COLORS[Number(entry.colorId.slice(5))];
           const open = selectedId === entry.docId || previewId === entry.docId;
-          return <div className="book-slot" key={entry.docId}><button ref={(node) => { if (node) spineRefs.current.set(entry.docId, node); else spineRefs.current.delete(entry.docId); }} type="button" className={`book-spine${open ? " selected" : ""}`} style={{ "--book-color": color, "--book-width": `${48 + entry.widthSeed % 5}px`, "--book-height": `${350 + entry.widthSeed % 91}px` } as CSSProperties} onMouseEnter={() => openPreview(entry.docId)} onMouseLeave={() => closePreview(entry.docId)} onFocus={() => openPreview(entry.docId)} onBlur={() => closePreview(entry.docId)} onClick={() => { setSelectedId(entry.docId); setPreviewId(entry.docId); setMenuId(null); }} onContextMenu={(event) => { event.preventDefault(); setSelectedId(entry.docId); setPreviewId(entry.docId); setMenuId(entry.docId); }}><span>{entry.title}</span></button>{open && <article className="book-cover" style={{ "--book-color": color } as CSSProperties}><i /><h2>{entry.title}</h2>{entry.author && <p>{entry.author}</p>}<i /><Link href={`/read/${entry.docId}`}>开始读</Link></article>}{menuId === entry.docId && <div className="spine-menu" role="menu"><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(entry.docId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div><button type="button" onClick={() => { setMenuId(null); setConfirmingId(entry.docId); }}>从书架移除</button></div>}</div>;
+          return <div className={`book-slot${open ? " book-slot-open" : ""}`} data-doc-id={entry.docId} key={entry.docId}><button ref={(node) => { if (node) spineRefs.current.set(entry.docId, node); else spineRefs.current.delete(entry.docId); }} type="button" className={`book-spine${open ? " selected" : ""}`} style={{ "--book-color": color, "--book-width": `${48 + entry.widthSeed % 5}px`, "--book-height": `${350 + entry.widthSeed % 91}px` } as CSSProperties} onMouseEnter={() => openPreview(entry.docId)} onMouseLeave={() => closePreview(entry.docId)} onFocus={() => openPreview(entry.docId)} onBlur={() => closePreview(entry.docId)} onClick={() => { setSelectedId(entry.docId); setPreviewId(entry.docId); setMenuId(null); }} onContextMenu={(event) => { event.preventDefault(); setSelectedId(entry.docId); setPreviewId(entry.docId); setMenuId(entry.docId); }}><span>{entry.title}</span></button>{open && <article className="book-cover" style={{ "--book-color": color } as CSSProperties}><i /><h2>{entry.title}</h2>{entry.author && <p>{entry.author}</p>}<i /><Link href={`/read/${entry.docId}`}>开始读</Link></article>}{menuId === entry.docId && <div className="spine-menu" role="menu"><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(entry.docId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div><button type="button" onClick={() => { setMenuId(null); setConfirmingId(entry.docId); }}>从书架移除</button></div>}</div>;
         })}
         <button type="button" className="import-spine" onClick={() => setShowImport(true)}><span>导入新书</span></button>
         <div className="shelf-ledge" />

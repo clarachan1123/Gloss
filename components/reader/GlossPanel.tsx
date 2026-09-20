@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
+import type { ExplainFailure } from "@/lib/explain-client";
 import type { GlossFailure } from "@/lib/gloss-client";
 import { limitTerms, splitTerms } from "@/lib/output";
 import type { StorageErrorCode } from "@/lib/storage";
@@ -26,6 +27,15 @@ export interface GlossView {
 
 export const LOADING_VIEW: GlossView = { status: "loading", text: "", failure: null, instant: false };
 
+export interface ExplainView {
+  status: "idle" | "loading" | "streaming" | "done" | "failed";
+  text: string;
+  sentenceCount: number;
+  failure: ExplainFailure | null;
+}
+
+export const IDLE_EXPLAIN_VIEW: ExplainView = { status: "idle", text: "", sentenceCount: 0, failure: null };
+
 /** 每块放出的字数（PRD 3.7：3–5 字一块）与间隔。约 90 字/秒，150 字上限约 1.7 秒放完 */
 const REVEAL_CHARS = 4;
 const REVEAL_INTERVAL_MS = 45;
@@ -50,6 +60,17 @@ const NOTES: Record<GlossFailure, string> = {
   interrupted: "网络中断，这段白话没有写完。",
 };
 
+const EXPLAIN_NOTES: Record<ExplainFailure, string> = {
+  timeout: "这次没能写出来。",
+  unavailable: "整句理解暂时无法生成。",
+  rate_limited: "请求有点多，稍后再试。",
+  throttled: "点得太快了，过几分钟再试。",
+  refused: "这一句暂时无法处理。",
+  offline: "网络已断开，连上网络后再试。",
+  incomplete: "这次没有写完。",
+  storage: "结果没能保存到本地。",
+};
+
 const prefersReducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
 export default function GlossPanel({
@@ -62,6 +83,11 @@ export default function GlossPanel({
   presentation = "inline",
   actionVisible = true,
   savedIndex,
+  sentenceIndex,
+  explainView = IDLE_EXPLAIN_VIEW,
+  onExplain,
+  onExplainRetry,
+  onExplainBlocked,
 }: {
   ref?: Ref<HTMLDivElement>;
   view: GlossView;
@@ -77,6 +103,11 @@ export default function GlossPanel({
   presentation?: "inline" | "bubble";
   actionVisible?: boolean;
   savedIndex?: number;
+  sentenceIndex: number;
+  explainView?: ExplainView;
+  onExplain: (index: number) => void;
+  onExplainRetry: (index: number) => void;
+  onExplainBlocked: (index: number) => void;
 }) {
   const chars = Array.from(view.text);
   const [reducedMotion] = useState(prefersReducedMotion);
@@ -147,6 +178,8 @@ export default function GlossPanel({
     const timer = window.setTimeout(() => setCooling(false), RATE_LIMIT_WAIT_MS);
     return () => window.clearTimeout(timer);
   }, [failure]);
+  const actionsReady = (view.status === "done" && !revealing) || failure !== null;
+  const explainBusy = explainView.status === "loading" || explainView.status === "streaming";
 
   return (
     <div
@@ -157,6 +190,7 @@ export default function GlossPanel({
       aria-busy={busy}
       data-state={busy ? "busy" : failure ? "failed" : "done"}
       data-saved-index={savedIndex}
+      data-sentence-index={sentenceIndex}
     >
       {visible > 0 && (
         <p className="gloss-panel-text">
@@ -198,7 +232,40 @@ export default function GlossPanel({
           )}
         </p>
       )}
-      {actionVisible && <ActionRow saved={saved} disabled={view.status !== "done" || revealing} onToggle={onSave} />}
+      {(explainView.text || explainBusy || explainView.status === "failed") && (
+        <section className="explain-result" aria-label="整句理解" aria-busy={explainBusy}>
+          {explainView.text && <p className="explain-result-text">{explainView.text}</p>}
+          {explainBusy && !explainView.text && <p className="explain-result-pending">……</p>}
+          {explainView.status === "failed" && explainView.failure && (
+            <p className="explain-result-note">
+              {EXPLAIN_NOTES[explainView.failure]}
+              {explainView.failure !== "throttled" && explainView.failure !== "refused" && (
+                <button
+                  type="button"
+                  className="gloss-panel-retry"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onExplainRetry(sentenceIndex);
+                  }}
+                >
+                  重试
+                </button>
+              )}
+            </p>
+          )}
+        </section>
+      )}
+      {actionVisible && (
+        <ActionRow
+          saved={saved}
+          disabled={view.status !== "done" || revealing}
+          onToggle={onSave}
+          explainStatus={explainView.status}
+          onExplain={() => onExplain(sentenceIndex)}
+          onExplainBlocked={() => onExplainBlocked(sentenceIndex)}
+          explainVisible={actionsReady}
+        />
+      )}
     </div>
   );
 }

@@ -7,11 +7,13 @@ import {
   StorageError,
   computeDocId,
   loadDocument,
+  loadExplanations,
   loadReadingPosition,
   loadSavedGlosses,
   loadStructure,
   removeSavedGloss,
   saveDocument,
+  saveExplanation,
   saveReadingPosition,
   saveSavedGloss,
   saveStructure,
@@ -323,5 +325,45 @@ describe("G-10a 保存白话身份", () => {
       setItem: () => { throw new DOMException("full", "QuotaExceededError"); },
     });
     await expect(saveSavedGloss(docId, sentences[0], "不会保存")).rejects.toMatchObject({ code: "E1" });
+  });
+});
+
+describe("G-11 整句理解独立存储", () => {
+  const docId = "explain0";
+  const explainKey = `gloss:explain:${docId}`;
+
+  it("按文档、段内位置和原句 hash 恢复，且不写保存白话键", async () => {
+    const sentences = segmentParagraphs(["甲。乙。乙。"]).sentences;
+    await saveExplanation(docId, sentences[2], "第二处乙的整句理解。");
+
+    const loaded = await loadExplanations(docId, sentences.map((sentence) => ({ ...sentence, index: sentence.index + 10 })));
+    expect(loaded.get(12)?.text).toBe("第二处乙的整句理解。");
+    expect(loaded.get(11)).toBeUndefined();
+    expect(localStorage.getItem(`gloss:saved:${docId}`)).toBeNull();
+    expect(JSON.parse(localStorage.getItem(explainKey) ?? "{}")).toMatchObject({
+      version: 1,
+      entries: [{ paraIndex: 0, start: 4, text: "第二处乙的整句理解。" }],
+    });
+  });
+
+  it("相同句子在两本文档各自保存，原句变化后旧结果不匹配", async () => {
+    const original = segmentParagraphs(["相同的一句。"]).sentences[0];
+    await saveExplanation("book-a", original, "甲书语境。");
+    await saveExplanation("book-b", original, "乙书语境。");
+    expect((await loadExplanations("book-a", [original])).get(0)?.text).toBe("甲书语境。");
+    expect((await loadExplanations("book-b", [original])).get(0)?.text).toBe("乙书语境。");
+    expect(await loadExplanations("book-a", segmentParagraphs(["句子变了。"]).sentences)).toEqual(new Map());
+  });
+
+  it("损坏 schema 按空结果处理，写入失败不伪装成已用", async () => {
+    const sentence = segmentParagraphs(["甲。"]).sentences[0];
+    localStorage.setItem(explainKey, JSON.stringify({ version: 99, entries: [] }));
+    expect(await loadExplanations(docId, [sentence])).toEqual(new Map());
+
+    vi.stubGlobal("localStorage", {
+      getItem: () => null,
+      setItem: () => { throw new DOMException("full", "QuotaExceededError"); },
+    });
+    await expect(saveExplanation(docId, sentence, "不会保存。")).rejects.toMatchObject({ code: "E1" });
   });
 });

@@ -23,26 +23,30 @@ import {
   saveGlossCache,
   type MemoryGloss,
 } from "@/lib/cache";
-import { MAX_AFTER, MAX_BEFORE } from "@/lib/context";
+import { MAX_AFTER, MAX_BEFORE, MAX_EXPLAIN_CONTEXT_CHARS } from "@/lib/context";
+import { streamExplain, type ExplainInput } from "@/lib/explain-client";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
-import { skippedSummary, type ParsedHeading } from "@/lib/parse/validate";
+import { countChars, skippedSummary, type ParsedHeading } from "@/lib/parse/validate";
+import { TERM_CLOSE, TERM_OPEN } from "@/lib/prompts/gloss";
 import { STRUCTURE_PROMPT_VERSION } from "@/lib/prompts/structure";
 import { segmentParagraphs, type Sentence as SentenceData } from "@/lib/segment";
 import {
   StorageError,
   loadDocument,
+  loadExplanations,
   loadReadingPosition,
   loadSavedGlosses,
   loadStructure,
   removeSavedGloss,
   saveSavedGloss,
   saveReadingPosition,
+  saveExplanation,
   saveStructure,
   type SavedGloss,
   type StorageErrorCode,
   type StoredDocument,
 } from "@/lib/storage";
-import GlossPanel, { LOADING_VIEW, type GlossView } from "./GlossPanel";
+import GlossPanel, { IDLE_EXPLAIN_VIEW, LOADING_VIEW, type ExplainView, type GlossView } from "./GlossPanel";
 import Sentence from "./Sentence";
 
 /** 滚动停下多久后保存阅读位置 */
@@ -119,6 +123,7 @@ export interface Region {
   saved: boolean;
   presentation: GlossShape;
   actionVisible: boolean;
+  explainView: ExplainView;
 }
 
 /** 视口锚点：段内某个字在 DOM 变化前的视口纵坐标。DOM 变化后把这个字滚回原位 */
@@ -131,6 +136,8 @@ interface CharAnchor {
 interface Transaction {
   anchor: CharAnchor | null;
   animateOpen: boolean;
+  /** false 时只维护视口锚点，不重复执行首次展开的 G6 可见性微调。 */
+  adjustVisibility?: boolean;
 }
 
 /** 阅读位置锚：视口顶部所在的句子，及其首行在视口中的纵坐标 */
@@ -148,6 +155,7 @@ interface Animation {
 }
 
 const EMPTY_SAVED_GLOSSES = new Map<number, SavedGloss>();
+const EMPTY_EXPLAIN_VIEWS = new Map<number, ExplainView>();
 const GLOSS_SHAPE_KEY = "gloss:settings:gloss-shape";
 const READING_MODE_KEY = "gloss:settings:reading-mode";
 
@@ -206,6 +214,14 @@ export default function Reader({ docId }: { docId: string }) {
   // Paragraph 是 memo；保存操作的回调也必须恒定，不能因为当前句或保存集合改变而让全书失效。
   const saveContextRef = useRef<SaveContext | null>(null);
 
+  // 功能二请求属于 Reader，不属于可能随收起卸载的 GlossPanel。
+  const [explainViews, setExplainViews] = useState<ReadonlyMap<number, ExplainView>>(EMPTY_EXPLAIN_VIEWS);
+  const explainViewsRef = useRef<ReadonlyMap<number, ExplainView>>(EMPTY_EXPLAIN_VIEWS);
+  const explainRunsRef = useRef(new Map<string, number>());
+  const explainRunIdRef = useRef(0);
+  const explainContextRef = useRef<{ docId: string; sentences: readonly SentenceData[]; paragraphs: readonly string[] }>({ docId, sentences: [], paragraphs: [] });
+  const mountedRef = useRef(false);
+
   // 功能一（G-07）
   const [gloss, setGloss] = useState<{ index: number; view: GlossView } | null>(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -219,8 +235,19 @@ export default function Reader({ docId }: { docId: string }) {
   const cachePreloadTokenRef = useRef(0);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      // 不在本卡中止请求：SPA 离开后 Promise 可以完成并写入原文档 localStorage，
+      // 但下面所有 UI 更新都先检查 mountedRef，避免触碰已卸载组件。完整离页中止归 G-29。
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     savedGlossesRef.current = EMPTY_SAVED_GLOSSES;
+    explainViewsRef.current = EMPTY_EXPLAIN_VIEWS;
+    setExplainViews(EMPTY_EXPLAIN_VIEWS);
     setSavedRegions(null);
     setMeasuringParaIndex(null);
     setActiveSavedIndex(null);
@@ -236,16 +263,26 @@ export default function Reader({ docId }: { docId: string }) {
       // Web Crypto 的身份核对完成前不提交正文，避免先出现原文、随后插入保存白话。
       const currentSentences = segmentParagraphs(doc.paragraphs).sentences;
       setGlossShape(readGlossShape());
-      void loadSavedGlosses(docId, currentSentences)
-        .then((savedGlosses) => {
+      void Promise.all([loadSavedGlosses(docId, currentSentences), loadExplanations(docId, currentSentences)])
+        .then(([savedGlosses, explanations]) => {
           if (cancelled) return;
           savedGlossesRef.current = savedGlosses;
+          const loadedViews = new Map<number, ExplainView>(
+            [...explanations].map(([index, entry]) => [
+              index,
+              { status: "done", text: entry.text, sentenceCount: countCompleteSentences(entry.text), failure: null },
+            ]),
+          );
+          explainViewsRef.current = loadedViews;
+          setExplainViews(loadedViews);
           setState({ status: "ready", doc, savedGlosses });
         })
         .catch(() => {
           if (cancelled) return;
           // 保存区损坏或核对失败不能阻塞阅读；本次按空保存区继续，原记录仍不删除。
           savedGlossesRef.current = EMPTY_SAVED_GLOSSES;
+          explainViewsRef.current = EMPTY_EXPLAIN_VIEWS;
+          setExplainViews(EMPTY_EXPLAIN_VIEWS);
           setState({ status: "ready", doc, savedGlosses: EMPTY_SAVED_GLOSSES });
         });
     } catch (err) {
@@ -280,6 +317,8 @@ export default function Reader({ docId }: { docId: string }) {
 
   // 不存 sentences，每次加载重算（G-03 保证确定性）
   const sentences = useMemo(() => (doc ? segmentParagraphs(doc.paragraphs).sentences : []), [doc]);
+  explainContextRef.current = { docId, sentences, paragraphs: doc?.paragraphs ?? [] };
+  explainViewsRef.current = explainViews;
 
   const piecesByParagraph = useMemo(() => {
     const groups: Piece[][] = (doc?.paragraphs ?? []).map(() => []);
@@ -377,10 +416,11 @@ export default function Reader({ docId }: { docId: string }) {
       savedGlosses,
       savedRegions,
       glossShape,
+      explainViews,
     );
     savedRegionArraysRef.current = next;
     return next;
-  }, [doc, glossShape, savedGlosses, savedRegions, sentences]);
+  }, [doc, explainViews, glossShape, savedGlosses, savedRegions, sentences]);
 
   const visibleSavedRegionsByParagraph = useMemo(() => {
     return selectVisibleSavedRegions(savedRegionsByParagraph, readingMode, expandedSavedIndex);
@@ -420,10 +460,11 @@ export default function Reader({ docId }: { docId: string }) {
         saved: false,
         presentation: glossShape,
         actionVisible: true,
+        explainView: explainViews.get(expansion.index) ?? IDLE_EXPLAIN_VIEW,
       }];
     }
     return groups;
-  }, [activeSavedIndex, expansion, gloss, glossShape, measuringParaIndex, savedRegions, sentences, visibleSavedRegionsByParagraph]);
+  }, [activeSavedIndex, expansion, explainViews, gloss, glossShape, measuringParaIndex, savedRegions, sentences, visibleSavedRegionsByParagraph]);
 
   const preloadAutoGloss = useCallback(
     (structure: string | null) => {
@@ -687,8 +728,8 @@ export default function Reader({ docId }: { docId: string }) {
     if (transaction?.anchor) {
       const top = charTop(body, transaction.anchor.paraIndex, transaction.anchor.offset);
       if (top !== null) {
-        const delta = top - transaction.anchor.viewportTop;
-        if (Math.abs(delta) > 0.5) window.scrollBy({ top: delta, behavior: "instant" });
+        const delta = anchorScrollDelta(transaction.anchor.viewportTop, top);
+        if (delta !== 0) window.scrollBy({ top: delta, behavior: "instant" });
       }
     }
     rememberTopSentence(body, positionRef.current);
@@ -701,6 +742,9 @@ export default function Reader({ docId }: { docId: string }) {
         behavior: prefersReducedMotion() ? "instant" : "smooth",
       });
     }
+
+    // 功能二逐句增长只做字符锚定：不能像首次展开那样追着不断变长的面板自动滚动。
+    if (transaction?.adjustVisibility === false) return;
 
     const panel = panelRef.current;
     if (!expansion || !panel) return;
@@ -725,7 +769,7 @@ export default function Reader({ docId }: { docId: string }) {
     if (adjustment !== 0) {
       window.scrollBy({ top: adjustment, behavior: prefersReducedMotion() ? "instant" : "smooth" });
     }
-  }, [activeSavedIndex, expandedSavedIndex, expansion, glossShape, measuringParaIndex, readingMode, savedRegions]);
+  }, [activeSavedIndex, expandedSavedIndex, explainViews, expansion, glossShape, measuringParaIndex, readingMode, savedRegions]);
 
   // 收起条件：点别处、Esc（PRD 3.7）、该句滚出视口（G3）
   useEffect(() => {
@@ -845,6 +889,103 @@ export default function Reader({ docId }: { docId: string }) {
   }, [activeIndex, docId, retryCount, sentences]);
 
   const retryGloss = useCallback(() => setRetryCount((n) => n + 1), []);
+
+  /**
+   * 只有整块面板已经在视口上方时才建立字符锚定：视口顶边切在面板内时，
+   * 读者正看的是整句理解，追加必须只向下生长，不能反向滚动这块内容。
+   */
+  const stageExplainView = useCallback((runDocId: string, index: number, view: ExplainView) => {
+    if (!mountedRef.current || explainContextRef.current.docId !== runDocId) return;
+    const body = bodyRef.current;
+    const panel = body?.querySelector<HTMLElement>(`.gloss-panel[data-sentence-index="${index}"]`);
+    if (body && panel && shouldAnchorExplainMutation(panel.getBoundingClientRect().bottom)) {
+      transactionRef.current = { anchor: anchorAtViewportTop(body), animateOpen: false, adjustVisibility: false };
+    }
+    const next = new Map(explainViewsRef.current).set(index, view);
+    explainViewsRef.current = next;
+    setExplainViews(next);
+  }, []);
+
+  const startExplainFor = useCallback((index: number, force = false) => {
+    const context = explainContextRef.current;
+    const sentence = context.sentences[index];
+    if (!sentence) return;
+    const current = explainViewsRef.current.get(index) ?? IDLE_EXPLAIN_VIEW;
+    if (!force && (current.status === "loading" || current.status === "streaming" || current.status === "done")) return;
+
+    const key = `${context.docId}:${index}`;
+    const runId = ++explainRunIdRef.current;
+    explainRunsRef.current.set(key, runId);
+    stageExplainView(context.docId, index, { status: "loading", text: "", sentenceCount: 0, failure: null });
+    const input = buildExplainInput(
+      context.paragraphs,
+      context.sentences,
+      index,
+      structureRef.current,
+      savedGlossesRef.current,
+      glossMemoRef.current,
+    );
+
+    void streamExplain(input, (_sentence, fullText) => {
+      if (explainRunsRef.current.get(key) !== runId) return;
+      stageExplainView(context.docId, index, {
+        status: "streaming",
+        text: fullText,
+        sentenceCount: countCompleteSentences(fullText),
+        failure: null,
+      });
+    })
+      .then(async (result) => {
+        if (explainRunsRef.current.get(key) !== runId) return;
+        if (result.status === "done") {
+          try {
+            // 即使 Reader 已卸载也写原 docId；只跳过 React 状态更新。SPA 返回首页后仍能记下结果。
+            await saveExplanation(context.docId, sentence, result.text);
+            stageExplainView(context.docId, index, {
+              status: "done",
+              text: result.text,
+              sentenceCount: countCompleteSentences(result.text),
+              failure: null,
+            });
+          } catch (error) {
+            if (!(error instanceof StorageError)) throw error;
+            stageExplainView(context.docId, index, {
+              status: "failed",
+              text: result.text,
+              sentenceCount: countCompleteSentences(result.text),
+              failure: "storage",
+            });
+          }
+        } else {
+          stageExplainView(context.docId, index, {
+            status: "failed",
+            text: result.text,
+            sentenceCount: countCompleteSentences(result.text),
+            failure: result.failure,
+          });
+        }
+      })
+      .catch(() => {
+        if (explainRunsRef.current.get(key) !== runId) return;
+        stageExplainView(context.docId, index, {
+          status: "failed",
+          text: explainViewsRef.current.get(index)?.text ?? "",
+          sentenceCount: explainViewsRef.current.get(index)?.sentenceCount ?? 0,
+          failure: "unavailable",
+        });
+      })
+      .finally(() => {
+        if (explainRunsRef.current.get(key) === runId) explainRunsRef.current.delete(key);
+      });
+  }, [stageExplainView]);
+
+  const retryExplainFor = useCallback((index: number) => startExplainFor(index, true), [startExplainFor]);
+  const recordExplainBlocked = useCallback((index: number) => {
+    window.dispatchEvent(new CustomEvent("gloss:analytics", {
+      detail: { event: "deep_explain_blocked", sentenceIndex: index },
+    }));
+  }, []);
+
   const glossView = gloss && gloss.index === activeIndex ? gloss.view : LOADING_VIEW;
   saveContextRef.current = { activeIndex, docId, expansion, glossView, readingMode, savedGlosses, savedRegions, sentences };
   const toggleSavedGlossFor = useCallback(async (index: number): Promise<"saved" | "removed" | StorageErrorCode> => {
@@ -1075,6 +1216,9 @@ export default function Reader({ docId }: { docId: string }) {
                   onRetry={retryGloss}
                   onSave={toggleSavedGlossFor}
                   onExpandSaved={expandSavedFromMarker}
+                  onExplain={startExplainFor}
+                  onExplainRetry={retryExplainFor}
+                  onExplainBlocked={recordExplainBlocked}
                   sentences={sentences}
                 />
               );
@@ -1106,6 +1250,21 @@ const NO_PIECES: Piece[] = [];
 const NO_REGIONS: readonly Region[] = [];
 const NO_INDEXES: readonly number[] = [];
 
+export function countCompleteSentences(text: string): number {
+  return [...text].filter((char) => char === "。" || char === "！" || char === "？").length;
+}
+
+/** 实际锚定与单元测试共用：补偿后参照字的可见位移应为 0。 */
+export function anchorScrollDelta(previousViewportTop: number, nextViewportTop: number): number {
+  const delta = nextViewportTop - previousViewportTop;
+  return Math.abs(delta) > 0.5 ? delta : 0;
+}
+
+/** 功能二追加只在整块面板已经离开视口上方时补偿正文字符锚点。 */
+export function shouldAnchorExplainMutation(panelBottom: number): boolean {
+  return panelBottom <= 0;
+}
+
 /** 测量中的段落必须保持为原始、未拆分 DOM，不能残留 transient 插入区。 */
 export function shouldRenderTransient(
   expansion: Expansion | null,
@@ -1126,6 +1285,7 @@ export function buildSavedRegionsByParagraph(
   savedGlosses: ReadonlyMap<number, SavedGloss>,
   savedRegions: ReadonlyMap<number, SavedRegion> | null,
   glossShape: GlossShape,
+  explainViews: ReadonlyMap<number, ExplainView> = EMPTY_EXPLAIN_VIEWS,
 ): readonly (readonly Region[])[] {
   if (savedRegions === null) return Array.from({ length: paragraphCount }, () => NO_REGIONS);
   const candidates: Region[][] = Array.from({ length: paragraphCount }, () => []);
@@ -1133,9 +1293,10 @@ export function buildSavedRegionsByParagraph(
     const sentence = sentences[index];
     const saved = savedGlosses.get(index);
     if (!sentence || !saved) continue;
+    const explainView = explainViews.get(index) ?? IDLE_EXPLAIN_VIEW;
     const old = previous[sentence.paraIndex]?.find((region) => region.index === index);
     candidates[sentence.paraIndex]?.push(
-    old && old.splitAt === layout.splitAt && old.view.text === saved.text && old.presentation === glossShape
+    old && old.splitAt === layout.splitAt && old.view.text === saved.text && old.presentation === glossShape && old.explainView === explainView
         ? old
         : {
             index,
@@ -1144,6 +1305,7 @@ export function buildSavedRegionsByParagraph(
             saved: true,
             presentation: glossShape,
             actionVisible: false,
+            explainView,
           },
     );
   }
@@ -1210,11 +1372,14 @@ interface ParagraphProps {
   onRetry: () => void;
   onSave: (index: number) => Promise<"saved" | "removed" | StorageErrorCode>;
   onExpandSaved: (index: number) => void;
+  onExplain: (index: number) => void;
+  onExplainRetry: (index: number) => void;
+  onExplainBlocked: (index: number) => void;
   sentences: readonly SentenceData[];
 }
 
 /** 功能一的上下文窗口：目标句 + 前后各至多 2 句（跨段照取）+ 全书结构摘要 */
-function glossInput(sentences: SentenceData[], index: number, structure: string | null) {
+function glossInput(sentences: readonly SentenceData[], index: number, structure: string | null) {
   const text = (i: number) => sentences[i].text.trim();
   const range = (from: number, to: number) =>
     Array.from({ length: Math.max(0, to - from) }, (_, k) => text(from + k)).filter(Boolean);
@@ -1224,6 +1389,108 @@ function glossInput(sentences: SentenceData[], index: number, structure: string 
     after: range(index + 1, Math.min(sentences.length, index + 1 + MAX_AFTER)),
     structure,
   };
+}
+
+/** 功能二独立使用“上一段／当前段／下一段”，不影响功能一的前后各两句窗口。 */
+export function buildExplainInput(
+  paragraphs: readonly string[],
+  sentences: readonly SentenceData[],
+  index: number,
+  structure: string | null,
+  savedGlosses: ReadonlyMap<number, SavedGloss>,
+  automaticGlosses: ReadonlyMap<number, MemoryGloss>,
+): ExplainInput {
+  const sentence = sentences[index];
+  if (!sentence) throw new Error("explain input requires an existing sentence");
+  const context = cropExplainContext(paragraphs, sentence);
+  const source = savedGlosses.get(index)?.text ?? automaticGlosses.get(index)?.text ?? null;
+  return {
+    sentence: sentence.text.trim(),
+    context,
+    gloss: source ? source.replaceAll(TERM_OPEN, "").replaceAll(TERM_CLOSE, "").trim() || null : null,
+    structure,
+  };
+}
+
+/**
+ * 正常情况完整带三段。超出 2,000 字时，当前段最多占 1,200 字并优先保留；
+ * 余量默认均分给相邻段，一侧不够时回流到另一侧。省略号是明确的裁剪提示。
+ */
+export function cropExplainContext(
+  paragraphs: readonly string[],
+  sentence: Pick<SentenceData, "paraIndex" | "start" | "text">,
+): ExplainInput["context"] {
+  const previous = sentence.paraIndex > 0 ? paragraphs[sentence.paraIndex - 1]?.trim() || null : null;
+  const current = paragraphs[sentence.paraIndex]?.trim() || sentence.text.trim();
+  const next = sentence.paraIndex + 1 < paragraphs.length ? paragraphs[sentence.paraIndex + 1]?.trim() || null : null;
+  if (contextChars(previous, current, next) <= MAX_EXPLAIN_CONTEXT_CHARS) return { previous, current, next };
+
+  const rawCurrent = paragraphs[sentence.paraIndex] ?? sentence.text;
+  const targetStart = Math.max(0, sentence.start);
+  const targetEnd = Math.min(rawCurrent.length, targetStart + sentence.text.length);
+  const currentBudget = Math.min(1200, countChars(current));
+  const croppedCurrent = countChars(current) <= currentBudget
+    ? current
+    : cropAroundSentence(rawCurrent, targetStart, targetEnd, currentBudget);
+  const remainingBudget = MAX_EXPLAIN_CONTEXT_CHARS - countChars(croppedCurrent);
+  const { previousBudget, nextBudget } = distributeNeighborBudget(
+    countChars(previous ?? ""),
+    countChars(next ?? ""),
+    remainingBudget,
+  );
+  return {
+    previous: previous ? cropTail(previous, previousBudget) : null,
+    current: croppedCurrent,
+    next: next ? cropHead(next, nextBudget) : null,
+  };
+}
+
+function distributeNeighborBudget(previousChars: number, nextChars: number, total: number): { previousBudget: number; nextBudget: number } {
+  const preferredPrevious = Math.floor(total / 2);
+  const preferredNext = total - preferredPrevious;
+  let previousBudget = Math.min(previousChars, preferredPrevious);
+  let nextBudget = Math.min(nextChars, preferredNext);
+  let remaining = total - previousBudget - nextBudget;
+  const previousExtra = Math.min(previousChars - previousBudget, remaining);
+  previousBudget += previousExtra;
+  remaining -= previousExtra;
+  nextBudget += Math.min(nextChars - nextBudget, remaining);
+  return { previousBudget, nextBudget };
+}
+
+function contextChars(previous: string | null, current: string, next: string | null): number {
+  return countChars(previous ?? "") + countChars(current) + countChars(next ?? "");
+}
+
+function cropHead(text: string, budget: number): string {
+  if (countChars(text) <= budget) return text;
+  return `${takeCodePoints(text, Math.max(0, budget - countChars("……")))}……`;
+}
+
+function cropTail(text: string, budget: number): string {
+  if (countChars(text) <= budget) return text;
+  return `……${takeCodePointsFromEnd(text, Math.max(0, budget - countChars("……")))}`;
+}
+
+function cropAroundSentence(text: string, start: number, end: number, budget: number): string {
+  if (countChars(text) <= budget) return text.trim();
+  const target = text.slice(start, end).trim();
+  if (countChars(target) >= budget) return cropHead(target, budget);
+  const remaining = budget - countChars(target);
+  const beforeBudget = Math.floor(remaining / 2);
+  const afterBudget = remaining - beforeBudget;
+  const before = cropTail(text.slice(0, start).trimEnd(), beforeBudget);
+  const after = cropHead(text.slice(end).trimStart(), afterBudget);
+  return `${before}${target}${after}`.trim();
+}
+
+function takeCodePoints(text: string, limit: number): string {
+  return Array.from(text).slice(0, limit).join("");
+}
+
+export function takeCodePointsFromEnd(text: string, limit: number): string {
+  if (limit <= 0) return "";
+  return Array.from(text).slice(-limit).join("");
 }
 
 /**
@@ -1241,6 +1508,9 @@ const Paragraph = memo(function Paragraph({
   onRetry,
   onSave,
   onExpandSaved,
+  onExplain,
+  onExplainRetry,
+  onExplainBlocked,
   sentences,
 }: ParagraphProps) {
   const Tag: ElementType = heading ? HEADING_TAGS[Math.min(Math.max(heading.level, 1), 6) - 1] : "p";
@@ -1290,6 +1560,11 @@ const Paragraph = memo(function Paragraph({
                   presentation={region.presentation}
                   actionVisible={!region.saved || region.actionVisible}
                   savedIndex={region.saved ? region.index : undefined}
+                  sentenceIndex={region.index}
+                  explainView={region.explainView}
+                  onExplain={onExplain}
+                  onExplainRetry={onExplainRetry}
+                  onExplainBlocked={onExplainBlocked}
                 />
               ))}
           </Fragment>

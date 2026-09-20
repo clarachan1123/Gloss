@@ -16,8 +16,10 @@ const DOC_PREFIX = "gloss:doc:";
 const POS_PREFIX = "gloss:pos:";
 const STRUCTURE_PREFIX = "gloss:structure:";
 const SAVED_GLOSS_PREFIX = "gloss:saved:";
+const EXPLAIN_PREFIX = "gloss:explain:";
 const SCHEMA_VERSION = 1;
 const SAVED_GLOSS_SCHEMA_VERSION = 1;
+const EXPLAIN_SCHEMA_VERSION = 1;
 
 export interface StoredDocument {
   version: typeof SCHEMA_VERSION;
@@ -44,6 +46,20 @@ export interface SavedGloss {
 interface SavedGlossRecord {
   version: typeof SAVED_GLOSS_SCHEMA_VERSION;
   entries: SavedGloss[];
+}
+
+/** 功能二结果独立于保存白话；身份同样不依赖易变的全局句序号。 */
+export interface StoredExplanation {
+  paraIndex: number;
+  start: number;
+  sourceHash: string;
+  text: string;
+  createdAt: number;
+}
+
+interface ExplanationRecord {
+  version: typeof EXPLAIN_SCHEMA_VERSION;
+  entries: StoredExplanation[];
 }
 
 /** PRD 3.9：E1 存储已满；E2 存储不可用（被禁用、隐私模式等） */
@@ -85,6 +101,10 @@ function savedGlossKey(docId: string): string {
   return SAVED_GLOSS_PREFIX + docId;
 }
 
+function explanationKey(docId: string): string {
+  return EXPLAIN_PREFIX + docId;
+}
+
 async function hashSentence(text: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -120,6 +140,21 @@ function isSavedGloss(value: unknown): value is SavedGloss {
     typeof item.text === "string" &&
     typeof item.savedAt === "number" &&
     (item.kind === "saved" || item.kind === "edited")
+  );
+}
+
+function isStoredExplanation(value: unknown): value is StoredExplanation {
+  const item = value as Partial<StoredExplanation> | null;
+  return (
+    typeof item?.paraIndex === "number" &&
+    Number.isInteger(item.paraIndex) &&
+    item.paraIndex >= 0 &&
+    typeof item.start === "number" &&
+    Number.isInteger(item.start) &&
+    item.start >= 0 &&
+    typeof item.sourceHash === "string" &&
+    typeof item.text === "string" &&
+    typeof item.createdAt === "number"
   );
 }
 
@@ -180,6 +215,65 @@ export async function removeSavedGloss(
     (entry) => entry.paraIndex !== sentence.paraIndex || entry.start !== sentence.start || entry.sourceHash !== sourceHash,
   );
   writeSavedGlossRecord(docId, record);
+}
+
+/* ---------------- 功能二：整句理解 ---------------- */
+
+function readExplanationRecord(docId: string): ExplanationRecord {
+  const raw = getStorage().getItem(explanationKey(docId));
+  if (raw === null) return { version: EXPLAIN_SCHEMA_VERSION, entries: [] };
+  try {
+    const record = JSON.parse(raw) as Partial<ExplanationRecord> | null;
+    if (record?.version !== EXPLAIN_SCHEMA_VERSION || !Array.isArray(record.entries)) {
+      return { version: EXPLAIN_SCHEMA_VERSION, entries: [] };
+    }
+    return { version: EXPLAIN_SCHEMA_VERSION, entries: record.entries.filter(isStoredExplanation) };
+  } catch {
+    return { version: EXPLAIN_SCHEMA_VERSION, entries: [] };
+  }
+}
+
+function writeExplanationRecord(docId: string, record: ExplanationRecord): void {
+  try {
+    getStorage().setItem(explanationKey(docId), JSON.stringify(record));
+  } catch (err) {
+    throw new StorageError(isQuotaError(err) ? "E1" : "E2", err);
+  }
+}
+
+export async function loadExplanations(
+  docId: string,
+  sentences: readonly Sentence[],
+): Promise<Map<number, StoredExplanation>> {
+  const record = readExplanationRecord(docId);
+  const byLocation = new Map(sentences.map((sentence) => [`${sentence.paraIndex}:${sentence.start}`, sentence]));
+  const matches = await Promise.all(
+    record.entries.map(async (entry) => {
+      const sentence = byLocation.get(`${entry.paraIndex}:${entry.start}`);
+      if (!sentence || (await hashSentence(sentence.text)) !== entry.sourceHash) return null;
+      return [sentence.index, entry] as const;
+    }),
+  );
+  return new Map(matches.filter((match): match is readonly [number, StoredExplanation] => match !== null));
+}
+
+export async function saveExplanation(
+  docId: string,
+  sentence: Pick<Sentence, "paraIndex" | "start" | "text">,
+  text: string,
+): Promise<StoredExplanation> {
+  const entry: StoredExplanation = {
+    paraIndex: sentence.paraIndex,
+    start: sentence.start,
+    sourceHash: await hashSentence(sentence.text),
+    text,
+    createdAt: Date.now(),
+  };
+  const record = readExplanationRecord(docId);
+  record.entries = record.entries.filter((item) => item.paraIndex !== entry.paraIndex || item.start !== entry.start);
+  record.entries.push(entry);
+  writeExplanationRecord(docId, record);
+  return entry;
 }
 
 /** 保存文档，返回 docId。存储已满抛 StorageError("E1")，不可用抛 StorageError("E2") */

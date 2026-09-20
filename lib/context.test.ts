@@ -3,10 +3,12 @@ import {
   MAX_AFTER,
   MAX_BEFORE,
   MAX_DOCUMENT_CHARS,
+  MAX_EXPLAIN_CONTEXT_CHARS,
   MAX_SENTENCE_CHARS,
   buildGlossMessages,
   buildStructureMessages,
   parseGlossRequest,
+  parseExplainRequest,
   parseStructureRequest,
   type GlossRequest,
 } from "./context";
@@ -75,6 +77,33 @@ describe("parseGlossRequest：只接受合法的上下文窗口", () => {
     const sent = buildGlossMessages(value).map((m) => m.content).join("\n");
     expect(sent).not.toContain("XYZ");
     expect(sent).not.toContain("QWE");
+  });
+});
+
+describe("parseExplainRequest：功能二独立的三段上下文协议", () => {
+  const valid = {
+    sentence: "灯塔亮了。",
+    context: { previous: "海面起雾。", current: "守塔人守到深夜。灯塔亮了。", next: "船只改向。" },
+    gloss: "灯光出现了。",
+    structure: "一篇虚构的海港故事。",
+  };
+
+  it("接受三段上下文、可为空的相邻段和明确的无白话", () => {
+    const parsed = parseExplainRequest({ ...valid, context: { previous: null, current: valid.context.current, next: null }, gloss: null });
+    expect(parsed).toMatchObject({ ok: true, value: { gloss: null, context: { previous: null, next: null } } });
+  });
+
+  it("拒绝缺当前段、错误字段类型及超过 2000 字的三段合计", () => {
+    expect(parseExplainRequest({ ...valid, context: { previous: null, next: null } }).ok).toBe(false);
+    expect(parseExplainRequest({ ...valid, context: [valid.context] }).ok).toBe(false);
+    expect(parseExplainRequest({ ...valid, gloss: ["不是文本"] }).ok).toBe(false);
+    expect(parseExplainRequest({ ...valid, context: { previous: "字".repeat(MAX_EXPLAIN_CONTEXT_CHARS), current: "甲。", next: null } }).ok).toBe(false);
+  });
+
+  it("功能二未知字段同样不会进入解析结果", () => {
+    const parsed = parseExplainRequest({ ...valid, hiddenNote: "不能送给模型" });
+    if (!parsed.ok) throw new Error(parsed.reason);
+    expect(Object.keys(parsed.value).sort()).toEqual(["context", "gloss", "sentence", "structure"]);
   });
 });
 

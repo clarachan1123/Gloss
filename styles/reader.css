@@ -222,7 +222,8 @@ body {
 }
 
 .settings-cache-button,
-.action-row-save {
+.action-row-save,
+.action-row-explain {
   padding: 4px 8px;
   border: 1px solid var(--rule);
   border-radius: 0;
@@ -444,6 +445,7 @@ body {
   position: relative;
   display: flex;
   align-items: center;
+  gap: 8px;
   min-height: 32px;
   margin-top: 0.5em;
 }
@@ -453,8 +455,44 @@ body {
   cursor: default;
 }
 
-.action-row-save {
+.action-row-explain[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.action-row-explain[aria-hidden="true"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.action-row-save,
+.action-row-explain {
   font-size: 14px;
+}
+
+.explain-result {
+  margin-top: 0.6em;
+  padding-top: 0.45em;
+  border-top: 1px solid var(--rule);
+  color: var(--gloss);
+}
+
+.explain-result-text,
+.explain-result-pending,
+.explain-result-note {
+  margin: 0;
+}
+
+.explain-result-pending {
+  min-height: 2.05em;
+  letter-spacing: 0.2em;
+}
+
+.explain-result-note {
+  margin-top: 0.2em;
+  color: var(--gloss);
+  font-size: 0.85em;
+  opacity: 0.8;
 }
 
 .action-row-notice {

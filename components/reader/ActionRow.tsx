@@ -7,10 +7,18 @@ export default function ActionRow({
   saved,
   disabled,
   onToggle,
+  explainStatus,
+  onExplain,
+  onExplainBlocked,
+  explainVisible,
 }: {
   saved: boolean;
   disabled: boolean;
   onToggle: () => Promise<ToggleResult>;
+  explainStatus: "idle" | "loading" | "streaming" | "done" | "failed";
+  onExplain: () => void;
+  onExplainBlocked: () => void;
+  explainVisible: boolean;
 }) {
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -41,6 +49,26 @@ export default function ActionRow({
         disabled={disabled || pending}
       >
         {saved ? "已留下" : "留下"}
+      </button>
+      <button
+        type="button"
+        className="action-row-explain"
+        aria-hidden={!explainVisible}
+        aria-disabled={!explainVisible || explainStatus === "done" || explainStatus === "loading" || explainStatus === "streaming"}
+        aria-busy={explainStatus === "loading" || explainStatus === "streaming"}
+        tabIndex={explainVisible ? 0 : -1}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (!explainVisible) return;
+          if (explainStatus === "done") {
+            onExplainBlocked();
+            return;
+          }
+          if (explainStatus === "loading" || explainStatus === "streaming") return;
+          onExplain();
+        }}
+      >
+        听不懂
       </button>
       {notice && <span className="action-row-notice" role="status">{notice}</span>}
     </div>

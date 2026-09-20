@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type FocusEvent } from "react";
 import Upload from "@/components/Upload";
 import { clearGlossCacheForDocument } from "@/lib/cache";
 import { loadReadingPosition, loadShelf, removeShelfDocument, setShelfColor, type ShelfEntry } from "@/lib/storage";
@@ -40,10 +40,14 @@ export default function Shelf() {
   const [menuId, setMenuId] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [draggingImport, setDraggingImport] = useState(false);
+  const [droppedFile, setDroppedFile] = useState<File | null>(null);
   const shelfRef = useRef<HTMLElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const previewTimer = useRef<number | null>(null);
   const spineRefs = useRef(new Map<string, HTMLButtonElement>());
+  const importRef = useRef<HTMLButtonElement>(null);
+  const importPanelRef = useRef<HTMLElement>(null);
   const [overflowing, setOverflowing] = useState(false);
 
   const refresh = () => {
@@ -55,6 +59,15 @@ export default function Shelf() {
 
   useEffect(() => { refresh(); }, []);
   useEffect(() => () => { if (previewTimer.current !== null) window.clearTimeout(previewTimer.current); }, []);
+  useEffect(() => {
+    if (!showImport) return;
+    importPanelRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeImport();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [showImport]);
   useEffect(() => {
     const shelf = shelfRef.current;
     const track = trackRef.current;
@@ -92,12 +105,40 @@ export default function Shelf() {
 
   const openPreview = (docId: string) => {
     if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
-    previewTimer.current = window.setTimeout(() => setPreviewId(docId), 120);
+    previewTimer.current = window.setTimeout(() => {
+      previewTimer.current = null;
+      setPreviewId(docId);
+    }, 120);
   };
   const closePreview = (docId: string) => {
     if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
     previewTimer.current = null;
     if (selectedId !== docId) setPreviewId((current) => current === docId ? null : current);
+  };
+  const closeImport = () => {
+    setDraggingImport(false);
+    setShowImport(false);
+    window.setTimeout(() => importRef.current?.focus(), 0);
+  };
+  const leaveSlot = (docId: string, event: React.MouseEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closePreview(docId);
+  };
+  const blurSlot = (docId: string, event: FocusEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closePreview(docId);
+  };
+  const importDragOver = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setDraggingImport(true);
+  };
+  const importDragLeave = (event: DragEvent<HTMLElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingImport(false);
+  };
+  const importDrop = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    setDraggingImport(false);
+    const file = event.dataTransfer.files.item(0);
+    if (file) setDroppedFile(file);
   };
 
   async function remove(entry: ShelfEntry) {
@@ -121,16 +162,16 @@ export default function Shelf() {
         {entries.map((entry) => {
           const color = BOOK_COLORS[Number(entry.colorId.slice(5))];
           const open = selectedId === entry.docId || previewId === entry.docId;
-          return <div className={`book-slot${open ? " book-slot-open" : ""}`} data-doc-id={entry.docId} key={entry.docId}><button ref={(node) => { if (node) spineRefs.current.set(entry.docId, node); else spineRefs.current.delete(entry.docId); }} type="button" className={`book-spine${open ? " selected" : ""}`} style={{ "--book-color": color, "--book-width": `${48 + entry.widthSeed % 5}px`, "--book-height": `${350 + entry.widthSeed % 91}px` } as CSSProperties} onMouseEnter={() => openPreview(entry.docId)} onMouseLeave={() => closePreview(entry.docId)} onFocus={() => openPreview(entry.docId)} onBlur={() => closePreview(entry.docId)} onClick={() => { setSelectedId(entry.docId); setPreviewId(entry.docId); setMenuId(null); }} onContextMenu={(event) => { event.preventDefault(); setSelectedId(entry.docId); setPreviewId(entry.docId); setMenuId(entry.docId); }}><span>{entry.title}</span></button>{open && <article className="book-cover" style={{ "--book-color": color } as CSSProperties}><i /><h2>{entry.title}</h2>{entry.author && <p>{entry.author}</p>}<i /><Link href={`/read/${entry.docId}`}>开始读</Link></article>}{menuId === entry.docId && <div className="spine-menu" role="menu"><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(entry.docId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div><button type="button" onClick={() => { setMenuId(null); setConfirmingId(entry.docId); }}>从书架移除</button></div>}</div>;
+          return <div className={`book-slot${open ? " book-slot-open" : ""}`} data-doc-id={entry.docId} key={entry.docId} onMouseEnter={() => openPreview(entry.docId)} onMouseLeave={(event) => leaveSlot(entry.docId, event)} onFocus={() => openPreview(entry.docId)} onBlur={(event) => blurSlot(entry.docId, event)}><button ref={(node) => { if (node) spineRefs.current.set(entry.docId, node); else spineRefs.current.delete(entry.docId); }} type="button" className={`book-spine${open ? " selected" : ""}`} style={{ "--book-color": color, "--book-width": `${48 + entry.widthSeed % 5}px`, "--book-height": `${350 + entry.widthSeed % 91}px` } as CSSProperties} onClick={() => { setSelectedId(entry.docId); setPreviewId(entry.docId); setMenuId(null); }} onContextMenu={(event) => { event.preventDefault(); setSelectedId(entry.docId); setPreviewId(entry.docId); setMenuId(entry.docId); }}><span>{entry.title}</span></button>{open && <article className="book-cover" style={{ "--book-color": color } as CSSProperties}><i /><h2>{entry.title}</h2>{entry.author && <p>{entry.author}</p>}<i /><Link href={`/read/${entry.docId}`}>开始读</Link></article>}{menuId === entry.docId && <div className="spine-menu" role="menu"><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(entry.docId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div><button type="button" onClick={() => { setMenuId(null); setConfirmingId(entry.docId); }}>从书架移除</button></div>}</div>;
         })}
-        <button type="button" className="import-spine" onClick={() => setShowImport(true)}><span>导入新书</span></button>
+        <button ref={importRef} type="button" className="import-spine" onClick={() => setShowImport(true)}><span>导入新书</span></button>
         <div className="shelf-ledge" />
         </div>
       </section>
       {entries.length === 0 && <p className="empty-help">拖入或点击上传 · 支持 .docx .txt .pdf</p>}
       {selected && <section className="book-detail"><div><h2>{selected.title}</h2>{selected.author && <p>{selected.author}</p>}</div><div className="detail-actions"><Link className="read-button" href={`/read/${selected.docId}`}>开始读</Link><button type="button" className="remove-book" onClick={() => setConfirmingId(selected.docId)}>从书架移除</button></div><dl>{savedCount(selected.docId) > 0 && <div><dt>已存白话</dt><dd>{savedCount(selected.docId)} 处</dd></div>}<div><dt>上次读到</dt><dd>{lastReads.get(selected.docId)}</dd></div></dl></section>}
       {confirmingId && <section className="remove-confirm" role="dialog" aria-modal="true"><p>移除后会删除这本书的正文、阅读位置、结构摘要、已存白话、整句理解和自动白话缓存。</p><div><button type="button" onClick={() => setConfirmingId(null)}>取消</button><button type="button" onClick={() => { const entry = entries.find((item) => item.docId === confirmingId); if (entry) void remove(entry); }}>确认移除</button></div></section>}
-      {showImport && <section className="import-panel" aria-label="导入新书"><button type="button" onClick={() => setShowImport(false)}>关闭</button><Upload onStorageFull={() => { setShowImport(false); shelfRef.current?.focus(); }} /><button type="button" className="paste-link" onClick={() => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()}>改用粘贴文本</button></section>}
+      {showImport && <div className="import-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeImport(); }}><section ref={importPanelRef} className={`import-panel${draggingImport ? " import-panel-dragging" : ""}`} role="dialog" aria-modal="true" aria-labelledby="import-title" tabIndex={-1} onDragOver={importDragOver} onDragLeave={importDragLeave} onDrop={importDrop}><header><h2 id="import-title">导入新书</h2><button type="button" className="import-close" aria-label="关闭导入新书弹窗" onClick={closeImport}>×</button></header><div className="import-drop-hint" aria-hidden="true">松开以上传文件</div><Upload droppedFile={droppedFile} onDroppedFileHandled={() => setDroppedFile(null)} onStorageFull={() => { closeImport(); shelfRef.current?.focus(); }} /><button type="button" className="paste-link" onClick={() => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()}>改用粘贴文本</button></section></div>}
       </div>
     </main>
   );

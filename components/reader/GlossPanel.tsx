@@ -36,6 +36,12 @@ export interface ExplainView {
 
 export const IDLE_EXPLAIN_VIEW: ExplainView = { status: "idle", text: "", sentenceCount: 0, failure: null };
 
+export interface RevealAnchor {
+  paraIndex: number;
+  offset: number;
+  viewportTop: number;
+}
+
 /** 每块放出的字数（PRD 3.7：3–5 字一块）与间隔。约 90 字/秒，150 字上限约 1.7 秒放完 */
 const REVEAL_CHARS = 4;
 const REVEAL_INTERVAL_MS = 45;
@@ -77,6 +83,8 @@ export default function GlossPanel({
   ref,
   view,
   onRetry,
+  onBeforeReveal,
+  onAfterReveal,
   saved,
   onSave,
   source,
@@ -92,6 +100,8 @@ export default function GlossPanel({
   ref?: Ref<HTMLDivElement>;
   view: GlossView;
   onRetry: () => void;
+  onBeforeReveal: (index: number) => RevealAnchor | null;
+  onAfterReveal: (anchor: RevealAnchor | null) => void;
   saved: boolean;
   onSave: () => Promise<"saved" | "removed" | StorageErrorCode>;
   /**
@@ -114,14 +124,18 @@ export default function GlossPanel({
   // 每次渲染都判断：重复点击时面板先以「加载中」出现，下一次渲染才拿到会话缓存
   const immediate = view.instant || reducedMotion;
   const [shown, setShown] = useState(0);
+  const pendingRevealAnchor = useRef<RevealAnchor | null>(null);
   const visible = immediate ? chars.length : Math.min(shown, chars.length);
   const revealing = visible < chars.length;
 
   useEffect(() => {
     if (!revealing) return;
-    const timer = window.setTimeout(() => setShown(visible + REVEAL_CHARS), REVEAL_INTERVAL_MS);
+    const timer = window.setTimeout(() => {
+      pendingRevealAnchor.current = onBeforeReveal(sentenceIndex);
+      setShown(visible + REVEAL_CHARS);
+    }, REVEAL_INTERVAL_MS);
     return () => window.clearTimeout(timer);
-  }, [revealing, visible]);
+  }, [onBeforeReveal, revealing, sentenceIndex, visible]);
 
   // 断流时先把已收到的字放完，再显示提示
   const failure = view.status === "failed" && !revealing ? view.failure : null;
@@ -169,6 +183,11 @@ export default function GlossPanel({
     } else {
       panel.style.minHeight = `${tallestRef.current}px`;
     }
+  });
+  useLayoutEffect(() => {
+    const anchor = pendingRevealAnchor.current;
+    pendingRevealAnchor.current = null;
+    if (anchor) onAfterReveal(anchor);
   });
 
   const [cooling, setCooling] = useState(false);

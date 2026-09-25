@@ -3,7 +3,7 @@ import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadSavedGlosses } from "@/lib/storage";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import { anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorExplainMutation, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+import { anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
 
 describe("G-10a 取消保存", () => {
   it("保留当前显示文本为会话内存命中：取消后不需要发请求", () => {
@@ -196,7 +196,7 @@ describe("G-11 逐句追加复用字符锚定", () => {
 
   it("视口顶边切过面板时不建事务，面板内参照字实测位移为 0px", () => {
     // panel top=-18、bottom=92：读者正在读面板内的整句理解，不可用下方正文做锚点补偿。
-    expect(shouldAnchorExplainMutation(92)).toBe(false);
+    expect(shouldAnchorPanelGrowth(92)).toBe(false);
     const panelInnerCharBefore = 34;
     const panelInnerCharAfterAppend = 34;
     const compensation = 0;
@@ -207,6 +207,12 @@ describe("G-11 逐句追加复用字符锚定", () => {
     const belowPanelBefore = 208;
     const belowPanelAfterGlossDone = 208;
     expect(belowPanelAfterGlossDone - belowPanelBefore).toBe(0);
+  });
+
+  it("保留小于 0.5px 的补偿量，避免多次逐字显示积累单向漂移", () => {
+    const changes = Array.from({ length: 100 }, () => 0.4);
+    const signedResidual = changes.reduce((sum, change) => sum + change - anchorScrollDelta(100, 100 + change), 0);
+    expect(Math.abs(signedResidual)).toBeLessThanOrEqual(1);
   });
 });
 

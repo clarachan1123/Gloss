@@ -202,6 +202,7 @@ export default function Reader({ docId }: { docId: string }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const positionRef = useRef<PositionAnchor>({ index: 0, offset: 0, layout: "", measure: "" });
   const transactionRef = useRef<Transaction | null>(null);
+  const growthAnchorRef = useRef<{ index: number; panel: HTMLElement; anchor: CharAnchor; scrollY: number } | null>(null);
   const animationRef = useRef<Animation | null>(null);
   const collapseTimerRef = useRef<number | undefined>(undefined);
   const lastToggleRef = useRef<{ index: number; time: number } | null>(null);
@@ -732,10 +733,11 @@ export default function Reader({ docId }: { docId: string }) {
     // ① 视口锚定（产品不变量）：把参照字滚回 DOM 变化前的位置。
     //    改动在参照字下方时补偿为 0（D13 保证上方的行不重排）；改动在上方时，补偿恰好抵消文档高度的变化
     if (transaction?.anchor) {
-      const top = charTop(body, transaction.anchor.paraIndex, transaction.anchor.offset);
-      if (top !== null) {
-        const delta = anchorScrollDelta(transaction.anchor.viewportTop, top);
-        if (delta !== 0) window.scrollBy({ top: delta, behavior: "instant" });
+      if (growthAnchorRef.current?.anchor === transaction.anchor) {
+        restorePanelAnchor(body, transaction.anchor);
+        growthAnchorRef.current.scrollY = window.scrollY;
+      } else {
+        restoreCharAnchor(body, transaction.anchor);
       }
     }
     rememberTopSentence(body, positionRef.current);
@@ -775,7 +777,7 @@ export default function Reader({ docId }: { docId: string }) {
     if (adjustment !== 0) {
       window.scrollBy({ top: adjustment, behavior: prefersReducedMotion() ? "instant" : "smooth" });
     }
-  }, [activeSavedIndex, expandedSavedIndex, explainViews, expansion, glossShape, measuringParaIndex, readingMode, savedRegions]);
+  }, [activeSavedIndex, expandedSavedIndex, explainViews, expansion, gloss, glossShape, measuringParaIndex, readingMode, savedRegions]);
 
   // 收起条件：点别处、Esc（PRD 3.7）、该句滚出视口（G3）
   useEffect(() => {
@@ -831,6 +833,29 @@ export default function Reader({ docId }: { docId: string }) {
 
   /* ---------------- 功能一：白话（G-07） ---------------- */
 
+  const capturePanelGrowth = useCallback((index: number): CharAnchor | null => {
+    const body = bodyRef.current;
+    const panel = body?.querySelector<HTMLElement>(`.gloss-panel[data-sentence-index="${index}"]`);
+    if (!body || !panel || !shouldAnchorPanelGrowth(panel.getBoundingClientRect().bottom)) {
+      growthAnchorRef.current = null;
+      return null;
+    }
+    const prior = growthAnchorRef.current;
+    if (prior?.index === index && prior.panel === panel && Math.abs(prior.scrollY - window.scrollY) < 0.5 && charTop(body, prior.anchor.paraIndex, prior.anchor.offset) !== null) {
+      return prior.anchor;
+    }
+    const anchor = panelGrowthAnchor(body, panel);
+    growthAnchorRef.current = anchor ? { index, panel, anchor, scrollY: window.scrollY } : null;
+    return anchor;
+  }, []);
+  const restorePanelGrowth = useCallback((anchor: CharAnchor | null) => {
+    const body = bodyRef.current;
+    if (body && anchor) {
+      restorePanelAnchor(body, anchor);
+      if (growthAnchorRef.current?.anchor === anchor) growthAnchorRef.current.scrollY = window.scrollY;
+    }
+  }, []);
+
   // 全书结构摘要：开书时后台算一次，按 docId 缓存。算好之前的点击不带摘要照常发，不让第一次点击等待
   useEffect(() => {
     structureRef.current = null;
@@ -875,7 +900,11 @@ export default function Reader({ docId }: { docId: string }) {
     const controller = new AbortController();
     glossAbortRef.current = controller;
     setGloss({ index: activeIndex, view: LOADING_VIEW });
-    const show = (view: GlossView) => setGloss({ index: activeIndex, view });
+    const show = (view: GlossView) => {
+      const anchor = capturePanelGrowth(activeIndex);
+      if (anchor) transactionRef.current = { anchor, animateOpen: false, adjustVisibility: false };
+      setGloss({ index: activeIndex, view });
+    };
     const input = glossInput(sentences, activeIndex, structureRef.current);
     void streamGloss(input, {
       signal: controller.signal,
@@ -892,7 +921,7 @@ export default function Reader({ docId }: { docId: string }) {
       }
     });
     return () => controller.abort();
-  }, [activeIndex, docId, retryCount, sentences]);
+  }, [activeIndex, capturePanelGrowth, docId, retryCount, sentences]);
 
   const retryGloss = useCallback(() => setRetryCount((n) => n + 1), []);
 
@@ -902,15 +931,12 @@ export default function Reader({ docId }: { docId: string }) {
    */
   const stageExplainView = useCallback((runDocId: string, index: number, view: ExplainView) => {
     if (!mountedRef.current || explainContextRef.current.docId !== runDocId) return;
-    const body = bodyRef.current;
-    const panel = body?.querySelector<HTMLElement>(`.gloss-panel[data-sentence-index="${index}"]`);
-    if (body && panel && shouldAnchorExplainMutation(panel.getBoundingClientRect().bottom)) {
-      transactionRef.current = { anchor: anchorAtViewportTop(body), animateOpen: false, adjustVisibility: false };
-    }
+    const anchor = capturePanelGrowth(index);
+    if (anchor) transactionRef.current = { anchor, animateOpen: false, adjustVisibility: false };
     const next = new Map(explainViewsRef.current).set(index, view);
     explainViewsRef.current = next;
     setExplainViews(next);
-  }, []);
+  }, [capturePanelGrowth]);
 
   const startExplainFor = useCallback((index: number, force = false) => {
     const context = explainContextRef.current;
@@ -1219,6 +1245,8 @@ export default function Reader({ docId }: { docId: string }) {
                   panelRef={panelRef}
                   glossKey={expansion?.paraIndex === paraIndex ? glossKey : undefined}
                   onRetry={retryGloss}
+                  onBeforeReveal={capturePanelGrowth}
+                  onAfterReveal={restorePanelGrowth}
                   onSave={toggleSavedGlossFor}
                   onExpandSaved={expandSavedFromMarker}
                   onExplain={startExplainFor}
@@ -1261,13 +1289,30 @@ export function countCompleteSentences(text: string): number {
 
 /** 实际锚定与单元测试共用：补偿后参照字的可见位移应为 0。 */
 export function anchorScrollDelta(previousViewportTop: number, nextViewportTop: number): number {
-  const delta = nextViewportTop - previousViewportTop;
-  return Math.abs(delta) > 0.5 ? delta : 0;
+  return nextViewportTop - previousViewportTop;
 }
 
-/** 功能二追加只在整块面板已经离开视口上方时补偿正文字符锚点。 */
-export function shouldAnchorExplainMutation(panelBottom: number): boolean {
+/** 功能一与功能二共用：整块面板离开视口上方后才补偿正文字符锚点。 */
+export function shouldAnchorPanelGrowth(panelBottom: number): boolean {
   return panelBottom <= 0;
+}
+
+function panelGrowthAnchor(body: HTMLElement, panel: HTMLElement): CharAnchor | null {
+  return shouldAnchorPanelGrowth(panel.getBoundingClientRect().bottom) ? anchorAtViewportTop(body) : null;
+}
+
+function restoreCharAnchor(body: HTMLElement, anchor: CharAnchor): void {
+  body.style.translate = "";
+  const top = charTop(body, anchor.paraIndex, anchor.offset);
+  if (top === null) return;
+  const delta = anchorScrollDelta(anchor.viewportTop, top);
+  if (delta !== 0) window.scrollBy({ top: delta, behavior: "instant" });
+}
+
+function restorePanelAnchor(body: HTMLElement, anchor: CharAnchor): void {
+  restoreCharAnchor(body, anchor);
+  const top = charTop(body, anchor.paraIndex, anchor.offset);
+  if (top !== null) body.style.translate = `0 ${anchor.viewportTop - top}px`;
 }
 
 /** 测量中的段落必须保持为原始、未拆分 DOM，不能残留 transient 插入区。 */
@@ -1375,6 +1420,8 @@ interface ParagraphProps {
   panelRef: Ref<HTMLDivElement>;
   glossKey?: string;
   onRetry: () => void;
+  onBeforeReveal: (index: number) => CharAnchor | null;
+  onAfterReveal: (anchor: CharAnchor | null) => void;
   onSave: (index: number) => Promise<"saved" | "removed" | StorageErrorCode>;
   onExpandSaved: (index: number) => void;
   onExplain: (index: number) => void;
@@ -1511,6 +1558,8 @@ const Paragraph = memo(function Paragraph({
   panelRef,
   glossKey,
   onRetry,
+  onBeforeReveal,
+  onAfterReveal,
   onSave,
   onExpandSaved,
   onExplain,
@@ -1559,6 +1608,8 @@ const Paragraph = memo(function Paragraph({
                   ref={region.saved ? undefined : panelRef}
                   view={region.view}
                   onRetry={onRetry}
+                  onBeforeReveal={onBeforeReveal}
+                  onAfterReveal={onAfterReveal}
                   saved={region.saved}
                   onSave={() => onSave(region.index)}
                   source={sentences[region.index]?.text}

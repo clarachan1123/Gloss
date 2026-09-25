@@ -8,6 +8,8 @@ const configuredDelay = Number(process.env.SLOW_GLOSS_FIRST_TOKEN_DELAY_MS ?? DE
 const FIRST_TOKEN_DELAY_MS = Number.isFinite(configuredDelay) && configuredDelay >= 0 ? configuredDelay : DEFAULT_FIRST_TOKEN_DELAY_MS;
 const configuredStructureDelay = Number(process.env.SLOW_GLOSS_STRUCTURE_DELAY_MS ?? FIRST_TOKEN_DELAY_MS);
 const STRUCTURE_DELAY_MS = Number.isFinite(configuredStructureDelay) && configuredStructureDelay >= 0 ? configuredStructureDelay : FIRST_TOKEN_DELAY_MS;
+const CHUNK_DELAY_MS = 180;
+const SLOW_TEXT = "这一段白话会一点一点写出来，读者可以在它增长时滚动页面，观察正在阅读的那一行是否留在原处。".repeat(4).slice(0, 148);
 let callNumber = 0;
 
 const copied = spawnSync(process.execPath, ["scripts/copy-pdfjs-assets.mjs"], { stdio: "inherit" });
@@ -26,17 +28,32 @@ const mock = http.createServer((request, response) => {
   let raw = "";
   request.on("data", (chunk) => { raw += chunk; });
   request.on("end", () => {
-    const structure = JSON.parse(raw).max_tokens === 800;
+    const payload = JSON.parse(raw);
+    if (payload.messages?.some((message) => message.content?.endsWith("G40 认证预检。"))) {
+      response.writeHead(401).end("unauthorized");
+      return;
+    }
+    const structure = payload.max_tokens === 800;
     const delay = structure ? STRUCTURE_DELAY_MS : FIRST_TOKEN_DELAY_MS;
     const responseText = structure
       ? `【模拟结构#${++callNumber}】本地结构摘要。`
-      : `【模拟#${++callNumber}】本地慢上游在${delay}毫秒后给出首字。`;
+      : SLOW_TEXT;
     setTimeout(() => {
       if (closed) return;
       response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
-      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: responseText }, finish_reason: null }] })}\n\n`);
-      response.write('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n');
-      response.end("data: [DONE]\n\n");
+      const chunks = structure ? [responseText] : Array.from({ length: Math.ceil(Array.from(responseText).length / 8) }, (_, index) => Array.from(responseText).slice(index * 8, index * 8 + 8).join(""));
+      let index = 0;
+      const sendNext = () => {
+        if (closed) return;
+        if (index < chunks.length) {
+          response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunks[index++] }, finish_reason: null }] })}\n\n`);
+          setTimeout(sendNext, CHUNK_DELAY_MS);
+        } else {
+          response.write('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n');
+          response.end("data: [DONE]\n\n");
+        }
+      };
+      sendNext();
     }, delay);
   });
 });

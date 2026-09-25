@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type FocusEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type FocusEvent, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
 import Upload from "@/components/Upload";
 import { clearGlossCacheForDocument } from "@/lib/cache";
 import { loadReadingPosition, loadShelf, removeShelfDocument, setShelfColor, type ShelfEntry } from "@/lib/storage";
@@ -48,6 +49,7 @@ export default function Shelf() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [menuPoint, setMenuPoint] = useState({ x: 0, y: 0 });
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
@@ -57,6 +59,7 @@ export default function Shelf() {
   const trackRef = useRef<HTMLDivElement>(null);
   const previewTimer = useRef<number | null>(null);
   const previewLeaveTimer = useRef<number | null>(null);
+  const restoringMenuFocus = useRef(false);
   const spineRefs = useRef(new Map<string, HTMLButtonElement>());
   const menuRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLButtonElement>(null);
@@ -99,7 +102,7 @@ export default function Shelf() {
     return () => observer.disconnect();
   }, [entries.length]);
   useEffect(() => {
-    const openId = previewId ?? selectedId;
+    const openId = menuId ?? previewId ?? selectedId;
     const shelf = shelfRef.current;
     const slot = openId ? shelf?.querySelector<HTMLElement>(`[data-doc-id="${openId}"]`) : null;
     if (!shelf || !slot || !overflowing) return;
@@ -108,19 +111,29 @@ export default function Shelf() {
     const inset = 24;
     if (slotBox.left < shelfBox.left + inset) shelf.scrollBy({ left: slotBox.left - shelfBox.left - inset, behavior: "smooth" });
     else if (slotBox.right > shelfBox.right - inset) shelf.scrollBy({ left: slotBox.right - shelfBox.right + inset, behavior: "smooth" });
-  }, [overflowing, previewId, selectedId]);
-  useEffect(() => {
-    const close = () => setMenuId((id) => { if (id) spineRefs.current.get(id)?.focus(); return null; });
-    window.addEventListener("scroll", close, true);
-    return () => window.removeEventListener("scroll", close, true);
-  }, []);
+  }, [overflowing, menuId, previewId, selectedId]);
+  const restoreSpineFocus = (docId: string) => {
+    const spine = spineRefs.current.get(docId);
+    if (!spine) return;
+    restoringMenuFocus.current = true;
+    spine.focus();
+    restoringMenuFocus.current = false;
+  };
   useEffect(() => {
     if (!menuId) return;
-    const close = () => setMenuId((current) => {
-      if (current !== menuId) return current;
-      spineRefs.current.get(menuId)?.focus();
-      return null;
-    });
+    const close = () => {
+      restoreSpineFocus(menuId);
+      setMenuId(null);
+    };
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  }, [menuId]);
+  useEffect(() => {
+    if (!menuId) return;
+    const close = () => {
+      restoreSpineFocus(menuId);
+      setMenuId(null);
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -128,7 +141,7 @@ export default function Shelf() {
       }
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) close();
+      if (!menuRef.current?.contains(event.target as Node)) setMenuId(null);
     };
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("pointerdown", onPointerDown);
@@ -137,9 +150,25 @@ export default function Shelf() {
       document.removeEventListener("pointerdown", onPointerDown);
     };
   }, [menuId]);
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menuId || !menu) return;
+    const margin = 8;
+    const bounds = menu.getBoundingClientRect();
+    const shelf = shelfRef.current?.getBoundingClientRect();
+    const leftEdge = Math.max(margin, (shelf?.left ?? 0) + margin);
+    const rightEdge = Math.min(window.innerWidth - margin, (shelf?.right ?? window.innerWidth) - margin);
+    const topEdge = Math.max(margin, (shelf?.top ?? 0) + margin);
+    const bottomEdge = Math.min(window.innerHeight - margin, (shelf?.bottom ?? window.innerHeight) - margin);
+    const gap = 8;
+    const left = menuPoint.x + gap + bounds.width <= rightEdge ? menuPoint.x + gap : menuPoint.x - bounds.width - gap;
+    const top = menuPoint.y + gap + bounds.height <= bottomEdge ? menuPoint.y + gap : menuPoint.y - bounds.height - gap;
+    menu.style.left = `${Math.max(leftEdge, Math.min(left, Math.max(leftEdge, rightEdge - bounds.width)))}px`;
+    menu.style.top = `${Math.max(topEdge, Math.min(top, Math.max(topEdge, bottomEdge - bounds.height)))}px`;
+  }, [menuId, menuPoint]);
 
   const selected = entries.find((entry) => entry.docId === selectedId) ?? null;
-  const displayed = entries.find((entry) => entry.docId === detailId) ?? null;
+  const displayed = menuId ? null : entries.find((entry) => entry.docId === detailId) ?? null;
   const recent = useMemo(() => [...entries].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)[0] ?? null, [entries]);
   const lastReads = useMemo(() => new Map(entries.map((entry) => [entry.docId, computeLastRead(entry)])), [entries]);
 
@@ -169,10 +198,10 @@ export default function Shelf() {
     window.setTimeout(() => importRef.current?.focus(), 0);
   };
   const leaveSlot = (docId: string, event: React.MouseEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closePreview(docId);
+    if (relatedTargetLeftSlot(event.currentTarget, event.relatedTarget)) closePreview(docId);
   };
   const blurSlot = (docId: string, event: FocusEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closePreview(docId);
+    if (relatedTargetLeftSlot(event.currentTarget, event.relatedTarget)) closePreview(docId);
   };
   const importDragOver = (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
@@ -187,6 +216,12 @@ export default function Shelf() {
     setDraggingImport(false);
     const file = event.dataTransfer.files.item(0);
     if (file) setDroppedFile(file);
+  };
+
+  const openBookMenu = (entry: ShelfEntry, event: MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    setMenuPoint({ x: event.clientX, y: event.clientY });
+    setMenuId(entry.docId);
   };
 
   async function remove(entry: ShelfEntry) {
@@ -206,17 +241,18 @@ export default function Shelf() {
       <div className="shelf-frame">
       <header className="shelf-heading"><div className="shelf-heading-top"><span className="wordmark">Gloss</span>{entries.length > 0 && <span className="shelf-count">本地书架 {entries.length} 本</span>}</div><h1>我的书架</h1>{entries.length > 0 && <p>{entries.length} 本书。点开任意一本，接着上次的地方读。</p>}</header>
       {recent && <Link className="continue-reading" href={`/read/${recent.docId}`}><span className="continue-cover" style={{ background: BOOK_COLORS[Number(recent.colorId.slice(5))] }} /><span className="continue-copy"><strong>{recent.title}</strong><small>{lastReads.get(recent.docId)}</small></span><span className="continue-action">继续阅读　→</span></Link>}
-      <section className={`${entries.length === 0 ? "shelf empty-shelf" : "shelf"}${overflowing ? " shelf-overflowing" : ""}`} ref={shelfRef} tabIndex={-1} aria-label="我的书架" onKeyDown={(event) => { if (event.key === "Escape") setMenuId((id) => { if (id) spineRefs.current.get(id)?.focus(); return null; }); }} onClick={(event) => { if (event.target === event.currentTarget) setMenuId(null); }}>
+      <section className={`${entries.length === 0 ? "shelf empty-shelf" : "shelf"}${overflowing ? " shelf-overflowing" : ""}`} ref={shelfRef} tabIndex={-1} aria-label="我的书架" onClick={(event) => { if (event.target === event.currentTarget) setMenuId(null); }}>
         <div className="shelf-track" ref={trackRef}>
         {entries.map((entry) => {
           const color = BOOK_COLORS[Number(entry.colorId.slice(5))];
-          const open = (previewId ?? selectedId) === entry.docId;
-          return <div className={`book-slot${open ? " book-slot-open" : ""}`} data-doc-id={entry.docId} key={entry.docId} onMouseEnter={() => openPreview(entry.docId)} onMouseLeave={(event) => leaveSlot(entry.docId, event)} onFocus={() => openPreview(entry.docId)} onBlur={(event) => blurSlot(entry.docId, event)}><button ref={(node) => { if (node) spineRefs.current.set(entry.docId, node); else spineRefs.current.delete(entry.docId); }} type="button" className={`book-spine${open ? " selected" : ""}`} style={{ "--book-color": color, "--book-width": `${48 + entry.widthSeed % 5}px`, "--book-height": `${350 + entry.widthSeed % 91}px` } as CSSProperties} onClick={() => { setSelectedId(entry.docId); setPreviewId(null); setDetailId(entry.docId); setMenuId(null); }} onContextMenu={(event) => { event.preventDefault(); setSelectedId(entry.docId); setPreviewId(null); setDetailId(entry.docId); setMenuId(entry.docId); }}><span className="spine-added-at">{importMonth(entry.addedAt)}</span><span className="spine-title">{entry.title}</span></button>{open && <Link className="book-cover" href={`/read/${entry.docId}`} style={{ "--book-color": color } as CSSProperties}><i /><h2>{entry.title}</h2>{entry.author && <p>{entry.author}</p>}<i /><span aria-hidden="true">开始读</span></Link>}{menuId === entry.docId && <div ref={menuRef} className="spine-menu" role="menu"><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(entry.docId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div><button type="button" onClick={() => { setMenuId(null); setConfirmingId(entry.docId); }}>从书架移除</button></div>}</div>;
+          const open = (menuId ?? previewId ?? selectedId) === entry.docId;
+          return <div className={`book-slot${open ? " book-slot-open" : ""}`} data-doc-id={entry.docId} key={entry.docId} onMouseEnter={() => openPreview(entry.docId)} onMouseLeave={(event) => leaveSlot(entry.docId, event)} onFocus={() => { if (!menuId && !restoringMenuFocus.current) openPreview(entry.docId); }} onBlur={(event) => blurSlot(entry.docId, event)}><button ref={(node) => { if (node) spineRefs.current.set(entry.docId, node); else spineRefs.current.delete(entry.docId); }} type="button" className={`book-spine${open ? " selected" : ""}`} style={{ "--book-color": color, "--book-width": `${48 + entry.widthSeed % 5}px`, "--book-height": `${350 + entry.widthSeed % 91}px` } as CSSProperties} onClick={() => { setSelectedId(entry.docId); setPreviewId(null); setDetailId(entry.docId); setMenuId(null); }} onContextMenu={(event) => openBookMenu(entry, event)}><span className="spine-added-at">{importMonth(entry.addedAt)}</span><span className="spine-title">{entry.title}</span></button>{open && <Link className="book-cover" href={`/read/${entry.docId}`} style={{ "--book-color": color } as CSSProperties} onContextMenu={(event) => openBookMenu(entry, event)}><i /><h2>{entry.title}</h2>{entry.author && <p>{entry.author}</p>}<i /><span aria-hidden="true">开始读</span></Link>}</div>;
         })}
         <button ref={importRef} type="button" className="import-spine" onClick={() => setShowImport(true)}><span>导入新书</span></button>
         <div className="shelf-ledge" />
         </div>
       </section>
+      {menuId && entries.find((entry) => entry.docId === menuId) && createPortal(<div ref={menuRef} className="spine-menu" role="menu"><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(menuId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div><button type="button" onClick={() => { setMenuId(null); setConfirmingId(menuId); }}>从书架移除</button></div>, document.body)}
       {entries.length === 0 && <p className="empty-help">拖入或点击上传 · 支持 .docx .txt .pdf</p>}
       {displayed && <section className="book-detail"><div><h2>{displayed.title}</h2>{displayed.author && <p>{displayed.author}</p>}</div><div className="detail-actions"><Link className="read-button" href={`/read/${displayed.docId}`}>开始读</Link><button type="button" className="remove-book" onClick={() => setConfirmingId(displayed.docId)}>从书架移除</button></div><dl>{savedCount(displayed.docId) > 0 && <div><dt>已存白话</dt><dd>{savedCount(displayed.docId)} 处</dd></div>}{lastReads.get(displayed.docId) && <div><dt>上次读到</dt><dd>{lastReads.get(displayed.docId)}</dd></div>}<div><dt>导入日期</dt><dd>{importDate(displayed.addedAt)}</dd></div></dl></section>}
       {confirmingId && <section className="remove-confirm" role="dialog" aria-modal="true"><p>确定移除《{entries.find((item) => item.docId === confirmingId)?.title}》吗？移除后会删除这本书的正文、阅读位置、结构摘要、已存白话、整句理解和自动白话缓存。</p><div><button type="button" onClick={() => setConfirmingId(null)}>取消</button><button type="button" onClick={() => { const entry = entries.find((item) => item.docId === confirmingId); if (entry) void remove(entry); }}>确认移除</button></div></section>}
@@ -224,6 +260,10 @@ export default function Shelf() {
       </div>
     </main>
   );
+}
+
+export function relatedTargetLeftSlot(slot: HTMLElement, relatedTarget: EventTarget | null): boolean {
+  return !(relatedTarget instanceof Node && slot.contains(relatedTarget));
 }
 
 function savedCount(docId: string): number {

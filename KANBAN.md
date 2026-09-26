@@ -648,9 +648,13 @@ gloss/
 - `www.withglossline.com` → `CNAME / www / 41ce1b14af2b3a28.vercel-dns-017.com`
 - 页面同时说明 legacy 记录 `cname.vercel-dns.com` 和 `76.76.21.21` 仍然可用；本轮不用 legacy 值替代项目给出的值。
 
-**已决定（2026-09-26）**：以 apex `withglossline.com` 为主域名，`www.withglossline.com` 在 Vercel 侧做 301/308 跳转到 apex。大陆线路的可控点在 A 记录，可按解析线路指向不同 IP；www 的 CNAME 不便分流。
+**已决定并配置（2026-09-26）**：以 apex `withglossline.com` 为主域名，`www.withglossline.com` 在 Vercel 侧以 308 跳转到 apex。大陆线路的可控点在 A 记录，可按解析线路指向不同 IP；www 的 CNAME 不便分流。
 
-**执行停点**：Clara 先完成 Vercel 的跳转方向调整并提供截图；Codex 核对后再给阿里云操作步骤。截图到来前不动 DNS。Clara 自行操作 Vercel 和阿里云后台。
+**实测记录（Clara，2026-09-26）**：
+- Vercel 跳转方向已改：`withglossline.com` 直连 Production，`www.withglossline.com` 以 308 跳转到 apex。
+- 阿里云第一步的两条记录已添加；Vercel 两行域名状态均为 Valid Configuration。此记录未确认 HTTPS 证书状态。
+- 测试网络为中国大陆手机流量、无代理：`https://withglossline.com` 打不开，浏览器报 `ERR_CONNECTION_RESET`；同一网络下 `Resolve-DnsName` 查到的 A 记录是 `216.198.79.1`。DNS 解析已指向项目给出的 IP，但该网络上的连接被重置。第一步未通过。
+- 第二步进行中：Clara 正在添加 `@ / A / 境外 / 216.198.79.1`，然后把 `@ / A / 默认` 改为 `76.223.126.88`；`www` 的 CNAME 不动。第二步的域名状态、HTTPS 状态与大陆裸网结果待 Clara 回报。
 
 1. 第一步在阿里云增加下表两条记录，TTL 均取阿里云允许的最短值。改动前后各记录一次 Vercel 域名状态和 HTTPS 状态；等到 Valid Configuration 与证书就绪，停下让 Clara 用大陆裸网手机流量测试 `https://withglossline.com`。若已可访问，第二步不做，`76.223.126.88` 不上线，直接进入验收。
 
@@ -661,7 +665,7 @@ gloss/
 
 2. 仅当第一步不通：添加 `@ / A / 境外 / 216.198.79.1`，再只把现有 `@ / A / 默认` 的记录值改为 `76.223.126.88`；`www / CNAME / 默认 / 41ce1b14af2b3a28.vercel-dns-017.com` 不动。改动前后各记录一次 Vercel 域名状态和 HTTPS 状态；停下让 Clara 再测一次。仍不通就把 `@ / A / 默认` 恢复为 `216.198.79.1`，进入 Plan B 讨论，不再试其他 IP。
 
-**未验证**：`76.223.126.88` 属于先前记录的旧 IP 段，当前项目 Domains 页面给出的是 `216.198.79.1`。两者是否指向同一套 Vercel 边缘网络，说不准；第一步先实测当前项目 IP 在中国大陆能否访问，不据旧 IP 推断结果。
+**未验证**：`76.223.126.88` 属于先前记录的旧 IP 段，当前项目 Domains 页面给出的是 `216.198.79.1`。两者是否指向同一套 Vercel 边缘网络，说不准；不据旧 IP 推断第二步结果。
 
 **开工时必须先核对的四件事**（复述阶段回答，不要边做边发现）
 1. G-07 的服务端 IP 级速率限制绑在哪一层：Vercel 项目还是具体域名。换域名后是否自动跟随。
@@ -679,6 +683,7 @@ gloss/
 
 **验收**
 - [ ] 新域名可访问，HTTPS 证书就绪，不出安全警告
+- [ ] 若最终使用的 A 值不是 Vercel 推荐值，确认 HTTPS 证书能正常签发与续期，并记录确认方式
 - [ ] G-07 的限流在新域名上确认仍然生效（发请求触发一次，看到拦截）
 - [ ] 旧域名按上面第 3 点确定的方案处置，行为与决定一致
 - [ ] 运行时代码、`next.config.ts`、Vercel 环境变量中不存在硬编码的旧域名或站点绝对 URL

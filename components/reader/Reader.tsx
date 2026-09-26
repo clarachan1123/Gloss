@@ -779,7 +779,7 @@ export default function Reader({ docId }: { docId: string }) {
     }
   }, [activeSavedIndex, expandedSavedIndex, explainViews, expansion, gloss, glossShape, measuringParaIndex, readingMode, savedRegions]);
 
-  // 收起条件：点别处、Esc（PRD 3.7）、该句滚出视口（G3）
+  // 收起条件：点别处、Esc，以及原句与撑开区都离开视口（G-46）。
   useEffect(() => {
     const body = bodyRef.current;
     const activeIndexForDismiss = expansion?.index ?? activeSavedIndex;
@@ -799,29 +799,43 @@ export default function Reader({ docId }: { docId: string }) {
       if (event.key === "Escape") dismiss();
     };
 
-    const visible = new Set<Element>();
-    let initialized = false;
-    const observer = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) visible.add(entry.target);
-        else visible.delete(entry.target);
-      }
-      if (initialized && visible.size === 0) {
-        if (activeSavedIndex !== null) commitSaved(null);
-        else collapse(false);
-      }
-      initialized = true;
-    });
-    body.querySelectorAll(`[data-index="${activeIndexForDismiss}"]`).forEach((span) => observer.observe(span));
-
     document.addEventListener("click", onDocumentClick);
     document.addEventListener("keydown", onKeyDown);
     return () => {
-      observer.disconnect();
       document.removeEventListener("click", onDocumentClick);
       document.removeEventListener("keydown", onKeyDown);
     };
   });
+
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    const activeIndexForDismiss = expansion?.index ?? activeSavedIndex;
+    if (activeIndexForDismiss === null || !body) return;
+    const source = [...body.querySelectorAll<HTMLElement>(`[data-index="${activeIndexForDismiss}"]`)];
+    const panel = body.querySelector<HTMLElement>(`.gloss-panel[data-sentence-index="${activeIndexForDismiss}"]`);
+    if (source.length === 0 || !panel) return;
+
+    // A fresh observer can report the sentence before the panel. Unknown is not invisible.
+    const visibility = new Map<Element, boolean | null>([...source, panel].map((node) => [node, null]));
+    let disconnected = false;
+    let dismissed = false;
+    const observer = new IntersectionObserver((entries) => {
+      if (disconnected || dismissed) return;
+      for (const entry of entries) {
+        if (visibility.has(entry.target)) visibility.set(entry.target, entry.isIntersecting);
+      }
+      if (allObservedTargetsOutside(visibility.values())) {
+        dismissed = true;
+        if (activeSavedIndex !== null) commitSaved(null);
+        else collapse(false);
+      }
+    });
+    for (const node of visibility.keys()) observer.observe(node);
+    return () => {
+      disconnected = true;
+      observer.disconnect();
+    };
+  }, [activeSavedIndex, docId, expandedSavedIndex, expansion, readingMode, retryCount, savedRegions]);
 
   useEffect(
     () => () => {
@@ -1295,6 +1309,11 @@ export function anchorScrollDelta(previousViewportTop: number, nextViewportTop: 
 /** 功能一与功能二共用：整块面板离开视口上方后才补偿正文字符锚点。 */
 export function shouldAnchorPanelGrowth(panelBottom: number): boolean {
   return panelBottom <= 0;
+}
+
+export function allObservedTargetsOutside(visibility: Iterable<boolean | null>): boolean {
+  const values = [...visibility];
+  return values.length > 0 && values.every((visible) => visible === false);
 }
 
 function panelGrowthAnchor(body: HTMLElement, panel: HTMLElement): CharAnchor | null {

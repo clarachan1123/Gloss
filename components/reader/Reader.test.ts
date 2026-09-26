@@ -3,7 +3,16 @@ import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadSavedGlosses } from "@/lib/storage";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import { anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+import { allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+
+describe("G-46 observer 初始化", () => {
+  it("只收到原句离屏结果时不收起；确认面板也离屏才收起", () => {
+    expect(allObservedTargetsOutside([false, null])).toBe(false);
+    expect(allObservedTargetsOutside([false, true])).toBe(false);
+    expect(allObservedTargetsOutside([false, false])).toBe(true);
+    expect(allObservedTargetsOutside([])).toBe(false);
+  });
+});
 
 describe("G-10a 取消保存", () => {
   it("保留当前显示文本为会话内存命中：取消后不需要发请求", () => {

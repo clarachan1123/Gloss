@@ -385,14 +385,40 @@ gloss/
 
 **可验证增量**：右键呼出菜单，点「翻错了」上报成功，**撑开区保持打开，阅读不被打断**。
 
-**验收**
-- [ ] 右键菜单含：听不懂 / 翻错了 / 查看上下文原文（后者仅覆盖模式下出现）
-- [ ] 上报内容：句 hash + 原句 + 白话 + 输出类型 + 时间戳
-- [ ] **上报后撑开区保持打开**
-- [ ] 隐私说明中明示「翻错了」会携带原句明文
+**已定产品决定（Clara，2026-09-26）**
 
-**会改**：`components/reader/ContextMenu.tsx`、`app/api/report/route.ts`、`lib/analytics.ts`
-**不改**：`components/reader/GlossPanel.tsx`
+1. **存储**：Upstash Redis，经 Vercel Storage / Marketplace 接入；G-12 与 G-15 共用。
+2. **原句明文**：只存必要字段；每条 TTL 为 60 天（5,184,000 秒）作兜底。提供本地 `scripts/report-feedback.mjs export|purge` 删除路径：`export` 导出 JSON 到 gitignore 的 `report-exports/`；`purge` 删除全部本卡上报键且只打印删除条数。W4 导出分析完即 purge。
+3. **最终上报字段只有**：`hash`、`sentence`、`gloss`、`result`、`promptVersion`、`createdAt`。`createdAt` 由服务端生成。句 hash 为原句 SHA-256；`gloss` 保留含 `⟦⟧` 定界符的原始白话。
+   - `result` 仅为 `done` 或 `refused`；拒答时 `gloss` 为空字符串。
+   - `promptVersion`：本会话生成和当前版本自动缓存预载的白话记 `GLOSS_PROMPT_VERSION`；来自 localStorage 已保存记录的白话记 `null`，不以当前常量冒充历史版本。
+   - 本轮核对：Reader 发往 `/api/gloss` 的请求不带 `X-Gloss-Prompt`（`lib/gloss-client.ts:62–66`）；自动缓存仅在 `runtime.promptVersion` 与当前版本一致时命中（`lib/cache.ts:126–135`，版本比较在第 131 行）。
+   - 不存 IP、UA、docId、书名、上下文句子或任何读者标识。
+   - **取消「输出类型」字段**：G-08 的三类是同一句白话的三种要求，不是互斥类别；分类标签不存在。PRD 4.1 的 `gloss_complete` 与 PRD 3.8 本轮不修改。
+4. **隐私告知**：「翻错了」下常驻灰色小字，固定为「会把这句原文和白话发给开发者」；不加字，不做首次确认。
+5. **菜单项**：「听不懂」「翻错了」。覆盖模式尚未实现，本卡不渲染「查看上下文原文」，也不留占位。
+6. **右键接管范围**：撑开区当前打开句子的原句与撑开区（任何功能一状态），以及 G-10b 常驻白话的原句与白话框。菜单项按状态置灰；其他位置保留浏览器原生菜单。
+7. **状态分离与定位**：沿用 G-44 的独立 menuId 思路，右键只开菜单，不改变选中或撑开状态。菜单留出鼠标落点间隔并限制在视口内，不盖住落点。
+8. **关闭行为**：点菜单外、按 Esc、滚动只关闭菜单，不收起撑开区；撑开区自动收起时菜单随之关闭。
+9. **「翻错了」可用条件**：功能一生成完成，或以 C6 拒答结束（白话为空、结果记 `refused`）。生成中和其他失败状态置灰。同一句在本次页面会话报过后显示「已报告」并置灰；不持久化该状态。
+10. **反馈与视口**：上报后撑开区保持打开，被点行及可见内容位移为 0。成功或失败反馈用 portal 固定定位，不改变文档高度。失败（含 WAF 403）显示一句白话中文提示，不给重试按钮。
+11. **「听不懂」**：菜单项与操作行同一行为，使用 `aria-disabled` 而非原生 `disabled`；功能二已用时点击派发 `deep_explain_blocked`，不发请求。
+12. **埋点**：不新建 `lib/analytics.ts`。沿用 `Reader.tsx` 的 `gloss:analytics` CustomEvent；`report_error_click` 只带句序号、不带原文；`deep_explain_click` 带触发来源「右键」。后台接入属于 G-15。
+
+**验收**
+- [ ] S1 右键撑开中的句子：出现 Gloss 菜单，撑开区不收起、不切换；菜单不盖住鼠标落点；同一位置连续右键 20 次，每次都出现菜单。
+- [ ] S2 菜单打开时，点菜单外、按 Esc、滚动，都只关闭菜单，撑开区仍打开。
+- [ ] S3 分别在上报成功、上报失败（无凭据 503）、打开再关闭菜单三种情况下，各量 5 次被点行 `getBoundingClientRect().top` 的前后差值，带符号列出，全部为 0。
+- [ ] S4 状态置灰：`loading`、`streaming` 下「翻错了」为灰；`done` 可点；`refused` 可点且 `gloss` 为空；其他失败为灰；同句报过一次后显示「已报告」。
+- [ ] S5 非接管位置（未撑开的句子、侧栏）右键仍是浏览器原生菜单；待 Clara 亲验。
+- [ ] S6 `/api/report` 单元测试覆盖合法写入、缺字段、超长、非法 `result`、无凭据 503；全部使用模拟存储，真实写入 0 次。
+- [ ] S7 本地起服务使用无效 DeepSeek key，先确认服务端日志为 HTTP 401，再开始普通测试。
+- [ ] 真实链路：浏览器端上报 → `/api/report` → Upstash 写入 1 条，字段核对无误后 purge。
+- [ ] 上报字段、隐私告知、TTL、导出和 purge 与以上决定一致。
+- [ ] **上报后撑开区保持打开，视口不动**。
+
+**会改**：`components/reader/Reader.tsx`、`components/reader/ContextMenu.tsx`、`app/api/report/route.ts`、`app/api/report/route.test.ts`、`styles/reader.css`、`scripts/report-feedback.mjs`、`.gitignore`、`package.json`、`package-lock.json`、`KANBAN.md`
+**不改**：`components/reader/GlossPanel.tsx`、`components/reader/ActionRow.tsx`、`lib/gloss-client.ts`、`lib/storage.ts`、`PRD.md`；不新增 `lib/analytics.ts`。部署期间前后端版本不一致导致的提示词版本差异本卡不处理。
 **回滚**：`git revert`
 
 ---

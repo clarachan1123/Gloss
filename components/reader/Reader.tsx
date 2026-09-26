@@ -14,6 +14,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type Ref,
 } from "react";
+import ContextMenu, { type ContextMenuPoint } from "@/components/reader/ContextMenu";
 import Notice from "@/components/Notice";
 import SettingsPanel from "@/components/settings/SettingsPanel";
 import {
@@ -21,13 +22,14 @@ import {
   mergePreloadedGlosses,
   preloadGlossCache,
   saveGlossCache,
+  sha256,
   type MemoryGloss,
 } from "@/lib/cache";
 import { MAX_AFTER, MAX_BEFORE, MAX_EXPLAIN_CONTEXT_CHARS } from "@/lib/context";
 import { streamExplain, type ExplainInput } from "@/lib/explain-client";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
 import { countChars, skippedSummary, type ParsedHeading } from "@/lib/parse/validate";
-import { TERM_CLOSE, TERM_OPEN } from "@/lib/prompts/gloss";
+import { GLOSS_PROMPT_VERSION, TERM_CLOSE, TERM_OPEN } from "@/lib/prompts/gloss";
 import { STRUCTURE_PROMPT_VERSION } from "@/lib/prompts/structure";
 import { segmentParagraphs, type Sentence as SentenceData } from "@/lib/segment";
 import {
@@ -155,6 +157,11 @@ interface Animation {
   timer?: number;
 }
 
+interface ReaderContextMenu {
+  index: number;
+  point: ContextMenuPoint;
+}
+
 const EMPTY_SAVED_GLOSSES = new Map<number, SavedGloss>();
 const EMPTY_EXPLAIN_VIEWS = new Map<number, ExplainView>();
 const GLOSS_SHAPE_KEY = "gloss:settings:gloss-shape";
@@ -197,9 +204,15 @@ export default function Reader({ docId }: { docId: string }) {
   const [expandedSavedIndex, setExpandedSavedIndex] = useState<number | null>(null);
   const [glossShape, setGlossShape] = useState<GlossShape>("inline");
   const [readingMode, setReadingMode] = useState<ReadingMode>("reading");
+  const [contextMenu, setContextMenu] = useState<ReaderContextMenu | null>(null);
+  const [reportedIndexes, setReportedIndexes] = useState<ReadonlySet<number>>(() => new Set());
+  const [reportPendingIndex, setReportPendingIndex] = useState<number | null>(null);
+  const [reportFeedback, setReportFeedback] = useState<string | null>(null);
   const [fontsReady, setFontsReady] = useState(false);
   const bodyRef = useRef<HTMLElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<ReaderContextMenu | null>(null);
+  const suppressOutsideClickRef = useRef(false);
   const positionRef = useRef<PositionAnchor>({ index: 0, offset: 0, layout: "", measure: "" });
   const transactionRef = useRef<Transaction | null>(null);
   const growthAnchorRef = useRef<{ index: number; panel: HTMLElement; anchor: CharAnchor; scrollY: number } | null>(null);
@@ -235,6 +248,56 @@ export default function Reader({ docId }: { docId: string }) {
   /** 全书结构摘要；开书时后台算，算好之前为 null */
   const structureRef = useRef<string | null>(null);
   const cachePreloadTokenRef = useRef(0);
+
+  contextMenuRef.current = contextMenu;
+
+  useEffect(() => {
+    setReportedIndexes(new Set());
+    setReportPendingIndex(null);
+    setReportFeedback(null);
+    closeContextMenu();
+  }, [docId]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!contextMenuRef.current || event.button !== 0) return;
+      const menu = document.querySelector<HTMLElement>(".reader-context-menu");
+      if (menu?.contains(event.target as Node)) return;
+      suppressOutsideClickRef.current = true;
+      closeContextMenu();
+    };
+    const onClick = (event: MouseEvent) => {
+      if (!suppressOutsideClickRef.current) return;
+      suppressOutsideClickRef.current = false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    const onContextMenu = () => {
+      if (contextMenuRef.current) closeContextMenu();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !contextMenuRef.current) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeContextMenu();
+    };
+    const onScroll = () => {
+      if (contextMenuRef.current) closeContextMenu();
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("click", onClick, true);
+    document.addEventListener("contextmenu", onContextMenu, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("contextmenu", onContextMenu, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -589,6 +652,7 @@ export default function Reader({ docId }: { docId: string }) {
    * 提交后、绘制前由下方的事务把它滚回原位。
    */
   function commit(next: Expansion | null, options: { anchor?: CharAnchor | null; animateOpen?: boolean } = {}) {
+    if (!next || (contextMenuRef.current && contextMenuRef.current.index !== next.index)) closeContextMenu();
     const body = bodyRef.current;
     transactionRef.current = {
       anchor: options.anchor ?? (body ? anchorAtViewportTop(body) : null),
@@ -599,6 +663,7 @@ export default function Reader({ docId }: { docId: string }) {
   }
 
   function commitSaved(index: number | null, options: { anchor?: CharAnchor | null } = {}) {
+    closeContextMenu();
     const body = bodyRef.current;
     transactionRef.current = {
       anchor: options.anchor ?? (body ? anchorAtViewportTop(body) : null),
@@ -609,6 +674,7 @@ export default function Reader({ docId }: { docId: string }) {
   }
 
   function expandSaved(index: number, options: { anchor?: CharAnchor | null; showActions?: boolean } = {}) {
+    closeContextMenu();
     const body = bodyRef.current;
     transactionRef.current = {
       anchor: options.anchor ?? (body ? anchorAtViewportTop(body) : null),
@@ -617,6 +683,34 @@ export default function Reader({ docId }: { docId: string }) {
     setExpansion(null);
     setExpandedSavedIndex(index);
     setActiveSavedIndex(options.showActions ? index : null);
+  }
+
+  function closeContextMenu() {
+    contextMenuRef.current = null;
+    setContextMenu(null);
+  }
+
+  function handleReaderContextMenu(event: ReactMouseEvent<HTMLElement>) {
+    const eventTarget = event.target;
+    const target = eventTarget instanceof Element ? eventTarget : eventTarget instanceof Node ? eventTarget.parentElement : null;
+    if (!target) return;
+    const sentenceTarget = target.closest<HTMLElement>(".sentence");
+    const panelTarget = target.closest<HTMLElement>(".gloss-panel");
+    if (!sentenceTarget && !panelTarget) return;
+    const index = Number(panelTarget?.dataset.sentenceIndex ?? sentenceTarget?.dataset.index);
+    if (!Number.isInteger(index) || index < 0) return;
+
+    const transientVisible = expansion?.index === index;
+    const savedVisible = savedRegions?.has(index) === true &&
+      (readingMode === "review" || expandedSavedIndex === index || activeSavedIndex === index);
+    if (!transientVisible && !savedVisible) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const next = { index, point: { x: event.clientX, y: event.clientY } };
+    contextMenuRef.current = next;
+    setContextMenu(next);
+    setReportFeedback(null);
   }
 
   function open(index: number, target: HTMLElement, clientX: number, clientY: number) {
@@ -656,6 +750,7 @@ export default function Reader({ docId }: { docId: string }) {
   }
 
   function collapse(animate: boolean) {
+    closeContextMenu();
     const panel = panelRef.current;
     if (!expansion || !panel || collapseTimerRef.current !== undefined) return;
 
@@ -903,6 +998,13 @@ export default function Reader({ docId }: { docId: string }) {
   // 撑开一句就请求它的白话；收起、切换句子、离开页面时中止（D3 / D4）
   const activeIndex = expansion?.index ?? null;
   useEffect(() => {
+    if (!contextMenu || expansion?.index === contextMenu.index) return;
+    const savedVisible = savedRegions?.has(contextMenu.index) === true &&
+      (readingMode === "review" || expandedSavedIndex === contextMenu.index || activeSavedIndex === contextMenu.index);
+    if (!savedVisible) closeContextMenu();
+  }, [activeSavedIndex, contextMenu, expandedSavedIndex, expansion, readingMode, savedRegions]);
+
+  useEffect(() => {
     if (activeIndex === null) return;
     // 保存区优先于预载缓存；命中时既不读缓存，也不请求接口。
     if (savedGlossesRef.current.has(activeIndex)) return;
@@ -1031,6 +1133,78 @@ export default function Reader({ docId }: { docId: string }) {
       detail: { event: "deep_explain_blocked", sentenceIndex: index },
     }));
   }, []);
+
+  function reportViewFor(index: number): GlossView | null {
+    const saved = savedGlosses.get(index);
+    if (saved) return { status: "done", text: saved.text, failure: null, instant: true };
+    if (gloss?.index === index) return gloss.view;
+    const remembered = glossMemoRef.current.get(index);
+    if (remembered) return { status: "done", text: remembered.text, failure: null, instant: true };
+    return null;
+  }
+
+  function reportCandidateFor(index: number) {
+    const sentence = sentences[index];
+    const view = reportViewFor(index);
+    if (!sentence || !view) return null;
+    if (view.status === "done") {
+      return {
+        sentence: sentence.text,
+        gloss: view.text,
+        result: "done" as const,
+        promptVersion: savedGlosses.has(index) ? null : GLOSS_PROMPT_VERSION,
+      };
+    }
+    if (view.status === "failed" && view.failure === "refused") {
+      return { sentence: sentence.text, gloss: "", result: "refused" as const, promptVersion: GLOSS_PROMPT_VERSION };
+    }
+    return null;
+  }
+
+  async function reportErrorFor(index: number) {
+    if (reportedIndexes.has(index) || reportPendingIndex === index) return;
+    const candidate = reportCandidateFor(index);
+    if (!candidate) return;
+    setReportPendingIndex(index);
+    setReportFeedback(null);
+    window.dispatchEvent(new CustomEvent("gloss:analytics", {
+      detail: { event: "report_error_click", sentenceIndex: index },
+    }));
+    try {
+      const hash = await sha256(candidate.sentence);
+      const response = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hash, ...candidate }),
+      });
+      if (!response.ok) {
+        setReportFeedback("反馈未能提交，请稍后再试。");
+        return;
+      }
+      setReportedIndexes((current) => new Set(current).add(index));
+      setReportFeedback("已收到反馈。");
+    } catch {
+      setReportFeedback("反馈未能提交，请稍后再试。");
+    } finally {
+      setReportPendingIndex(null);
+    }
+  }
+
+  function explainFromContextMenu(index: number) {
+    const glossView = reportViewFor(index);
+    if (!glossView || (glossView.status !== "done" && glossView.status !== "failed")) return;
+    const status = explainViews.get(index)?.status ?? "idle";
+    if (status === "done") {
+      recordExplainBlocked(index);
+      return;
+    }
+    if (status === "loading" || status === "streaming") return;
+    window.dispatchEvent(new CustomEvent("gloss:analytics", {
+      detail: { event: "deep_explain_click", sentenceIndex: index, source: "右键" },
+    }));
+    closeContextMenu();
+    startExplainFor(index);
+  }
 
   const glossView = gloss && gloss.index === activeIndex ? gloss.view : LOADING_VIEW;
   saveContextRef.current = { activeIndex, docId, expansion, glossView, readingMode, savedGlosses, savedRegions, sentences };
@@ -1244,6 +1418,7 @@ export default function Reader({ docId }: { docId: string }) {
             className={measuringSavedLayout ? "reader-body reader-body-measuring" : "reader-body"}
             lang="zh-CN"
             onClick={handleBodyClick}
+            onContextMenu={handleReaderContextMenu}
           >
             {doc.paragraphs.map((_, paraIndex) => {
               return (
@@ -1287,6 +1462,19 @@ export default function Reader({ docId }: { docId: string }) {
       <aside className="col col-right" aria-labelledby="settings-title">
           <SettingsPanel glossShape={glossShape} onGlossShapeChange={changeGlossShape} />
       </aside>
+      {contextMenu && (
+        <ContextMenu
+          point={contextMenu.point}
+          explainStatus={explainViews.get(contextMenu.index)?.status ?? "idle"}
+          reportDisabled={!reportCandidateFor(contextMenu.index)}
+          reported={reportedIndexes.has(contextMenu.index)}
+          reportPending={reportPendingIndex === contextMenu.index}
+          feedback={reportFeedback}
+          onExplain={() => explainFromContextMenu(contextMenu.index)}
+          onExplainBlocked={() => recordExplainBlocked(contextMenu.index)}
+          onReport={() => void reportErrorFor(contextMenu.index)}
+        />
+      )}
     </div>
   );
 }

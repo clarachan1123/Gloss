@@ -653,7 +653,15 @@ gloss/
 
 **线上限流实测（Codex，2026-09-26，新域名）**：同一客户端在约 14 秒内向 `https://withglossline.com/api/gloss` 顺序 POST 31 次，统一请求体 `{"sentence":""}`；第 01–30 次均为 400，第 31 次为 WAF 403，无提前拦截或补跑。空句在 `parseGlossRequest` 即被拒，未进入模型调用路径；本次测试据代码可确认真实模型调用 0 次、估算费用 ¥0，未从 DeepSeek 后台独立核对账单。
 
-**环境变量截图范围（Clara，2026-09-26）**：Vercel Environment Variables 的 Shared 页显示 `No shared variables linked`；截图未展示 Project 页，因此项目自定义变量中是否存在旧域名或站点绝对 URL 仍待 Clara 核对。运行时代码与 `next.config.ts` 已由 Codex 核对，未发现旧域名或站点绝对 URL。
+**环境变量截图核对（Clara 提供，2026-09-26）**：Vercel Settings → Environment Variables 筛选 Production 后，Project 页仅有 `DEEPSEEK_API_KEY`，没有网址型变量；Shared 页显示 `No shared variables linked`。此结论依据 Clara 提供的截图，不是 Codex 登录后台核查。运行时代码与 `next.config.ts` 已由 Codex 核对，未发现旧域名或站点绝对 URL。
+
+**最终生效 DNS 配置（Clara，2026-09-26）**：
+
+| 记录类型 | 主机记录 | 解析线路 | 记录值 |
+|---|---|---|---|
+| A | @ | 默认 | 76.223.126.88 |
+| A | @ | 境外 | 216.198.79.1 |
+| CNAME | www | 默认 | 41ce1b14af2b3a28.vercel-dns-017.com |
 
 1. 第一步在阿里云增加下表两条记录，TTL 均取阿里云允许的最短值。改动前后各记录一次 Vercel 域名状态和 HTTPS 状态；等到 Valid Configuration 与证书就绪，停下让 Clara 用大陆裸网手机流量测试 `https://withglossline.com`。若已可访问，第二步不做，`76.223.126.88` 不上线，直接进入验收。
 
@@ -682,12 +690,11 @@ gloss/
 
 **验收**
 - [x] 新域名可访问，HTTPS 证书就绪，不出安全警告——Clara 在大陆家庭宽带 Wi-Fi、手机流量均正常打开；Codex 严格证书链校验无错误，见上方证书记录
-- [ ] 若最终使用的 A 值不是 Vercel 推荐值，确认 HTTPS 证书能正常签发与续期，并记录确认方式
 - [x] G-07 的限流在新域名上确认仍然生效（发请求触发一次，看到拦截）——Codex 线上实测 01–30 为 400、31 为 403，见上方记录
 - [ ] `www.withglossline.com` 在大陆网络下以 308 跳转到 apex——待 Clara 实测
-- [ ] 旧域名按上面第 3 点确定的方案处置，行为与决定一致
-- [ ] 运行时代码、`next.config.ts`、Vercel 环境变量中不存在硬编码的旧域名或站点绝对 URL
-     （KANBAN、HANDOFF 等历史文档中的旧域名属于记录，不在本条范围内）
+- [x] 旧域名按上面第 3 点确定的方案处置，行为与决定一致——Clara 提供的 Vercel Domains 截图显示旧域名仍绑定且为 Valid Configuration；已决定保留，不设跳转
+- [x] 运行时代码、`next.config.ts`、Vercel 环境变量中不存在硬编码的旧域名或站点绝对 URL
+     （KANBAN、HANDOFF 等历史文档中的旧域名属于记录，不在本条范围内）——代码与配置由 Codex 核对；Production 与 Shared 环境变量依据 2026-09-26 Clara 提供的截图
 
 ---
 
@@ -737,6 +744,7 @@ gloss/
 |---|---|---|
 | WAF 限流按 IP 计数 | 共用出口 IP 的读者（校园网、公司网络、运营商共享地址）共享 10 分钟 30 次的额度，几个人同时读会很快被拦 | 暂不改（Hobby 只有一条规则，放宽会让单个 IP 的最坏花费同比例翻倍）。**G-15 做用量显示时重新评估** |
 | 大陆可达性依赖 `76.223.126.88`，这不是 Vercel 当前推荐的 A 值 | 该 IP 被封或下线时，大陆读者会突然全部打不开，且不会有任何告警 | W4 期间每周由 Clara 用大陆手机流量复测一次可达性；失效时按 G-45 的 Plan B 表处置，不再试别的 IP |
+| 大陆线路用的 `76.223.126.88` 不是 Vercel 推荐的 A 值，Domains 状态与证书续期的关系未经历过一次实际续期 | 若续期因此失败，大陆与境外读者会同时遇到 HTTPS 警告或打不开 | 当前证书有效期至 2026-12-25。2026-12-10 前由 Clara 检查一次证书是否已自动续期；未续期则立即把默认线路改回 `216.198.79.1` 恢复推荐配置，再另行处理大陆可达性 |
 
 ---
 

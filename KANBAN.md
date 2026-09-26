@@ -643,10 +643,25 @@ gloss/
 **已决定（2026-09-26）**：旧域名 gloss-jet.vercel.app 保留可访问，不设 301。
 连不上旧域名的访问者收不到跳转，301 救不了这部分访问；保留旧域名给 Clara 留下读取旧来源数据的入口。
 
-**执行停点**：Clara 先从 Vercel 项目 Settings → Domains 取得 withglossline.com 的实际 A 记录值，Codex 先贴出该值供 Clara 核对；核对前不配置 DNS。Clara 自行操作 Vercel 和阿里云后台。
+**Domains 取值（2026-09-26，来源：Clara 核对的 Vercel 项目 Domains 页面）**：
+- `withglossline.com` → `A / @ / 216.198.79.1`
+- `www.withglossline.com` → `CNAME / www / 41ce1b14af2b3a28.vercel-dns-017.com`
+- 页面同时说明 legacy 记录 `cname.vercel-dns.com` 和 `76.76.21.21` 仍然可用；本轮不用 legacy 值替代项目给出的值。
 
-1. 第一步只在阿里云增加 `@ / A / 默认 / <Vercel 项目 Domains 页面给出的实际 A 值>`，TTL 取阿里云允许的最短值。改动前后各记录一次 Vercel 域名状态和 HTTPS 状态；等到 Valid Configuration 与证书就绪，停下让 Clara 用大陆裸网手机流量测试 `https://withglossline.com`。若已可访问，第二步不做，`76.223.126.88` 不上线，直接进入验收。
-2. 仅当第一步不通：添加 `@ / A / 境外 / <同一项目 A 值>`，再把「默认」线路记录值改为 `76.223.126.88`。改动前后各记录一次 Vercel 域名状态和 HTTPS 状态；停下让 Clara 再测一次。仍不通就把「默认」线路恢复为项目 A 值，进入 Plan B 讨论，不再试其他 IP。
+**已决定（2026-09-26）**：以 apex `withglossline.com` 为主域名，`www.withglossline.com` 在 Vercel 侧做 301/308 跳转到 apex。大陆线路的可控点在 A 记录，可按解析线路指向不同 IP；www 的 CNAME 不便分流。
+
+**执行停点**：Clara 先完成 Vercel 的跳转方向调整并提供截图；Codex 核对后再给阿里云操作步骤。截图到来前不动 DNS。Clara 自行操作 Vercel 和阿里云后台。
+
+1. 第一步在阿里云增加下表两条记录，TTL 均取阿里云允许的最短值。改动前后各记录一次 Vercel 域名状态和 HTTPS 状态；等到 Valid Configuration 与证书就绪，停下让 Clara 用大陆裸网手机流量测试 `https://withglossline.com`。若已可访问，第二步不做，`76.223.126.88` 不上线，直接进入验收。
+
+   | 记录类型 | 主机记录 | 解析线路 | 记录值 | TTL |
+   |---|---|---|---|---|
+   | A | @ | 默认 | 216.198.79.1 | 最短 TTL |
+   | CNAME | www | 默认 | 41ce1b14af2b3a28.vercel-dns-017.com | 最短 TTL |
+
+2. 仅当第一步不通：添加 `@ / A / 境外 / 216.198.79.1`，再只把现有 `@ / A / 默认` 的记录值改为 `76.223.126.88`；`www / CNAME / 默认 / 41ce1b14af2b3a28.vercel-dns-017.com` 不动。改动前后各记录一次 Vercel 域名状态和 HTTPS 状态；停下让 Clara 再测一次。仍不通就把 `@ / A / 默认` 恢复为 `216.198.79.1`，进入 Plan B 讨论，不再试其他 IP。
+
+**未验证**：`76.223.126.88` 属于先前记录的旧 IP 段，当前项目 Domains 页面给出的是 `216.198.79.1`。两者是否指向同一套 Vercel 边缘网络，说不准；第一步先实测当前项目 IP 在中国大陆能否访问，不据旧 IP 推断结果。
 
 **开工时必须先核对的四件事**（复述阶段回答，不要边做边发现）
 1. G-07 的服务端 IP 级速率限制绑在哪一层：Vercel 项目还是具体域名。换域名后是否自动跟随。

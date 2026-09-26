@@ -22,6 +22,10 @@
    确认返回的是认证失败（服务端日志里是 `HTTP 401`）而不是正常结果，再开始测。
    只有明确需要真实生成的测试才用真 key 启动，并且事先在报告里说明。
    依据：G-02B 浏览器实测时，文档打开后阅读器自动请求结构摘要，真实调用 1 次（第二次误触发）。
+7. **不碰 Clara 的验证工作区**：`C:\Users\23750\projects\gloss-verify` 是 Clara 亲验专用的
+   git worktree，Codex 不在其中执行任何命令，也不移除它。主仓库目录的分支切换会热重载
+   Clara 正在跑的 dev server，导致她验的不是目标分支的代码。
+   依据：2026-09-26 G-44 亲验时，共享工作区切换分支使 Clara 的整轮验证作废。
 
 ---
 
@@ -612,18 +616,6 @@ gloss/
 
 ---
 
-### G-44 · 展开的封面无法右键
-**P1** ｜ 分支待定
-
-> Clara 2026-09-21 实机发现：hover 展开后封面盖住书脊，右键落在封面上出现浏览器菜单，换色和移除入口不可达。
-
-**验收**
-- [ ] 展开的封面支持与书脊相同的右键菜单，仍可换色与移除，不弹浏览器默认菜单
-
-**回滚**：`git revert`
-
----
-
 ### G-45 · 自定义域名上线
 **P0 · 立即** ｜ 依赖 G-07 ｜ 分支待定
 
@@ -654,10 +646,14 @@ gloss/
 - Vercel 跳转方向已改：`withglossline.com` 直连 Production，`www.withglossline.com` 以 308 跳转到 apex。
 - 阿里云第一步的两条记录已添加；Vercel 两行域名状态均为 Valid Configuration。此记录未确认 HTTPS 证书状态。
 - 测试网络为中国大陆手机流量、无代理：`https://withglossline.com` 打不开，浏览器报 `ERR_CONNECTION_RESET`；同一网络下 `Resolve-DnsName` 查到的 A 记录是 `216.198.79.1`。DNS 解析已指向项目给出的 IP，但该网络上的连接被重置。第一步未通过。
-- 第二步已配置：`@ / A / 默认 = 76.223.126.88`、`@ / A / 境外 = 216.198.79.1`，`www` 的 CNAME 不动。Clara 在中国大陆家庭宽带 Wi-Fi 和中国大陆手机流量下均可正常打开 `https://withglossline.com`。Vercel Domains 的第二步状态待 Clara 回报。
+- 第二步已配置：`@ / A / 默认 = 76.223.126.88`、`@ / A / 境外 = 216.198.79.1`，`www` 的 CNAME 不动。Clara 在中国大陆家庭宽带 Wi-Fi 和中国大陆手机流量下均可正常打开 `https://withglossline.com`。Clara 提供的第二步 Vercel Domains 截图显示 `withglossline.com`、`www.withglossline.com`、`gloss-jet.vercel.app` 三行均为 Valid Configuration。
 - 归因（Clara 实测，2026-09-26）：第一步 `@ / A / 默认 = 216.198.79.1` 时大陆手机流量报 `ERR_CONNECTION_RESET`；第二步换 IP 后可访问。刚改完时手机流量仍报 RESET，清掉手机 DNS 缓存后即通，属于客户端缓存，不是第二步方案无效。将来再次失效时，先核对实际解析 IP 与缓存，再判断线路故障。
 
 **公开 HTTPS 核验（Codex，2026-09-26）**：`https://withglossline.com` 返回 HTTP 200；严格 TLS 证书链校验无错误（`SslPolicyErrors.None`）。证书主体 `CN=withglossline.com`，签发方 `CN=YR2, O=Let's Encrypt, C=US`，有效期为北京时间 2026-09-26 17:05:04 至 2026-12-25 17:05:03。当前证书可用；在非推荐 A 值下将来能否正常续期尚未验证。
+
+**线上限流实测（Codex，2026-09-26，新域名）**：同一客户端在约 14 秒内向 `https://withglossline.com/api/gloss` 顺序 POST 31 次，统一请求体 `{"sentence":""}`；第 01–30 次均为 400，第 31 次为 WAF 403，无提前拦截或补跑。空句在 `parseGlossRequest` 即被拒，未进入模型调用路径；本次测试据代码可确认真实模型调用 0 次、估算费用 ¥0，未从 DeepSeek 后台独立核对账单。
+
+**环境变量截图范围（Clara，2026-09-26）**：Vercel Environment Variables 的 Shared 页显示 `No shared variables linked`；截图未展示 Project 页，因此项目自定义变量中是否存在旧域名或站点绝对 URL 仍待 Clara 核对。运行时代码与 `next.config.ts` 已由 Codex 核对，未发现旧域名或站点绝对 URL。
 
 1. 第一步在阿里云增加下表两条记录，TTL 均取阿里云允许的最短值。改动前后各记录一次 Vercel 域名状态和 HTTPS 状态；等到 Valid Configuration 与证书就绪，停下让 Clara 用大陆裸网手机流量测试 `https://withglossline.com`。若已可访问，第二步不做，`76.223.126.88` 不上线，直接进入验收。
 
@@ -687,7 +683,7 @@ gloss/
 **验收**
 - [x] 新域名可访问，HTTPS 证书就绪，不出安全警告——Clara 在大陆家庭宽带 Wi-Fi、手机流量均正常打开；Codex 严格证书链校验无错误，见上方证书记录
 - [ ] 若最终使用的 A 值不是 Vercel 推荐值，确认 HTTPS 证书能正常签发与续期，并记录确认方式
-- [ ] G-07 的限流在新域名上确认仍然生效（发请求触发一次，看到拦截）
+- [x] G-07 的限流在新域名上确认仍然生效（发请求触发一次，看到拦截）——Codex 线上实测 01–30 为 400、31 为 403，见上方记录
 - [ ] `www.withglossline.com` 在大陆网络下以 308 跳转到 apex——待 Clara 实测
 - [ ] 旧域名按上面第 3 点确定的方案处置，行为与决定一致
 - [ ] 运行时代码、`next.config.ts`、Vercel 环境变量中不存在硬编码的旧域名或站点绝对 URL
@@ -747,6 +743,30 @@ gloss/
 ## ✅ Done
 
 _（完成的 issue 移到这里，保留验收清单）_
+### G-44 · 展开的封面无法右键
+**P1** ｜ 分支 `codex/g44-cover-context-menu` ｜ 代码 commit `02774237ac25cc6f4f34a2593a5f6980a32c311c` ｜ 合并 commit `6755fcd` ｜ Clara 亲验完成：2026-09-26
+
+> Clara 2026-09-21 实机发现：hover 展开后封面盖住书脊，右键落在封面上出现浏览器菜单，换色和移除入口不可达。
+
+**验收（Clara 亲验：2026-09-26，gloss-verify 工作区，commit `0277423`）**
+- [x] 封面右键出现 Gloss 菜单，不出现浏览器默认菜单——Clara 亲验
+- [x] 同一位置连续右键稳定——Clara 亲验；Codex 隔离浏览器回放 20/20
+- [x] 右键不弹出详情卡——Clara 亲验
+- [x] 菜单关闭后鼠标不在原书上，封面收起；hover 其他书再移开，没有书弹回展开态——Clara 亲验
+- [x] 菜单关闭时鼠标仍在原书上，封面保持展开，移开后才收起——Clara 亲验
+- [x] 左键点封面进入阅读，右键不进入——Clara 亲验；左键点书脊的原有选中行为由 Codex 回放验证
+- [x] 换色后刷新仍保留——Clara 亲验
+- [x] 书脊右键与封面右键行为一致——Clara 亲验
+
+**Codex 自测补充**：`scripts/verify-g44.mjs` 连续封面右键 20/20；菜单移出封面仍显示、菜单位置不越出书架或视口、移除入口打开确认、空白处与 Esc 关闭、hover 回落、两条左键路径均通过；`Shelf.test.ts` 的非 Node `relatedTarget` 单元测试通过。
+
+**连带修复**：`leaveSlot` / `blurSlot` 在 `relatedTarget` 非 Node 时调用 `contains` 会抛异常、造成书架白屏。该缺陷源自 G-13，不是 G-44 引入；本卡在右键封面路径上撞到后，用 Node 类型判断修复，不用 try/catch 吞异常。
+
+**实际改动**：`components/shelf/Shelf.tsx`、`components/shelf/Shelf.test.ts`、`scripts/verify-g44.mjs`、`styles/shelf.css`。G-44 第三轮复述计划改 `Shelf.test.ts`，实际沿用此前已写的非 Node 测试而未再改该文件；回放脚本补充了本轮状态流验收。
+**回滚**：`git revert -m 1 6755fcd`
+
+---
+
 ### G-46 · 自动收起误收正在读的白话
 **P0 · W2** ｜ 依赖 G-05、G-07 ｜ 分支 `codex/g46-observer-union` ｜ 自测完成：2026-09-26 ｜ 合并 commit：`7cddcd4a99e36e943548474a9eb2561a294256c0`
 

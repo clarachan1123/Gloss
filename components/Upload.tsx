@@ -19,6 +19,9 @@ import {
   type WarningCode,
 } from "@/lib/parse/validate";
 import { StorageError, saveDocument, type StorageErrorCode } from "@/lib/storage";
+import { emitAnalytics, fileSizeBucket, parseCharsBucket, sentenceCountBucket } from "@/lib/analytics-events";
+import { markAnalyticsImport } from "@/lib/analytics-local";
+import { segmentParagraphs } from "@/lib/segment";
 
 interface UploadNotice {
   key: string;
@@ -74,7 +77,7 @@ export default function Upload({ onStorageFull, droppedFile, onDroppedFileHandle
     setReadyDocId(null);
   }
 
-  async function accept(doc: ParsedDocument, extra: ParseExtra = NO_EXTRA) {
+  async function accept(doc: ParsedDocument, extra: ParseExtra = NO_EXTRA, size: number | null = null, startedAt = performance.now()) {
     const warnings = [...extra.warnings, ...checkParsed(doc)];
     // 只显示统计数字，不在控制台输出正文
     setSummary(
@@ -92,6 +95,15 @@ export default function Upload({ onStorageFull, droppedFile, onDroppedFileHandle
       return;
     }
 
+    markAnalyticsImport(docId);
+    emitAnalytics({
+      event: "doc_parse_complete", format: doc.meta.format, fileSizeBucket: size === null ? null : fileSizeBucket(size),
+      parseCharsBucket: parseCharsBucket(doc.meta.charCount),
+      sentenceCountBucket: sentenceCountBucket(segmentParagraphs(doc.paragraphs).sentences.length),
+      parseMs: Math.max(0, performance.now() - startedAt), aiSegmented: false,
+      warningCodes: [...new Set(warnings.filter((code) => code === "A6" || code === "A9"))],
+    });
+
     if (warnings.length === 0) {
       router.push(`/read/${docId}`);
       return;
@@ -101,6 +113,8 @@ export default function Upload({ onStorageFull, droppedFile, onDroppedFileHandle
   }
 
   function fail(err: unknown, fallback: BlockingCode) {
+    const code = err instanceof ParseError ? err.code : fallback;
+    if (["A1", "A2", "A3", "A4", "A5", "A7", "A8"].includes(code)) emitAnalytics({ event: "doc_upload_reject", rejectCode: code });
     if (err instanceof ParseError) {
       setNotices([fromParseNotice(noticeContent(err.code, { charCount: err.charCount }))]);
     } else {
@@ -112,18 +126,21 @@ export default function Upload({ onStorageFull, droppedFile, onDroppedFileHandle
   }
 
   async function ingestFile(file: File) {
+    const startedAt = performance.now();
+    const extension = file.name.split(".").at(-1)?.toLowerCase();
+    emitAnalytics({ event: "doc_upload_attempt", format: extension === "pdf" || extension === "docx" || extension === "txt" ? extension : "unsupported", fileSizeBucket: fileSizeBucket(file.size) });
     setBusy(true);
     reset();
     try {
       const format = checkFile(file);
       if (format === "pdf") {
         const { doc, warnings, skippedPages } = await parsePdf(file);
-        await accept(doc, { warnings, detail: { skippedPages } });
+        await accept(doc, { warnings, detail: { skippedPages } }, file.size, startedAt);
       } else if (format === "docx") {
         const { doc, warnings, detail } = await parseDocx(file);
-        await accept(doc, { warnings, detail });
+        await accept(doc, { warnings, detail }, file.size, startedAt);
       } else {
-        await accept(await parseTxt(file));
+        await accept(await parseTxt(file), NO_EXTRA, file.size, startedAt);
       }
     } catch (err) {
       fail(err, "A3");
@@ -145,10 +162,12 @@ export default function Upload({ onStorageFull, droppedFile, onDroppedFileHandle
   }, [droppedFile, onDroppedFileHandled]);
 
   async function handlePaste() {
+    const startedAt = performance.now();
+    emitAnalytics({ event: "doc_upload_attempt", format: "paste", fileSizeBucket: null });
     setBusy(true);
     reset();
     try {
-      await accept(plainTextToDocument(pasteRef.current?.value ?? "", "paste", null));
+      await accept(plainTextToDocument(pasteRef.current?.value ?? "", "paste", null), NO_EXTRA, null, startedAt);
     } catch (err) {
       fail(err, "A7");
     } finally {

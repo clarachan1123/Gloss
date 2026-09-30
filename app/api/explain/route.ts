@@ -1,6 +1,7 @@
 import { parseExplainRequest, type ExplainRequest } from "@/lib/context";
 import { AiError, MODEL_STRONG, logAiEvent, streamChat, type ChatMessage, type Usage } from "@/lib/deepseek";
 import { countChars } from "@/lib/parse/validate";
+import { aiFailureCode, aiUsageFields, recordServerAnalytics } from "@/lib/analytics-server";
 import { MarkdownStripper } from "@/lib/output";
 import {
   EXPLAIN_EXTENSION_LEADS,
@@ -137,6 +138,12 @@ export async function POST(request: Request): Promise<Response> {
   const upstream = new AbortController();
   let usage: Usage | null = null;
   const startedAt = Date.now();
+  let firstChunkMs: number | null = null;
+  const recordCall = (outcome: "done" | "overlength" | "error" | "abort", type: string | null = null) =>
+    recordServerAnalytics({ event: "ai_call", callKind: "explain", attempt: 1, outcome, model: MODEL_STRONG,
+      promptVersion: EXPLAIN_PROMPT_VERSION, durationMs: Date.now() - startedAt, firstChunkMs,
+      ...aiUsageFields(usage), failureCode: type === null ? null : aiFailureCode(type),
+      abortPhase: outcome === "abort" ? (firstChunkMs === null ? "waiting" : "streaming") : null });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -146,6 +153,7 @@ export async function POST(request: Request): Promise<Response> {
       let acceptedText = "";
       let sentenceCount = 0;
       let closed = false;
+      let pendingAnalytics: Promise<void> | null = null;
 
       const send = (event: ExplainStreamEvent) => {
         if (closed) return;
@@ -171,6 +179,7 @@ export async function POST(request: Request): Promise<Response> {
         logAiEvent(event, { outputChars: countChars(acceptedText), sentenceCount });
         send(acceptedText ? { type: "done" } : { type: "error", error: "incomplete" });
         close();
+        pendingAnalytics = recordCall(event === "explain_truncated" ? "overlength" : "done");
       };
       const accept = (sentence: string): "accepted" | "cut" => {
         if (startsWithExtension(sentence)) {
@@ -192,6 +201,7 @@ export async function POST(request: Request): Promise<Response> {
           upstream.abort();
           send({ type: "error", error: "refused" });
           close();
+          pendingAnalytics = recordCall("error", "refused");
           return "refused";
         }
         for (const sentence of buffer.push(safeText)) {
@@ -215,27 +225,30 @@ export async function POST(request: Request): Promise<Response> {
         });
 
         for await (const piece of pieces) {
+          firstChunkMs ??= Date.now() - startedAt;
           const result = acceptCleanText(stripper.push(piece));
-          if (result !== "accepted") return;
+          if (result !== "accepted") { await pendingAnalytics; return; }
         }
 
         const finalText = refusalGate.push(stripper.end()) + refusalGate.end();
         if (refusalGate.refused) {
           send({ type: "error", error: "refused" });
           close();
+          await recordCall("error", "refused");
           return;
         }
         for (const sentence of buffer.push(finalText)) {
-          if (accept(sentence) === "cut") return;
+          if (accept(sentence) === "cut") { await pendingAnalytics; return; }
         }
 
         const tail = buffer.finish();
         for (const sentence of tail.sentences) {
-          if (accept(sentence) === "cut") return;
+          if (accept(sentence) === "cut") { await pendingAnalytics; return; }
         }
         if (tail.remainder.trim().length > 0 || acceptedText.length === 0) {
           send({ type: "error", error: "incomplete" });
           close();
+          await recordCall("error", "empty");
           return;
         }
 
@@ -251,6 +264,7 @@ export async function POST(request: Request): Promise<Response> {
         });
         send({ type: "done" });
         close();
+        await recordCall("done");
       } catch (error) {
         if (closed) return;
         logAiEvent("explain_error", {
@@ -264,6 +278,7 @@ export async function POST(request: Request): Promise<Response> {
         });
         send({ type: "error", error: acceptedText ? "incomplete" : explainError(error) });
         close();
+        await recordCall("error", error instanceof AiError ? error.type : "api_error");
       }
     },
   });

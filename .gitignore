@@ -25,5 +25,6 @@ Claude outputs/
 # logs / os
 npm-debug.log*
 report-exports/
+analytics-exports/
 .DS_Store
 Thumbs.db

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "../app/api/gloss/route";
+import { recordServerAnalytics } from "./analytics-server";
 import { AiError, MODEL_FAST, streamChat, type StreamChatOptions } from "./deepseek";
 import { MAX_GLOSS_CHARS } from "./output";
 import { countChars } from "./parse/validate";
@@ -266,6 +267,23 @@ describe("/api/gloss 成功路径", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
     expect(await response.text()).toBe("讲白之后的话，说完就停。");
+  });
+
+  it("ANALYTICS_ENABLED 未设时完整生成一次，模拟 Redis 写入为 0", async () => {
+    vi.stubEnv("ANALYTICS_ENABLED", undefined);
+    const set = vi.fn(async () => "OK");
+    fetchMock.mockResolvedValue(sse([delta("讲白之后的话。", "stop"), usage, DONE]));
+    const response = await POST(glossRequest());
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("讲白之后的话。");
+    await recordServerAnalytics({
+      event: "ai_call", callKind: "gloss", attempt: 1, outcome: "done", model: MODEL_FAST,
+      promptVersion: GLOSS_PROMPT_VERSION, durationMs: 1, firstChunkMs: 1,
+      cacheHitTokens: 5, cacheMissTokens: 7, completionTokens: 3, usageKnown: true,
+      failureCode: null, abortPhase: null,
+    }, { set });
+    expect(set).toHaveBeenCalledTimes(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

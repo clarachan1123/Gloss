@@ -411,34 +411,44 @@ gloss/
 
 ---
 
-### G-15 · 全量埋点
-**P0** ｜ 依赖 G-13 ｜ 分支 `feat/g15-analytics`
+### G-15 · 全量埋点（分 G-15a / G-15b / 功能依赖补接）
+**P0** ｜ 依赖 G-13 ｜ G-15a 分支 `feat/g15a-analytics`
 
-**可验证增量**：走一遍完整流程，后台能看到 PRD 4.1 表里的全部事件，且失败原因分类正确。
+**G-15a 可验证增量**：一批合法浏览器事件经 `/api/analytics` 进入独立 Upstash 前缀，导出可核字段、清除可核删除数；阅读、上传、回访、服务端调用均可按下列口径计数。默认 `ANALYTICS_ENABLED` 不为 `"1"` 时，接口校验后返回 204，所有服务端埋点不写入。
 
-**验收**
-- [ ] PRD 4.1 的全部事件均已接入
-- [ ] **上传失败能按 A1–A9 分类统计**
-- [ ] **生成失败能按 C1–C6 分类统计**
+**G-15a 验收**
+- [ ] 上报管道：最多 50 条、16 KB、事件与字段白名单、eventId 去重 SET NX、每条 TTL 60 天；本地队列最多 200 条，满 10 条或 30 秒发送，隐藏、pagehide、站内离开用 sendBeacon 冲刷
+- [ ] **拒绝按 A1–A5、A7、A8 分类；A6、A9 作为警告单独计数**
+- [ ] C1/C2/C3/C4/C6 及 D1/D2 分类；C2 与 C4 分开，WAF 403 与上游 429 分开；C5 客户端按普通完成处理
 - [ ] 北极星（白话读完率）可计算
       白话读完率口径：分子为 gloss_read_complete，分母为生成成功（含缓存命中）的首次撑开。
       ① 读完判定：撑开区底部进入过视口，且撑开区可见的累计时长 ≥ max(2 秒, 白话字数 ÷ 8 字/秒)。计时从首字出现开始，页面不可见（document.hidden）时暂停。
       ② 分母只含白话完整生成的撑开；失败、中止由 gloss_fail / gloss_abort 另计，不进分母。
       ③ 同一阅读会话里同一句只计第一次撑开，重读只记 sentence_reclick；已保存的常驻白话不是点开的，不计。
       实现时如发现某条无法照做，先停下报告，不自行改口径。
-- [ ] `sentence_reclick` 与 `lock_expand` 可关联查询（否则前者会误导）
-- [ ] 接入 G-09 留出的命中 / 未命中状态，发送 `sentence_click.cache_hit`；本项只接通埋点，不改变缓存行为
-- [ ] 无 PII 上报
-- [ ] **线上首字延迟 P90 ≤2.5s**（来自 G-07：G-07 只有本地实测）
-- [ ] **线上单次调用成本**，用于校准 PRD 3.8 的额度阈值（来自 G-07：G-07 只有本地日志的数字）
+- [ ] 浏览器本地判定 reader_first_seen、reader_return_7d、doc_reopen_7d；不上传读者 ID、文档 ID 及其派生值。为 G3 在不存读者标识前提下新增；一人多设备、清缓存会造成已知误差
+      上线前已使用的浏览器，首次使用日记为上线日；上线前导入的文档不参与 doc_reopen_7d。已知缺口，不追溯。
+- [ ] 文件大小、parseChars、sentenceCount 只报分档；createdAt 服务端生成并截到分钟；无 PII 上报
+- [ ] 客户端 firstTokenMs 从点击到白话首字出现在 DOM，只计缓存未命中；缓存命中不进 P90；服务端 firstChunkMs 单列诊断，不合并
+- [ ] 服务端 ai_call 保存 usage；超长率只由服务端 gloss_overlength 与 ai_call.outcome 统计，客户端不区分 C5
+- [ ] **线上首字延迟 P90 ≤2.5s**（待上线亲验；来自 G-07：G-07 只有本地实测）
+- [ ] **线上单次调用成本**（待上线亲验），用于校准 PRD 3.8 的额度阈值
 - [ ] **中止用量核对**：以服务端 abort 事件对照 DeepSeek 用量；上游在中止前已处理的 token 可能仍计费，不承诺零费用
       中止行为的验收口径为：a. 中止后本地不再发出新请求；b. 服务端日志记录 abort 事件。
       G-15 只负责记录与对账，不实现离页中止行为；离页中止、每日额度计数、用量显示分别移交 G-29、G-30、G-31。
       本轮第 6 条触发中止时 usage 为 null；中止前已处理 token 的费用无法从日志还原，实际扣款可能高于已知的 ¥0.00454。这是中止场景下日志口径缺口，纳入本项对账。
-- [ ] 接入 G-11 派发的 gloss:analytics 事件 deep_explain_blocked（点击已置灰的「听不懂」），计入 PRD 4.1 埋点（从 G-11 移交，2026-09-20）
+- [ ] `gloss:analytics:optout` 为 `"1"` 时本浏览器不入队、不发送、不写回访标记；不阻断服务端 ai_call
+- [ ] W4 结束顺序：Vercel 把 ANALYTICS_ENABLED 改为非 `"1"` 并重新部署 → export 核数 → 分析 → purge 核删除数
 
-**会改**：`lib/analytics.ts`、各组件埋点调用点
-**不改**：任何业务逻辑。**本 issue 只加埋点，不改行为**
+**G-15b 可验证增量（本轮不做）**：接入已有功能的其余 PRD 4.1 事件，包括 G-11 的 deep_explain_blocked；逐事件核对触发次数和字段。
+- [ ] G-15b 事件接入与导出核对
+
+**依赖功能的补接项（本轮不做）**：G-17 的 gloss_edit、G-18 的 lock_expand、G-14 的 doc_export、G-30 的 quota_exceeded、G-16 的 sample_doc_enter 等在各自功能完成后接入；不造假触发点。
+- [ ] `sentence_reclick` 与 G-18 的 `lock_expand` 可关联查询
+- [ ] C1 首字前自动重试与 PRD 3.9 C1「不自动重试」不一致；来源 G-15 复述，2026-09-30；不在 G-15 处理
+
+**会改**：G-15a 使用 `gloss:analytics` CustomEvent、独立客户端与服务端模块及 `/api/analytics`；不新建 `lib/analytics.ts`
+**不改**：PRD、现有业务文案与成功响应格式
 **回滚**：`git revert`
 
 ---
@@ -605,6 +615,22 @@ gloss/
 - [ ] 解决 `DEEPSEEK_BASE_URL` 只在 development 生效的问题，使 `next start` 下也能用本地替身验证 401，并证明未调用真实上游
 
 - 来源记录（Clara，2026-09-30）：在 `gloss-verify` 用 `npm run dev` 启动后打开 `http://127.0.0.1:3000` 页面空白：主机名默认为 `localhost`，Next 16 视 `127.0.0.1` 为跨源，拦下 `/_next/hmr`，客户端未水合。改用 `npm run dev -- -H 127.0.0.1` 后正常。另：`gloss-verify` 没有 `.env.local`，需真实生成时从主仓库临时复制，验完删除。
+**回滚**：`git revert`
+
+---
+
+### G-47 · G-40 视口上方流式补偿脚本的逐帧漂移
+**P1** ｜ 来源：G-15a 对照诊断，2026-10-01 ｜ 分支待定
+
+**现象**：`scripts/verify-g40.mjs` 的 `G40_PROBE_ABOVE=1` 场景，在补偿开启时报告逐帧最大位移 57.1875px，超过脚本的 0.5px 门槛。2026-10-01 用 Edge、1280×720、100% 缩放、58px 面板宽度、12 秒首字延迟，在隔离工作区对 `origin/main`（`19dff66`）完成 3 次有效实测，逐帧最大位移依次为 57.1875px、57.1875px、57.1875px；在 G-40 合并提交 `88bddc9` 完成 1 次实测，仍为 57.1875px，**不是 0px**。因此该现象不由 G-15a 引入；与 G-40 卡的 0px 验收记录不符，根因未查。本卡只登记，不在 G-15a 修复。
+
+**复现**：从待测提交启动 `scripts/dev-slow-gloss.mjs`，覆盖 `DEEPSEEK_API_KEY=local-test-invalid`；先以「G40 认证预检。」请求 `/api/gloss`，确认服务端日志为 `HTTP 401`；再以 `G40_PROBE_ABOVE=1` 运行 `scripts/verify-g40.mjs`。核对输出的 `scenario=above`、`changes=35`、`maxStep` 与 `maxCumulative`。脚本用 `IntersectionObserver` 替身保留面板、将面板宽度设为 58px，并在每帧取视口参照字的 `getBoundingClientRect().top`。
+
+**验收**
+- [ ] 查明逐帧 57.1875px 跳动的原因，明确现有补偿逻辑与测试参照物各自的责任
+- [ ] 修复后同一脚本、视口与参数连续 3 遍逐帧最大位移均为 0px，并核对负对照仍能暴露漂移
+
+**会改 / 不改**：待开工复述并确认；本轮只新增本卡，不修改 G-40 代码。
 **回滚**：`git revert`
 
 ---

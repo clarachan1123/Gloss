@@ -36,7 +36,7 @@ export interface GlossInput {
 export type GlossResult =
   | { status: "done"; text: string }
   /** text 是断流前已经收到的部分，可能为空 */
-  | { status: "failed"; failure: GlossFailure; text: string }
+  | { status: "failed"; failure: GlossFailure; text: string; rawErrorCode?: string }
   | { status: "aborted" };
 
 /** 接口返回的错误类型 → 读者看到的失败原因（见 app/api/gloss/route.ts） */
@@ -55,7 +55,7 @@ export async function streamGloss(
   input: GlossInput,
   { signal, onText }: { signal: AbortSignal; onText: (text: string) => void },
 ): Promise<GlossResult> {
-  if (isOffline()) return { status: "failed", failure: "offline", text: "" };
+  if (isOffline()) return { status: "failed", failure: "offline", text: "", rawErrorCode: "offline" };
 
   let response: Response;
   try {
@@ -67,22 +67,22 @@ export async function streamGloss(
     });
   } catch {
     if (signal.aborted) return { status: "aborted" };
-    return { status: "failed", failure: isOffline() ? "offline" : "unavailable", text: "" };
+    return { status: "failed", failure: isOffline() ? "offline" : "unavailable", text: "", rawErrorCode: isOffline() ? "offline" : "network" };
   }
 
   // 403 发生在流开始之前，与读流中途断开（interrupted）是两条路径
   if (response.status === 403) {
     await response.body?.cancel().catch(() => {});
-    return signal.aborted ? { status: "aborted" } : { status: "failed", failure: "throttled", text: "" };
+    return signal.aborted ? { status: "aborted" } : { status: "failed", failure: "throttled", text: "", rawErrorCode: "waf_403" };
   }
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { error?: unknown } | null;
     if (signal.aborted) return { status: "aborted" };
     const failure =
       response.status === 429 ? "rate_limited" : (FAILURE_BY_ERROR[String(payload?.error)] ?? "unavailable");
-    return { status: "failed", failure, text: "" };
+    return { status: "failed", failure, text: "", rawErrorCode: response.status === 429 ? "upstream_429" : String(payload?.error ?? "api_error") };
   }
-  if (!response.body) return { status: "failed", failure: "unavailable", text: "" };
+  if (!response.body) return { status: "failed", failure: "unavailable", text: "", rawErrorCode: "empty" };
 
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let text = "";
@@ -96,11 +96,11 @@ export async function streamGloss(
   } catch {
     if (signal.aborted) return { status: "aborted" };
     // 服务端在首块之后出错会直接中断响应流，读到这里和网络断开是同一个样子
-    return { status: "failed", failure: text ? "interrupted" : isOffline() ? "offline" : "unavailable", text };
+    return { status: "failed", failure: text ? "interrupted" : isOffline() ? "offline" : "unavailable", text, rawErrorCode: text ? "interrupted" : isOffline() ? "offline" : "network" };
   }
 
   if (signal.aborted) return { status: "aborted" };
-  return text ? { status: "done", text } : { status: "failed", failure: "unavailable", text: "" };
+  return text ? { status: "done", text } : { status: "failed", failure: "unavailable", text: "", rawErrorCode: "empty" };
 }
 
 export interface StructureInput {

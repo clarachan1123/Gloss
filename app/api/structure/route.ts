@@ -2,6 +2,7 @@ import { buildStructureMessages, parseStructureRequest } from "@/lib/context";
 import { AiError, MODEL_FAST, errorResponse, logAiEvent, streamChat, type Usage } from "@/lib/deepseek";
 import { stripMarkdown, truncateChars } from "@/lib/output";
 import { countChars } from "@/lib/parse/validate";
+import { aiFailureCode, aiUsageFields, recordServerAnalytics } from "@/lib/analytics-server";
 import {
   STRUCTURE_MAX_CHARS,
   STRUCTURE_MAX_TOKENS,
@@ -44,6 +45,11 @@ export async function POST(request: Request): Promise<Response> {
   request.signal.addEventListener("abort", abortUpstream, { once: true });
 
   let usage: Usage | null = null;
+  const recordCall = (outcome: "done" | "overlength" | "error" | "abort", type: string | null = null) =>
+    recordServerAnalytics({ event: "ai_call", callKind: "structure", attempt: 1, outcome, model: MODEL_FAST,
+      promptVersion: STRUCTURE_PROMPT_VERSION, durationMs: Date.now() - startedAt, firstChunkMs: null,
+      ...aiUsageFields(usage), failureCode: type === null ? null : aiFailureCode(type),
+      abortPhase: outcome === "abort" ? "streaming" : null });
   const log = (event: string, fields: Record<string, string | number | boolean | null>) => {
     request.signal.removeEventListener("abort", abortUpstream);
     logAiEvent(event, {
@@ -77,21 +83,25 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     if (request.signal.aborted) {
       log("structure_abort", {});
+      await recordCall("abort");
       return new Response(null, { status: 499 });
     }
     const type = error instanceof AiError ? error.type : "api_error";
     log("structure_error", { errorType: type, detail: error instanceof AiError ? error.detail : "unknown" });
+    await recordCall("error", type);
     return errorResponse(type);
   }
 
   const cleaned = stripMarkdown(raw);
   if (countChars(cleaned) === 0) {
     log("structure_error", { errorType: "empty", detail: "no_output" });
+    await recordCall("error", "empty");
     return errorResponse("empty");
   }
   const { text, truncated } = truncateChars(cleaned, HARD_LIMIT_CHARS);
   const outputChars = countChars(cleaned);
   log(outputChars > STRUCTURE_MAX_CHARS ? "structure_overlength" : "structure_done", { outputChars, truncated });
+  await recordCall(outputChars > STRUCTURE_MAX_CHARS ? "overlength" : "done");
 
   return Response.json(
     { structure: text, prompt: STRUCTURE_PROMPT_VERSION },

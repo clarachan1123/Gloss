@@ -2,6 +2,7 @@ import { buildGlossMessages, parseGlossRequest } from "@/lib/context";
 import { AiError, MODEL_FAST, MODEL_STRONG, errorResponse, logAiEvent, streamChat, type Usage } from "@/lib/deepseek";
 import { GlossOutput } from "@/lib/output";
 import { countChars } from "@/lib/parse/validate";
+import { aiFailureCode, aiUsageFields, recordServerAnalytics } from "@/lib/analytics-server";
 import {
   GLOSS_MAX_TOKENS,
   GLOSS_PROMPT_ARCHIVE,
@@ -149,6 +150,12 @@ export async function POST(request: Request): Promise<Response> {
       ...fields,
     });
   };
+  const recordCall = (outcome: "done" | "overlength" | "error" | "abort", type: string | null = null,
+    abortPhase: "waiting" | "streaming" | null = null) => recordServerAnalytics({
+    event: "ai_call", callKind: "gloss", attempt: retried ? 2 : 1, outcome,
+    model: variant.model, promptVersion: variant.promptVersion, durationMs: Date.now() - startedAt,
+    firstChunkMs, ...aiUsageFields(usage), failureCode: type === null ? null : aiFailureCode(type), abortPhase,
+  });
   const describe = (error: unknown) => ({
     errorType: error instanceof AiError ? error.type : "api_error",
     detail: error instanceof AiError ? error.detail : "unknown",
@@ -184,9 +191,11 @@ export async function POST(request: Request): Promise<Response> {
       if (request.signal.aborted) {
         if (retried) logRetry("aborted");
         log("gloss_abort", { phase: "waiting" });
+        await recordCall("abort", null, "waiting");
         return new Response(null, { status: 499 });
       }
       if (!retried && error instanceof AiError && error.type === "timeout") {
+        await recordCall("error", "timeout");
         retried = true;
         // streamChat 的计时器已中止内部 fetch；这里再次显式中止本次上游信号，
         // 并在它完成前不创建第二次请求。
@@ -195,6 +204,7 @@ export async function POST(request: Request): Promise<Response> {
         if (!(await waitForRetry(request.signal))) {
           logRetry("aborted");
           log("gloss_abort", { phase: "waiting" });
+          await recordCall("abort", null, "waiting");
           return new Response(null, { status: 499 });
         }
         usage = null;
@@ -205,6 +215,7 @@ export async function POST(request: Request): Promise<Response> {
       if (retried) logRetry("failure");
       const { errorType, detail } = describe(error);
       log("gloss_error", { errorType, detail, phase: "waiting" });
+      await recordCall("error", errorType);
       return errorResponse(error instanceof AiError ? error.type : "api_error");
     }
   }
@@ -213,11 +224,13 @@ export async function POST(request: Request): Promise<Response> {
     await pieces.return();
     if (retried) logRetry("failure");
     log("gloss_error", { errorType: "refused", detail: "refusal_marker", phase: "waiting" });
+    await recordCall("error", "refused");
     return errorResponse("refused");
   }
   if (first.length === 0) {
     if (retried) logRetry("failure");
     log("gloss_error", { errorType: "empty", detail: "no_output", phase: "waiting" });
+    await recordCall("error", "empty");
     return errorResponse("empty");
   }
   firstChunkMs = Date.now() - startedAt;
@@ -246,11 +259,16 @@ export async function POST(request: Request): Promise<Response> {
           }
           log(output.truncated ? "gloss_overlength" : "gloss_done");
           controller.close();
+          await recordCall(output.truncated ? "overlength" : "done");
+          if (output.truncated) await recordServerAnalytics({ event: "gloss_overlength", overlength: true,
+            outputChars: output.charCount, model: variant.model, promptVersion: variant.promptVersion });
         } catch (error) {
           if (cancelled || request.signal.aborted) {
             log("gloss_abort", { phase: "streaming" });
+            await recordCall("abort", null, "streaming");
           } else {
             log("gloss_error", { ...describe(error), phase: "streaming" });
+            await recordCall("error", describe(error).errorType);
           }
           try {
             controller.error(error);

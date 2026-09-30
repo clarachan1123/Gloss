@@ -28,6 +28,9 @@ import {
 import { MAX_AFTER, MAX_BEFORE, MAX_EXPLAIN_CONTEXT_CHARS } from "@/lib/context";
 import { streamExplain, type ExplainInput } from "@/lib/explain-client";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
+import { emitAnalytics } from "@/lib/analytics-events";
+import { markAnalyticsOpen } from "@/lib/analytics-local";
+import { ReadCompleteClock } from "@/lib/analytics-read-complete";
 import { countChars, skippedSummary, type ParsedHeading, type SkippedContent } from "@/lib/parse/validate";
 import { GLOSS_PROMPT_VERSION, TERM_CLOSE, TERM_OPEN } from "@/lib/prompts/gloss";
 import { STRUCTURE_PROMPT_VERSION } from "@/lib/prompts/structure";
@@ -246,6 +249,31 @@ export default function Reader({ docId }: { docId: string }) {
   /** 保存区更新只供点击与请求 effect 查询；不会因保存／取消保存重跑请求 effect。 */
   const savedGlossesRef = useRef<Map<number, SavedGloss>>(EMPTY_SAVED_GLOSSES);
   const glossAbortRef = useRef<AbortController | null>(null);
+  const clickCountsRef = useRef(new Map<number, number>());
+  const readAttemptRef = useRef<{
+    index: number; clickedAt: number; cacheHit: boolean; firstClick: boolean;
+    clock: ReadCompleteClock; completeReported: boolean; abortReported: boolean; settled: boolean;
+  } | null>(null);
+  function sampleReadAttempt() {
+    const attempt = readAttemptRef.current;
+    if (!attempt) return;
+    const panel = panelRef.current?.dataset.sentenceIndex === String(attempt.index) ? panelRef.current : null;
+    const displayedText = panel?.querySelector<HTMLElement>(".gloss-panel-text")?.textContent ?? "";
+    const fullyShown = panel?.dataset.state === "done";
+    const now = performance.now();
+    const chars = countChars(displayedText);
+    const result = attempt.clock.sample(now, chars > 0, fullyShown, chars,
+      panel?.getBoundingClientRect() ?? null, window.innerHeight, document.hidden);
+    if (result.firstText && !attempt.cacheHit) emitAnalytics({ event: "gloss_first_token", sentenceIndex: attempt.index,
+      firstTokenMs: Math.max(0, now - attempt.clickedAt), cacheHit: false });
+    if (fullyShown && attempt.firstClick && !attempt.completeReported) {
+      attempt.completeReported = true;
+      emitAnalytics({ event: "gloss_complete", sentenceIndex: attempt.index, cacheHit: attempt.cacheHit,
+        durationMs: Math.max(0, now - attempt.clickedAt), glossChars: chars });
+    }
+    if (result.readComplete && attempt.firstClick) emitAnalytics({ event: "gloss_read_complete", sentenceIndex: attempt.index,
+      visibleMs: result.visibleMs, bottomSeen: true, glossChars: result.glossChars });
+  }
   /** 全书结构摘要；开书时后台算，算好之前为 null */
   const structureRef = useRef<string | null>(null);
   const cachePreloadTokenRef = useRef(0);
@@ -254,9 +282,25 @@ export default function Reader({ docId }: { docId: string }) {
 
   useEffect(() => {
     setReportedIndexes(new Set());
+    clickCountsRef.current.clear();
+    readAttemptRef.current = null;
     setReportPendingIndex(null);
     setReportFeedback(null);
     closeContextMenu();
+  }, [docId]);
+
+  useEffect(() => {
+    const finish = () => {
+      const attempt = readAttemptRef.current;
+      sampleReadAttempt();
+      if (!attempt || attempt.abortReported || attempt.settled || attempt.cacheHit) return;
+      attempt.clock.stop(performance.now());
+      attempt.abortReported = true;
+      emitAnalytics({ event: "gloss_abort", sentenceIndex: attempt.index,
+        abortPhase: attempt.clock.firstTextAt === null ? "waiting" : "streaming" });
+    };
+    window.addEventListener("pagehide", finish);
+    return () => { window.removeEventListener("pagehide", finish); finish(); };
   }, [docId]);
 
   useEffect(() => {
@@ -372,7 +416,10 @@ export default function Reader({ docId }: { docId: string }) {
 
   // G-13：只有文档已成功载入才计作一次打开，避免无效路由污染最近阅读。
   useEffect(() => {
-    if (doc) touchShelfEntry(docId);
+    if (doc) {
+      touchShelfEntry(docId);
+      markAnalyticsOpen(docId);
+    }
   }, [doc, docId]);
 
   // 本机中文字体没有可可靠等待的浏览器事件；这里只等 Next 注入的拉丁字体完成，
@@ -660,6 +707,18 @@ export default function Reader({ docId }: { docId: string }) {
    * 提交后、绘制前由下方的事务把它滚回原位。
    */
   function commit(next: Expansion | null, options: { anchor?: CharAnchor | null; animateOpen?: boolean } = {}) {
+    const previousAttempt = readAttemptRef.current;
+    if (previousAttempt && (!next || next.index !== previousAttempt.index)) {
+      sampleReadAttempt();
+      previousAttempt.clock.stop(performance.now());
+      const previousView = gloss?.index === previousAttempt.index ? gloss.view : null;
+      if (!previousAttempt.abortReported && !previousAttempt.settled && previousView?.status !== "done" && previousView?.status !== "failed" && !previousAttempt.cacheHit) {
+        emitAnalytics({ event: "gloss_abort", sentenceIndex: previousAttempt.index,
+          abortPhase: previousAttempt.clock.firstTextAt === null ? "waiting" : "streaming" });
+        previousAttempt.abortReported = true;
+      }
+      readAttemptRef.current = null;
+    }
     if (!next || (contextMenuRef.current && contextMenuRef.current.index !== next.index)) closeContextMenu();
     const body = bodyRef.current;
     transactionRef.current = {
@@ -725,6 +784,25 @@ export default function Reader({ docId }: { docId: string }) {
     const body = bodyRef.current;
     const sentence = sentences[index];
     if (!body || !sentence) return;
+
+    const nextCount = (clickCountsRef.current.get(index) ?? 0) + 1;
+    clickCountsRef.current.set(index, nextCount);
+    const cacheHit = lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null).status === "hit";
+    emitAnalytics(nextCount === 1
+      ? { event: "sentence_click", sentenceIndex: index, sentenceChars: countChars(sentence.text), cacheHit }
+      : { event: "sentence_reclick", sentenceIndex: index, reclickOrdinal: nextCount });
+    const priorAttempt = readAttemptRef.current;
+    if (priorAttempt && priorAttempt.index !== index) {
+      sampleReadAttempt();
+      priorAttempt.clock.stop(performance.now());
+      const priorView = gloss?.index === priorAttempt.index ? gloss.view : null;
+      if (!priorAttempt.abortReported && !priorAttempt.settled && priorView?.status !== "done" && priorView?.status !== "failed" && !priorAttempt.cacheHit) {
+        emitAnalytics({ event: "gloss_abort", sentenceIndex: priorAttempt.index,
+          abortPhase: priorAttempt.clock.firstTextAt === null ? "waiting" : "streaming" });
+      }
+    }
+    readAttemptRef.current = { index, clickedAt: performance.now(), cacheHit, firstClick: nextCount === 1,
+      clock: new ReadCompleteClock(), completeReported: false, abortReported: false, settled: cacheHit };
 
     cancelPendingCollapse();
     const anchor = anchorAtClick(target, clientX, clientY);
@@ -1035,12 +1113,19 @@ export default function Reader({ docId }: { docId: string }) {
       onText: (text) => show({ status: "streaming", text, failure: null, instant: false }),
     }).then((result) => {
       if (result.status === "aborted" || controller.signal.aborted) return;
+      if (readAttemptRef.current?.index === activeIndex) readAttemptRef.current.settled = true;
       if (result.status === "done") {
         const remembered = { text: result.text, hasStructure: input.structure !== null, source: "session" as const, shown: true };
         glossMemoRef.current.set(activeIndex, remembered);
         void saveGlossCache(docId, input, result.text);
         show({ status: "done", text: result.text, failure: null, instant: false });
       } else {
+        const failureCode = result.rawErrorCode === "timeout" ? "C1" : result.rawErrorCode === "empty" ? "C4"
+          : result.rawErrorCode === "refused" ? "C6" : result.rawErrorCode === "waf_403" || result.rawErrorCode === "upstream_429" ? "C3"
+            : result.rawErrorCode === "interrupted" ? "D2" : result.rawErrorCode === "offline" ? "D1"
+              : result.rawErrorCode === "api_error" ? "C2" : "OTHER";
+        emitAnalytics({ event: "gloss_fail", sentenceIndex: activeIndex, failureCode,
+          limitSource: result.rawErrorCode === "waf_403" ? "waf" : result.rawErrorCode === "upstream_429" ? "upstream" : null });
         show({ status: "failed", text: result.text, failure: result.failure, instant: false });
       }
     });
@@ -1215,6 +1300,25 @@ export default function Reader({ docId }: { docId: string }) {
   }
 
   const glossView = gloss && gloss.index === activeIndex ? gloss.view : LOADING_VIEW;
+  useLayoutEffect(() => {
+    const attempt = readAttemptRef.current;
+    if (!attempt || activeIndex !== attempt.index) return;
+    const sample = () => { if (readAttemptRef.current === attempt) sampleReadAttempt(); };
+    sample();
+    const observer = panelRef.current ? new MutationObserver(sample) : null;
+    if (observer && panelRef.current) observer.observe(panelRef.current, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-state"] });
+    const timer = window.setInterval(sample, 100);
+    window.addEventListener("scroll", sample, { passive: true });
+    window.addEventListener("resize", sample);
+    document.addEventListener("visibilitychange", sample);
+    return () => {
+      observer?.disconnect();
+      window.clearInterval(timer);
+      window.removeEventListener("scroll", sample);
+      window.removeEventListener("resize", sample);
+      document.removeEventListener("visibilitychange", sample);
+    };
+  }, [activeIndex, expansion, glossView]);
   saveContextRef.current = { activeIndex, docId, expansion, glossView, readingMode, savedGlosses, savedRegions, sentences };
   const toggleSavedGlossFor = useCallback(async (index: number): Promise<"saved" | "removed" | StorageErrorCode> => {
     const context = saveContextRef.current;

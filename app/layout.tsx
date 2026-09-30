@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Cinzel, JetBrains_Mono } from "next/font/google";
+import AnalyticsCollector from "@/components/AnalyticsCollector";
 import "../styles/tokens.css";
 import "../styles/reader.css";
 import "../styles/shelf.css";
@@ -33,7 +35,7 @@ export default function RootLayout({
       data-theme="parchment"
       className={`${cinzel.variable} ${jetbrainsMono.variable}`}
     >
-      <body>{children}</body>
+      <body>{children}<Suspense fallback={null}><AnalyticsCollector /></Suspense></body>
     </html>
   );
 }

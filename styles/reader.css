@@ -51,6 +51,24 @@ body {
   background: var(--paper-main);
 }
 
+@media (max-width: 767.98px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .col-left {
+    position: static;
+    height: auto;
+    overflow: visible;
+    padding: 12px 16px;
+    border: 0;
+    background: var(--paper-main);
+  }
+  .col-left .wordmark,
+  .col-left .side-section,
+  .col-right { display: none; }
+  .col-left .reader-shelf-back { margin: 0; }
+  .col-left .mode-switch { margin-top: 8px; }
+  .col-main { min-width: 0; padding: 0 16px; }
+}
+
 .wordmark {
   display: inline-block;
   font-family: var(--font-display);
@@ -522,6 +540,10 @@ body {
   gap: 12px;
   max-width: 39em;
   margin: 48px auto;
+}
+
+.reader-error-fallback {
+  padding-inline: 16px;
 }
 
 .reader-context-menu {

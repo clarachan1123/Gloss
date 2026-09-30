@@ -28,7 +28,7 @@ import {
 import { MAX_AFTER, MAX_BEFORE, MAX_EXPLAIN_CONTEXT_CHARS } from "@/lib/context";
 import { streamExplain, type ExplainInput } from "@/lib/explain-client";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
-import { countChars, skippedSummary, type ParsedHeading } from "@/lib/parse/validate";
+import { countChars, skippedSummary, type ParsedHeading, type SkippedContent } from "@/lib/parse/validate";
 import { GLOSS_PROMPT_VERSION, TERM_CLOSE, TERM_OPEN } from "@/lib/prompts/gloss";
 import { STRUCTURE_PROMPT_VERSION } from "@/lib/prompts/structure";
 import { segmentParagraphs, type Sentence as SentenceData } from "@/lib/segment";
@@ -69,8 +69,9 @@ const VISIBLE_MARGIN_PX = 16;
 
 type LoadState =
   | { status: "loading" }
-  | { status: "ready"; doc: StoredDocument; savedGlosses: Map<number, SavedGloss> }
+  | { status: "ready"; doc: StoredDocument; headingsAvailable: boolean; savedGlosses: Map<number, SavedGloss> }
   | { status: "missing" }
+  | { status: "unreadable" }
   | { status: "unavailable" };
 
 const HEADING_TAGS: ElementType[] = ["h1", "h2", "h3", "h4", "h5", "h6"];
@@ -325,8 +326,14 @@ export default function Reader({ docId }: { docId: string }) {
         setState({ status: "missing" });
         return;
       }
+      const readable = prepareReadableDocument(doc);
+      if (!readable) {
+        setState({ status: "unreadable" });
+        return;
+      }
+      const { doc: safeDoc, headingsAvailable } = readable;
       // Web Crypto 的身份核对完成前不提交正文，避免先出现原文、随后插入保存白话。
-      const currentSentences = segmentParagraphs(doc.paragraphs).sentences;
+      const currentSentences = segmentParagraphs(safeDoc.paragraphs).sentences;
       setGlossShape(readGlossShape());
       void Promise.all([loadSavedGlosses(docId, currentSentences), loadExplanations(docId, currentSentences)])
         .then(([savedGlosses, explanations]) => {
@@ -340,7 +347,7 @@ export default function Reader({ docId }: { docId: string }) {
           );
           explainViewsRef.current = loadedViews;
           setExplainViews(loadedViews);
-          setState({ status: "ready", doc, savedGlosses });
+          setState({ status: "ready", doc: safeDoc, headingsAvailable, savedGlosses });
         })
         .catch(() => {
           if (cancelled) return;
@@ -348,7 +355,7 @@ export default function Reader({ docId }: { docId: string }) {
           savedGlossesRef.current = EMPTY_SAVED_GLOSSES;
           explainViewsRef.current = EMPTY_EXPLAIN_VIEWS;
           setExplainViews(EMPTY_EXPLAIN_VIEWS);
-          setState({ status: "ready", doc, savedGlosses: EMPTY_SAVED_GLOSSES });
+          setState({ status: "ready", doc: safeDoc, headingsAvailable, savedGlosses: EMPTY_SAVED_GLOSSES });
         });
     } catch (err) {
       if (!(err instanceof StorageError)) throw err;
@@ -360,6 +367,7 @@ export default function Reader({ docId }: { docId: string }) {
   }, [docId]);
 
   const doc = state.status === "ready" ? state.doc : null;
+  const headingsAvailable = state.status === "ready" && state.headingsAvailable;
   const savedGlosses = state.status === "ready" ? state.savedGlosses : EMPTY_SAVED_GLOSSES;
 
   // G-13：只有文档已成功载入才计作一次打开，避免无效路由污染最近阅读。
@@ -1354,7 +1362,7 @@ export default function Reader({ docId }: { docId: string }) {
           </section>
         )}
 
-        <section className="side-section" aria-labelledby="toc-title">
+        {headingsAvailable && <section className="side-section" aria-labelledby="toc-title">
           <h2 id="toc-title" className="side-title">
             目录
           </h2>
@@ -1375,7 +1383,7 @@ export default function Reader({ docId }: { docId: string }) {
           )}
           {/* 目录块始终在原位：时有时无会让读者困惑，状态自己说明自己（G-25） */}
           {doc && doc.headings.length === 0 && <p className="side-empty">这份文档没有标题层级</p>}
-        </section>
+        </section>}
 
         <section className="side-section" aria-labelledby="saved-title">
           <h2 id="saved-title" className="side-title">
@@ -1404,6 +1412,12 @@ export default function Reader({ docId }: { docId: string }) {
             <Link href="/" className="reader-back">
               返回首页重新上传
             </Link>
+          </div>
+        )}
+        {state.status === "unreadable" && (
+          <div className="reader-status">
+            <Notice tone="block" message="这份文档的本地数据不完整，打不开。可以回到书架重新导入原文件。" />
+            <Link href="/" className="reader-back">← 回到书架</Link>
           </div>
         )}
         {state.status === "unavailable" && (
@@ -1609,11 +1623,50 @@ export function selectVisibleSavedRegions(
   });
 }
 
-/** 左栏第二行：字数 · 段数 ·（PDF 才有的）页数 · 句数。数字口径与上传页一致 */
-function documentStats(doc: StoredDocument, sentenceCount: number): string {
+/** 本地 JSON 可能缺字段；只把可读正文和有效的展示字段交给阅读器。 */
+export function prepareReadableDocument(doc: StoredDocument): { doc: StoredDocument; headingsAvailable: boolean } | null {
+  if (!Array.isArray(doc.paragraphs) ||
+      !doc.paragraphs.every((paragraph) => typeof paragraph === "string") ||
+      !doc.paragraphs.some((paragraph) => paragraph.trim().length > 0)) return null;
+
+  const rawMeta: Record<string, unknown> = doc.meta && typeof doc.meta === "object" && !Array.isArray(doc.meta)
+    ? doc.meta as unknown as Record<string, unknown>
+    : {};
+  const rawSkipped = rawMeta.skipped;
+  const skipped: SkippedContent = {};
+  if (rawSkipped && typeof rawSkipped === "object" && !Array.isArray(rawSkipped)) {
+    const fields = rawSkipped as Record<string, unknown>;
+    if (typeof fields.tableCount === "number" && Number.isFinite(fields.tableCount) &&
+        typeof fields.tableChars === "number" && Number.isFinite(fields.tableChars)) {
+      skipped.tableCount = fields.tableCount;
+      skipped.tableChars = fields.tableChars;
+    }
+    if (typeof fields.hasFormula === "boolean") skipped.hasFormula = fields.hasFormula;
+    if (Array.isArray(fields.scannedPages) && fields.scannedPages.every((page) => typeof page === "number" && Number.isInteger(page))) {
+      skipped.scannedPages = fields.scannedPages;
+    }
+  }
+  const meta = {
+    format: rawMeta.format,
+    fileName: typeof rawMeta.fileName === "string" && rawMeta.fileName.trim().length > 0 ? rawMeta.fileName : null,
+    ...(typeof rawMeta.charCount === "number" && Number.isFinite(rawMeta.charCount) ? { charCount: rawMeta.charCount } : {}),
+    ...(typeof rawMeta.pageCount === "number" && Number.isFinite(rawMeta.pageCount) ? { pageCount: rawMeta.pageCount } : {}),
+    ...(Object.keys(skipped).length > 0 ? { skipped } : {}),
+  } as StoredDocument["meta"];
+  const headingsAvailable = Array.isArray(doc.headings);
+  return {
+    doc: { ...doc, meta, headings: headingsAvailable ? doc.headings : [], footnotes: Array.isArray(doc.footnotes) ? doc.footnotes : [] },
+    headingsAvailable,
+  };
+}
+
+/** 左栏第二行：有效字数 · 段数 · 有效页数 · 句数。数字口径与上传页一致 */
+export function documentStats(doc: StoredDocument, sentenceCount: number): string {
   const n = (value: number) => value.toLocaleString("zh-CN");
-  const parts = [`${n(doc.meta.charCount)} 字`, `${n(doc.paragraphs.length)} 段`];
-  if (doc.meta.pageCount !== undefined) parts.push(`${n(doc.meta.pageCount)} 页`);
+  const parts: string[] = [];
+  if (typeof doc.meta?.charCount === "number" && Number.isFinite(doc.meta.charCount)) parts.push(`${n(doc.meta.charCount)} 字`);
+  parts.push(`${n(doc.paragraphs.length)} 段`);
+  if (typeof doc.meta?.pageCount === "number" && Number.isFinite(doc.meta.pageCount)) parts.push(`${n(doc.meta.pageCount)} 页`);
   parts.push(`${n(sentenceCount)} 句`);
   return parts.join(" · ");
 }

@@ -3,7 +3,45 @@ import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadSavedGlosses } from "@/lib/storage";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import { allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, groupRegions, paragraphOriginalFragments, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+import { allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+import { skippedSummary } from "@/lib/parse/validate";
+import type { StoredDocument } from "@/lib/storage";
+
+describe("G-26 本地文档容错", () => {
+  const record = {
+    version: 1, docId: "g26", paragraphs: ["甲。"], headings: [], footnotes: [],
+    meta: { format: "txt", fileName: "测试.txt", charCount: 2, pageCount: 3 }, savedAt: 1,
+  } as StoredDocument;
+
+  it("缺字数只略去字数；可选字段缺失不影响段句统计", () => {
+    const withoutChars = prepareReadableDocument({ ...record, meta: { ...record.meta, charCount: undefined } } as unknown as StoredDocument);
+    expect(documentStats(withoutChars!.doc, 1)).toBe("1 段 · 3 页 · 1 句");
+    const withoutOptional = prepareReadableDocument({ ...record, meta: { ...record.meta, pageCount: undefined } });
+    expect(documentStats(withoutOptional!.doc, 1)).toBe("2 字 · 1 段 · 1 句");
+  });
+
+  it("meta 与侧栏数据缺失时仍能打开正文，不把丢失目录说成无标题", () => {
+    const prepared = prepareReadableDocument({ ...record, meta: undefined, headings: undefined, footnotes: undefined } as unknown as StoredDocument);
+    expect(prepared?.headingsAvailable).toBe(false);
+    expect(prepared?.doc.headings).toEqual([]);
+    expect(prepared?.doc.footnotes).toEqual([]);
+    expect(documentStats(prepared!.doc, 1)).toBe("1 段 · 1 句");
+  });
+
+  it("跳过信息只保留类型正确的字段，不补出零字表格项", () => {
+    const prepared = prepareReadableDocument({
+      ...record,
+      meta: { ...record.meta, skipped: { tableCount: 2, tableChars: "错", hasFormula: true, scannedPages: [1, "2"] } },
+    } as unknown as StoredDocument);
+    expect(skippedSummary(prepared!.doc.meta.skipped)).toBe("已跳过：公式");
+  });
+
+  it("空数组、非字符串元素和全空白正文都不可读", () => {
+    for (const paragraphs of [[], ["甲。", 3], ["  ", "\t"]]) {
+      expect(prepareReadableDocument({ ...record, paragraphs } as StoredDocument)).toBeNull();
+    }
+  });
+});
 
 describe("G-46 observer 初始化", () => {
   it("只收到原句离屏结果时不收起；确认面板也离屏才收起", () => {

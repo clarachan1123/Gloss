@@ -1,9 +1,13 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
+import * as cache from "@/lib/cache";
 import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
 import { loadSavedGlosses } from "@/lib/storage";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import { allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+import Reader, { allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
 import { skippedSummary } from "@/lib/parse/validate";
 import type { StoredDocument } from "@/lib/storage";
 
@@ -41,6 +45,61 @@ describe("G-26 本地文档容错", () => {
       expect(prepareReadableDocument({ ...record, paragraphs } as StoredDocument)).toBeNull();
     }
   });
+});
+
+it("G-15a 已保存白话在 savedRegions 尚未测量时不发事件，普通缓存命中和未命中仍计首次点击", async () => {
+  const sentence = "甲乙。";
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sentence)));
+  const sourceHash = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+  Object.defineProperty(document, "fonts", { configurable: true, value: { ready: new Promise(() => {}) } });
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  vi.spyOn(cache, "preloadGlossCache").mockImplementation(async (docId) =>
+    docId === "g15a-hit" ? new Map([[0, { text: "预载白话。", hasStructure: false }]]) : new Map());
+
+  const events: Record<string, unknown>[] = [];
+  const onAnalytics = (event: Event) => events.push((event as CustomEvent).detail);
+  window.addEventListener("gloss:analytics", onAnalytics);
+  try {
+    for (const [docId, saved, expectedCacheHit] of [
+      ["g15a-saved", true, null], ["g15a-hit", false, true], ["g15a-miss", false, false],
+    ] as const) {
+      localStorage.setItem(`gloss:doc:${docId}`, JSON.stringify({
+        version: 1, docId, paragraphs: [sentence], headings: [{ paraIndex: 0, level: 1, text: "测试" }],
+        footnotes: [], meta: { format: "txt", fileName: "测试.txt", charCount: 3 }, savedAt: 1,
+      }));
+      if (saved) localStorage.setItem(`gloss:saved:${docId}`, JSON.stringify({ version: 1, entries: [
+        { paraIndex: 0, start: 0, sourceHash, text: "已保存白话。", savedAt: 1, kind: "saved" },
+      ] }));
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      await act(async () => { root.render(createElement(Reader, { docId })); });
+      await act(async () => { await Promise.resolve(); });
+      if (saved) {
+        expect(container.querySelector(".reader-body-measuring")).not.toBeNull();
+        expect(container.querySelector(".saved-link")?.textContent).toBe("已保存白话。");
+      }
+      events.length = 0;
+      const target = container.querySelector<HTMLElement>(".sentence[data-index='0']");
+      expect(target).not.toBeNull();
+      await act(async () => { target!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      if (saved) expect(events).toHaveLength(0);
+      else expect(events.filter((event) => event.event === "sentence_click")).toEqual([
+        expect.objectContaining({ sentenceIndex: 0, sentenceChars: 3, cacheHit: expectedCacheHit }),
+      ]);
+      await act(async () => { root.unmount(); });
+      container.remove();
+    }
+  } finally {
+    window.removeEventListener("gloss:analytics", onAnalytics);
+    localStorage.clear();
+    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+    else Reflect.deleteProperty(document, "fonts");
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  }
 });
 
 describe("G-46 observer 初始化", () => {

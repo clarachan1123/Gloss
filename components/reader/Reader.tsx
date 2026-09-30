@@ -785,10 +785,11 @@ export default function Reader({ docId }: { docId: string }) {
     const sentence = sentences[index];
     if (!body || !sentence) return;
 
-    const nextCount = (clickCountsRef.current.get(index) ?? 0) + 1;
-    clickCountsRef.current.set(index, nextCount);
-    const cacheHit = lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null).status === "hit";
-    emitAnalytics(nextCount === 1
+    const savedClick = savedGlosses.has(index);
+    const nextCount = savedClick ? null : (clickCountsRef.current.get(index) ?? 0) + 1;
+    if (nextCount !== null) clickCountsRef.current.set(index, nextCount);
+    const cacheHit = nextCount !== null && lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null).status === "hit";
+    if (nextCount !== null) emitAnalytics(nextCount === 1
       ? { event: "sentence_click", sentenceIndex: index, sentenceChars: countChars(sentence.text), cacheHit }
       : { event: "sentence_reclick", sentenceIndex: index, reclickOrdinal: nextCount });
     const priorAttempt = readAttemptRef.current;
@@ -801,8 +802,10 @@ export default function Reader({ docId }: { docId: string }) {
           abortPhase: priorAttempt.clock.firstTextAt === null ? "waiting" : "streaming" });
       }
     }
-    readAttemptRef.current = { index, clickedAt: performance.now(), cacheHit, firstClick: nextCount === 1,
-      clock: new ReadCompleteClock(), completeReported: false, abortReported: false, settled: cacheHit };
+    readAttemptRef.current = nextCount === null ? null : {
+      index, clickedAt: performance.now(), cacheHit, firstClick: nextCount === 1,
+      clock: new ReadCompleteClock(), completeReported: false, abortReported: false, settled: cacheHit,
+    };
 
     cancelPendingCollapse();
     const anchor = anchorAtClick(target, clientX, clientY);

@@ -147,9 +147,13 @@ export default function GlossPanel({
       setSlow(false);
       return;
     }
-    const timer = window.setTimeout(() => setSlow(true), SLOW_NOTICE_MS);
+    const timer = window.setTimeout(() => {
+      // 慢提示同样让面板长高：与逐字显示走同一个锚定事务，面板在视口上方时可见内容不动（G-47）
+      pendingRevealAnchor.current = onBeforeReveal(sentenceIndex);
+      setSlow(true);
+    }, SLOW_NOTICE_MS);
     return () => window.clearTimeout(timer);
-  }, [busy, visible]);
+  }, [busy, onBeforeReveal, sentenceIndex, visible]);
 
   /*
    * 仅未保存的 transient 撑开期间高度只增不减（决议：生成结束不是用户操作，由它引起的位移违反产品不变量）。

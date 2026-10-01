@@ -23,7 +23,7 @@
    只有明确需要真实生成的测试才用真 key 启动，并且事先在报告里说明。
    依据：G-02B 浏览器实测时，文档打开后阅读器自动请求结构摘要，真实调用 1 次（第二次误触发）。
 7. **不碰 Clara 的验证工作区**：`C:\Users\23750\projects\gloss-verify` 是 Clara 亲验专用的
-   git worktree，Codex 不在其中执行任何命令，也不移除它。主仓库目录的分支切换会热重载
+   git worktree，任何代码代理（Codex、Claude Code 等）都不在其中执行任何命令，也不移除它。主仓库目录的分支切换会热重载
    Clara 正在跑的 dev server，导致她验的不是目标分支的代码。
    依据：2026-09-26 G-44 亲验时，共享工作区切换分支使 Clara 的整轮验证作废。
 
@@ -625,17 +625,88 @@ gloss/
 ---
 
 ### G-47 · G-40 视口上方流式补偿脚本的逐帧漂移
-**P1** ｜ 来源：G-15a 对照诊断，2026-10-01 ｜ 分支待定
+**P1** ｜ 来源：G-15a 对照诊断，2026-10-01 ｜ 分支 `claude/g47-slow-notice-anchor` ｜ 自测完成：2026-10-01（Claude Code）
 
-**现象**：`scripts/verify-g40.mjs` 的 `G40_PROBE_ABOVE=1` 场景，在补偿开启时报告逐帧最大位移 57.1875px，超过脚本的 0.5px 门槛。2026-10-01 用 Edge、1280×720、100% 缩放、58px 面板宽度、12 秒首字延迟，在隔离工作区对 `origin/main`（`19dff66`）完成 3 次有效实测，逐帧最大位移依次为 57.1875px、57.1875px、57.1875px；在 G-40 合并提交 `88bddc9` 完成 1 次实测，仍为 57.1875px，**不是 0px**。因此该现象不由 G-15a 引入；与 G-40 卡的 0px 验收记录不符，根因未查。本卡只登记，不在 G-15a 修复。
+**现象**：`scripts/verify-g40.mjs` 的 `G40_PROBE_ABOVE=1` 场景，在补偿开启时报告逐帧最大位移 57.1875px，超过脚本的 0.5px 门槛。2026-10-01 用 Edge 154.0.4258.37 headless、视口 754×440（脚本未指定窗口尺寸，为无头默认值）、devicePixelRatio 1、58px 面板宽度、12 秒首字延迟，在隔离工作区对 `origin/main`（`19dff66`）完成 3 次有效实测，逐帧最大位移依次为 57.1875px、57.1875px、57.1875px；在 G-40 合并提交 `88bddc9` 完成 1 次实测，仍为 57.1875px，**不是 0px**。因此该现象不由 G-15a 引入；与 G-40 卡的 0px 验收记录不符，根因未查。本卡只登记，不在 G-15a 修复。
 
 **复现**：从待测提交启动 `scripts/dev-slow-gloss.mjs`，覆盖 `DEEPSEEK_API_KEY=local-test-invalid`；先以「G40 认证预检。」请求 `/api/gloss`，确认服务端日志为 `HTTP 401`；再以 `G40_PROBE_ABOVE=1` 运行 `scripts/verify-g40.mjs`。核对输出的 `scenario=above`、`changes=35`、`maxStep` 与 `maxCumulative`。脚本用 `IntersectionObserver` 替身保留面板、将面板宽度设为 58px，并在每帧取视口参照字的 `getBoundingClientRect().top`。
 
-**验收**
-- [ ] 查明逐帧 57.1875px 跳动的原因，明确现有补偿逻辑与测试参照物各自的责任
-- [ ] 修复后同一脚本、视口与参数连续 3 遍逐帧最大位移均为 0px，并核对负对照仍能暴露漂移
+**根因**（G-47 诊断归类为「测量时机造成的假位移」；Clara 决定采用方案 1 修复）
+- 慢提示：`GlossPanel.tsx` 的 `SLOW_NOTICE_MS`（10 秒）到点后 `setSlow(true)`，面板插入「这句有点慢，再等一下…」，高度从 86.09375 增到 143.28125，即 +57.1875px（实测）。
+  算式（实测 computed style 与 rect，均按 1/64px 布局单位）：
+  `28.6875`（`.gloss-panel-pending` 一行，14px×2.05）+ `2.375`（`.gloss-panel-note` 上边距 0.2em×11.9px）+ `73.21875`（`.gloss-panel-note` 3 行，11.9px×2.05）+ `7`（`.action-row` 上边距 0.5em）+ `32`（`.action-row` min-height）− `86.09375`（`.gloss-panel[data-state="busy"]` 的 min-height `calc(3 * 2.05em)`）= 57.1875。
+- 这次增高不在 G-40 的锚定事务（`capturePanelGrowth` / `restorePanelGrowth`）内，由 `Reader.tsx` 阅读位置 `ResizeObserver`（`drift` 补偿，`Reader.tsx:660-661`）在绘制前补回（实测：scrollBy 调用栈落在该回调）。
+- 脚本在 rAF 回调里读位置；rAF 先于同一帧的 ResizeObserver 回调执行，所以读到的是补偿前的中间状态（读代码 + 规范；实测 rAF 第 540 帧 top +57.1875，第 541 帧已补回）。
+- 未绘制（实测）：用 CDP `Page.startScreencast` 加 CSS Custom Highlight 把参照字涂红，2 遍有效录制（698、699 帧），红色最上行全程只取 32 或 33，没出现 89；慢提示后的第一帧 scrollOffsetY 已为 508。
+- 整数 scrollY 留下 +0.1875 残差（实测：451→508 只滚了 57），一直保持到生成结束，即原 signedSum 0.1875。
+- G-40 当年 0px（实测复现）：首字延迟 3 秒时没有慢提示，`changes=36`，四项都为 0；12 秒时慢提示一步吞掉 96.375、125.0625 两级高度，36 − 2 + 1 = 35。
 
-**会改 / 不改**：待开工复述并确认；本轮只新增本卡，不修改 G-40 代码。
+**修复**：慢提示计时器触发时，先调用 `onBeforeReveal(sentenceIndex)` 存入 `pendingRevealAnchor.current`，再 `setSlow(true)`，由现有 layout effect 调用 `onAfterReveal` 在同一次提交内补偿；依赖数组加入 `onBeforeReveal`、`sentenceIndex`。
+- 读代码：两处传入的 `onBeforeReveal` 都是 `capturePanelGrowth`（`useCallback` 空依赖，稳定），不会反复重置 10 秒计时器。
+- 读代码：慢提示与逐字显示计时器在同一轮先后取锚点时，`capturePanelGrowth` 在同句、同面板、scrollY 差 <0.5px 时返回同一个锚点对象，第二次取不破坏第一次的锚点。
+- 读代码：crossing / inside 时 `shouldAnchorPanelGrowth`（`Reader.tsx:1619-1621`，`panelBottom <= 0`）为假，`capturePanelGrowth`（`Reader.tsx:1037-1039`）把 `growthAnchorRef.current` 置为 null 并返回 null，`pendingRevealAnchor` 为 null，`GlossPanel.tsx:191-195` 的 layout effect 不调用 `onAfterReveal`，因此等价于不调用；把 `growthAnchorRef` 置空与逐字显示计时器每 45ms 已有的行为相同。
+
+**产品可达性**（实测，不用 IntersectionObserver 替身，两种方式各 1 遍）：一次跳到面板底边 −220px，第 2 个 rAF 面板已卸载，此前增高 0 次；流式期间每帧下滚 15px，面板底边到 −1.25px 的那一帧仍挂载，下一帧卸载，期间增高 0 次。该场景仍不可达，与 G-40 卡记录一致。
+
+**验收**（以下勾选为 Claude Code 自测，Edge 154.0.4258.37 headless、754×440、dpr 1、58px，代码为 `03bb3b0` + 本分支修改）
+- [x] 查明逐帧 57.1875px 跳动的原因，明确现有补偿逻辑与测试参照物各自的责任（见「根因」）
+- [x] 修复后同一脚本、视口与参数连续 3 遍逐帧最大位移均为 0px，并核对负对照仍能暴露漂移
+      —— 12 秒、`G40_PROBE_ABOVE=1`：3 遍均为 changes 35、maxStep 0、maxCumulative 0、signedSum 0（另有 3 次因 CDP 超时作废）；
+      负对照 12 秒、`G40_DISABLE_COMPENSATION=1`：3 遍均为 changes 35、maxStep 57.375、maxCumulative 1043.03125、signedSum 1043.03125；
+      3 秒：3 遍均为 changes 36，其余三项为 0。
+      修复后 screencast（12 秒，1 遍，693 帧）：rAF 在慢提示帧读数为 0；慢提示前后相邻两帧红色最上行均为 32；全程取值 {32, 33}，另有 1 帧无红色（测量开始时）。
+- [ ] Clara 在 gloss-verify 亲验：本分支 G40_PROBE_ABOVE=1 为 maxStep 0，origin/main 为 57.1875
+
+**完整三场景**：
+- `verify-g40.mjs` 完整模式（3 场景 × 3 遍）因脚本原有的 CDP 超时没能跑完一次，移交 G-48。
+  - 本分支 12 秒：作废 7 次，每次只完成 1 遍；
+  - 本分支 3 秒：作废 7 次，各次完成 4、3、4、3、3、2、2 遍，完成的遍次四项均为 0；
+  - 未修改的 `03bb3b0` 3 秒：同样 7 次全部超时，各次完成 2、3、3、3、3、3、3 遍。
+- crossing、inside 的 12 秒证据来自临时探针 `scripts/tmp-g47-probe.mjs`（未提交，每遍一个全新浏览器进程、只跑一个场景，断言与门槛照抄 `verify-g40.mjs` 第 104–184 行），**不是 `verify-g40.mjs` 跑出的结果**：
+  - crossing 3 遍：均为 changes 35、maxStep 0、maxCumulative 0、signedSum 0；
+  - inside 3 遍：均为 changes 35、maxStep 0、maxCumulative 0、signedSum 0、belowDelta 1043.03125，finalPanelHeight − initialPanelHeight = 1129.125 − 86.09375 = 1043.03125；
+  - 6 遍超时 0 次。
+
+**会改**：`components/reader/GlossPanel.tsx`、`KANBAN.md`
+**不改**：`components/reader/Reader.tsx`、`components/reader/Reader.test.ts`、`scripts/verify-g40.mjs`、`scripts/dev-slow-gloss.mjs`、`styles/*`、`PRD.md`
+**回滚**：`git revert`
+
+---
+
+### G-48 · verify-g40 完整模式超时与测量环境不固定
+**P1** ｜ 来源：G-47，2026-10-01 ｜ 分支待定
+
+**现象**
+- 完整模式反复报 `Chrome CDP timed out: Runtime.evaluate`（40 秒），没能跑完一次：
+  - 未修改的 `03bb3b0`，3 秒延迟：7 次全部超时，各次完成 2、3、3、3、3、3、3 遍；
+  - `03bb3b0` + G-47 修改，3 秒：7 次全部超时，各次完成 4、3、4、3、3、2、2 遍；
+  - `03bb3b0` + G-47 修改，12 秒：7 次全部超时，每次只完成 1 遍。
+  - 未修改的 `03bb3b0` 在 12 秒下没法用完整模式测：第 1 遍 above 就因 57.1875 断言退出，到不了后面的遍次。
+- 单遍模式（`G40_PROBE_ABOVE=1`，每次一个新浏览器）也会偶发超时：G-47 期间作废 5 次（诊断阶段 3 次中 2 次，修复后 6 次尝试中 3 次）。
+- 单场景、全新浏览器进程（G-47 临时探针）：crossing 3 遍、inside 3 遍，超时 0 次。
+- 视口未固定：脚本不设窗口尺寸，结果依赖无头默认值。G-47 测量开始前读到 754×440；探针在 crossing / inside 结束后读到 754×406，原因未查。
+- 输出不含视口与浏览器版本。
+- 超时原因未查。
+
+**说明**：G-29、G-39 改动自动收起时机之前，完整模式必须恢复可用。
+
+**验收**
+- [ ] 查明超时根因
+- [ ] 完整模式 3 场景 × 3 遍一次跑通，连续 3 次
+- [ ] 脚本固定并输出视口与浏览器版本
+
+**回滚**：`git revert`
+
+---
+
+### G-49 · 逐字显示阶段绘制位置 1 设备像素差
+**P3** ｜ 来源：G-47，2026-10-01 ｜ 分支待定
+
+**现象**：G-47 screencast 中，慢提示后 2.3–5.5 秒（逐字显示阶段），参照字红色最上行在 32 与 33 之间变化，rAF 读数恒为 32.15625。疑为小数 `translate` 补偿的像素取整，未查实。按产品不变量，亚像素 <1px 暂视为 0。
+
+**验收**
+- [ ] 查明原因，判断读者是否可察觉
+
 **回滚**：`git revert`
 
 ---
@@ -894,6 +965,12 @@ _（完成的 issue 移到这里，保留验收清单）_
 - [x] 撑开区在视口内时，保持 G-07 行为（撑开区及上方不动，下方被推开）
 
 **实测记录**：真实面板宽度下 148 字白话约 5 次增高（估算）；表中的 36 次是把面板宽度压到 58px 得到的压力测试值，用于验证补偿累计不漂移，不是真实场景的增高次数。隔离测试 3 个场景各 3 遍，每遍实测 36 次增高，逐次最大位移、累计最大位移、带符号逐次位移和均为 0px。
+
+**补记（2026-10-01，G-47）**：
+- `scripts/dev-slow-gloss.mjs` 的默认首字延迟一直是 12000ms：`60c8f44`（2026-09-19）新建 `FIRST_TOKEN_DELAY_MS = 12_000`；`b495983`（2026-09-19）改名为 `DEFAULT_FIRST_TOKEN_DELAY_MS = 12_000`，并可用 `SLOW_GLOSS_FIRST_TOKEN_DELAY_MS` 覆盖；之后包括 `88bddc9` 在内都没有改过这个值。
+- 默认 12 秒下，`88bddc9` 与 `03bb3b0` 的 above 探针 maxStep 均为 57.1875。这是 rAF 读数，未绘制，见 G-47。
+- 首字延迟 3 秒时为 0。
+- 当年得到 0px 时所用的首字延迟与视口没有记录。
 
 **会改**：`components/reader/Reader.tsx`、`components/reader/GlossPanel.tsx`、`components/reader/Reader.test.ts`、`scripts/dev-slow-gloss.mjs`、`scripts/verify-g40.mjs`
 **回滚**：git revert

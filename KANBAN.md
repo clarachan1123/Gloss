@@ -439,6 +439,7 @@ gloss/
       自测（Claude Code，2026-10-01）：本地慢上游首字延迟 1,000ms 时，未命中句 gloss_first_token.firstTokenMs = 1,109.9ms，同一请求服务端日志 firstChunkMs = 1,021ms，单列记录；命中缓存的点击只有 sentence_click 与 gloss_complete，没有 gloss_first_token。未自测：P90（需线上数据）。
 - [ ] 服务端 ai_call 保存 usage；超长率只由服务端 gloss_overlength 与 ai_call.outcome 统计，客户端不区分 C5
       未自测：工作副本无 Upstash、`ANALYTICS_ENABLED` 未设，服务端埋点不写入；本地慢上游不返回 usage。现有单元测试只覆盖关闭时写入 0 次。
+      线上记录 2026-10-01：gloss、explain、structure 三类 ai_call 都带 cacheHitTokens、cacheMissTokens、completionTokens，usageKnown true。超长率统计本次未触发，未验证。
 - [ ] **线上首字延迟 P90 ≤2.5s**（待上线亲验；来自 G-07：G-07 只有本地实测）——待上线后验证
       未自测：需线上真实调用数据。
 - [ ] **线上单次调用成本**（待上线亲验），用于校准 PRD 3.8 的额度阈值——待上线后验证
@@ -455,7 +456,7 @@ gloss/
 - [x] 线上写入：ANALYTICS_ENABLED=1 仅设于 Production 并重新部署；无痕窗口访问后 export 得到 reader_first_seen，purge 后再 export 为 0——Clara 亲验 2026-10-01
 
 **G-15b 可验证增量**：接入已有功能的其余 PRD 4.1 事件，包括 G-11 的 deep_explain_blocked；逐事件核对触发次数和字段。
-- [ ] G-15b 事件接入与导出核对
+- [x] G-15b 事件接入与导出核对
       接入 7 个事件（分支 `claude/g15b-events`）：deep_explain_click {sentenceIndex, source: action_row | context_menu}、deep_explain_blocked {sentenceIndex}、report_error_click {sentenceIndex}、gloss_save {sentenceIndex, edited: false}、gloss_dismiss_early {sentenceIndex, visibleMs}、reader_enter {source: shelf | upload | direct, positionRestored}、shelf_book_click {entry: continue | cover | start, daysSinceOpenBucket}。page_view、session_end、sentence_hover 不接。
       dismiss 判定为读者主动收起（再点同一句、点另一句、Esc、点别处），且限首次撑开。
       reader_enter 直接写入本地队列，不派发 gloss:analytics：整页加载时 Reader 在 226ms 派发、采集器在 258ms 才开始监听（本地实测 1 次），派发的事件会丢；与 markAnalyticsOpen 写法一致。
@@ -464,10 +465,12 @@ gloss/
       单元测试（42c5b53）：npm test 453 通过、17 跳过、0 失败；npx tsc --noEmit 通过。
       亲验 2026-10-01（Clara，gloss-verify，dev:slow-gloss，提交 42c5b53，Chrome 窗口可见）：缓存命中的首次撑开 1 秒内 Esc → gloss_dismiss_early，visibleMs 145；同句重读 1 秒内 Esc → 仅 sentence_reclick，无 dismiss；刷新后首次撑开停留约 4 秒再 Esc → sentence_click、gloss_complete，无 dismiss。G-46 自动收起只有单元测试覆盖。
       2026-10-01 合并进 main；待线上核对：Claude 经内置浏览器在 withglossline.com 触发事件，Clara 运行 analytics-feedback export 核对字段；本次不 purge，记录测试时段供 W4 扣除。
-- [ ] 退出开关打开时，本地队列里已有的待发事件未清除；关闭开关后会补发。应在开关生效时清空队列。来源：G-15a 亲验，2026-10-01。
+      线上核对 2026-10-01（Claude 经内置浏览器在 withglossline.com 操作，Clara 运行 analytics-feedback export 核对，提交 27f936e）：测试时段 UTC 03:09–03:11。浏览器端发出 17 条不重复事件，其中 16 条经 fetch 返回 204、shelf_book_click 只经 beacon，导出全部命中且字段一致：reader_first_seen、doc_upload_attempt、doc_parse_complete、reader_enter（upload）、sentence_click×2、gloss_first_token×2、gloss_complete×2、gloss_read_complete、gloss_save、deep_explain_click（action_row）、deep_explain_blocked、gloss_dismiss_early（visibleMs 1288.9）、shelf_book_click（continue，0）、report_error_click。report_error_click 为手动派发 CustomEvent，未点击「翻错了」，以免写入 G-12 上报库，只证明服务端白名单接受。另有服务端 ai_call 4 条（gloss×2、explain×1、structure×1），usage 字段齐全。导出中无原文、白话、书名、docId。未 purge。
+- [x] 退出开关打开时，本地队列里已有的待发事件未清除；关闭开关后会补发。应在开关生效时清空队列。来源：G-15a 亲验，2026-10-01。
       处理（分支 `claude/g15b-events`）：所有检查开关的位置（入队、待发读取、回访标记、flush、beacon、路由变化）改为检查时一并清空 outbox，不动 firstUseDay、readerReturned、docs；另监听 storage 事件，其他标签页写入开关后立即清空。
       自测（Claude Code，2026-10-01）：同页写入后 outbox 仍为 5 条，9.3 秒后在 30 秒节拍清空，期间发出 0 次；开关期间点击不入队；删除开关后 35.5 秒内只发出删除后新产生的事件，旧 eventId 0 条。另一标签页写入：本页 storage 事件在同一毫秒到达、队列立即为空（本页下一次 30 秒节拍尚未到）；删除开关后两页各等 36 秒以上，发出 0 次。
       2026-10-01 合并进 main；待线上核对：Claude 经内置浏览器在 withglossline.com 触发事件，Clara 运行 analytics-feedback export 核对字段；本次不 purge，记录测试时段供 W4 扣除。
+      线上核对 2026-10-01（Claude 经内置浏览器，withglossline.com）：outbox 有 2 条待发事件时写入开关，41 秒后 outbox 为空，期间发出 0 次；删除开关后等 37 秒，发出 0 次。被清掉的 reader_enter（eventId 111875d5…）不在导出中。
 
 **依赖功能的补接项（本轮不做）**：G-17 的 gloss_edit、G-18 的 lock_expand、G-14 的 doc_export、G-30 的 quota_exceeded、G-16 的 sample_doc_enter 等在各自功能完成后接入；不造假触发点。
 - [ ] `sentence_reclick` 与 G-18 的 `lock_expand` 可关联查询
@@ -481,6 +484,9 @@ gloss/
 
 **会改**：G-15a 使用 `gloss:analytics` CustomEvent、独立客户端与服务端模块及 `/api/analytics`；不新建 `lib/analytics.ts`
 **不改**：PRD、现有业务文案与成功响应格式
+
+**W4 扣除记录**：UTC 2026-10-01 03:09–03:11 的 21 条为 G-15b 线上核对的测试数据（17 条浏览器事件、4 条 ai_call）；其中 reader_first_seen 626afa95… 来自 Claude 内置浏览器，统计新读者时减 1。该浏览器已在 withglossline.com 打开退出开关。同次导出中另有 reader_first_seen 1499f830…（UTC 00:19），来源未知，不在测试时段内，不扣除，W4 复盘时再判断。
+
 **回滚**：`git revert`
 
 ---

@@ -57,6 +57,13 @@ export function isAnalyticsOptedOut(storage?: Storage): boolean {
   }
 }
 
+/** Every opt-out check also drops queued records, so turning the switch off later cannot resend them. */
+export function enforceAnalyticsOptout(storage?: Storage): boolean {
+  const optedOut = isAnalyticsOptedOut(storage);
+  if (optedOut) clearAnalyticsOutbox(storage);
+  return optedOut;
+}
+
 export function readAnalyticsState(storage?: Storage): AnalyticsLocalState | null {
   try {
     const raw = availableStorage(storage)?.getItem(ANALYTICS_LOCAL_KEY);
@@ -104,7 +111,7 @@ function append(state: AnalyticsLocalState, detail: AnalyticsDetail): AnalyticsE
 
 export function enqueueAnalytics(detail: AnalyticsDetail, providedStorage?: Storage): AnalyticsEvent | null {
   const storage = availableStorage(providedStorage);
-  if (!storage || isAnalyticsOptedOut(storage)) return null;
+  if (!storage || enforceAnalyticsOptout(storage)) return null;
   const state = readAnalyticsState(storage);
   if (!state) return null;
   const event = append(state, detail);
@@ -113,7 +120,7 @@ export function enqueueAnalytics(detail: AnalyticsDetail, providedStorage?: Stor
 
 export function visitAnalytics(now = new Date(), providedStorage?: Storage): AnalyticsEvent | null {
   const storage = availableStorage(providedStorage);
-  if (!storage || isAnalyticsOptedOut(storage)) return null;
+  if (!storage || enforceAnalyticsOptout(storage)) return null;
   const state = readAnalyticsState(storage);
   if (!state) return null;
   const today = localDay(now);
@@ -135,7 +142,7 @@ export function visitAnalytics(now = new Date(), providedStorage?: Storage): Ana
 
 export function markAnalyticsImport(docId: string, now = new Date(), providedStorage?: Storage): void {
   const storage = availableStorage(providedStorage);
-  if (!storage || isAnalyticsOptedOut(storage)) return;
+  if (!storage || enforceAnalyticsOptout(storage)) return;
   const state = readAnalyticsState(storage);
   if (!state || !docId) return;
   state.docs[docId] ??= { importDay: localDay(now), opened: false, returned: false };
@@ -144,7 +151,7 @@ export function markAnalyticsImport(docId: string, now = new Date(), providedSto
 
 export function markAnalyticsOpen(docId: string, now = new Date(), providedStorage?: Storage): AnalyticsEvent | null {
   const storage = availableStorage(providedStorage);
-  if (!storage || isAnalyticsOptedOut(storage)) return null;
+  if (!storage || enforceAnalyticsOptout(storage)) return null;
   const state = readAnalyticsState(storage);
   if (!state || !docId) return null;
   const existing = state.docs[docId];
@@ -164,7 +171,7 @@ export function markAnalyticsOpen(docId: string, now = new Date(), providedStora
 
 export function pendingAnalytics(providedStorage?: Storage): AnalyticsEvent[] {
   const storage = availableStorage(providedStorage);
-  if (!storage || isAnalyticsOptedOut(storage)) return [];
+  if (!storage || enforceAnalyticsOptout(storage)) return [];
   return readAnalyticsState(storage)?.outbox ?? [];
 }
 
@@ -185,4 +192,30 @@ export function clearAnalyticsOutbox(providedStorage?: Storage): void {
   if (!state || state.outbox.length === 0) return;
   state.outbox = [];
   commit(storage, state);
+}
+
+export type ReaderEntrySource = "shelf" | "upload" | "direct";
+
+// In-memory and one-shot: never written to the URL or storage, and gone after a reload.
+let pendingReaderEntry: { docId: string; source: Exclude<ReaderEntrySource, "direct"> } | null = null;
+
+export function markReaderEntry(docId: string, source: Exclude<ReaderEntrySource, "direct">): void {
+  pendingReaderEntry = { docId, source };
+}
+
+export function takeReaderEntrySource(docId: string): ReaderEntrySource {
+  const pending = pendingReaderEntry;
+  pendingReaderEntry = null;
+  return pending?.docId === docId ? pending.source : "direct";
+}
+
+export function daysSinceOpenBucket(lastOpenedAt: unknown, now = new Date()): string {
+  if (typeof lastOpenedAt !== "number" || !Number.isFinite(lastOpenedAt)) return "never";
+  const difference = localDayDifference(localDay(new Date(lastOpenedAt)), localDay(now));
+  if (difference === null) return "never";
+  if (difference <= 0) return "0";
+  if (difference === 1) return "1";
+  if (difference <= 7) return "2-7";
+  if (difference <= 30) return "8-30";
+  return ">30";
 }

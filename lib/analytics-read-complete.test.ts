@@ -14,4 +14,14 @@ describe("read complete clock", () => {
     expect(clock.sample(7_300, true, true, 24, rect(0, 650), 700, false).readComplete).toBe(true);
     expect(clock.sample(8_000, true, true, 24, rect(0, 650), 700, false).readComplete).toBe(false);
   });
+
+  it("exposes accrued visible time and whether read complete was reported", () => {
+    const clock = new ReadCompleteClock();
+    clock.sample(0, true, true, 8, rect(0, 650), 700, false);
+    clock.sample(1_500, true, true, 8, rect(0, 650), 700, false);
+    expect(clock.visibleMs).toBe(1_500);
+    expect(clock.readReported).toBe(false);
+    clock.sample(2_000, true, true, 8, rect(0, 650), 700, false);
+    expect(clock.readReported).toBe(true);
+  });
 });

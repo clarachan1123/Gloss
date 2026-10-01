@@ -20,7 +20,7 @@ import {
 } from "@/lib/parse/validate";
 import { StorageError, saveDocument, type StorageErrorCode } from "@/lib/storage";
 import { emitAnalytics, fileSizeBucket, parseCharsBucket, sentenceCountBucket } from "@/lib/analytics-events";
-import { markAnalyticsImport } from "@/lib/analytics-local";
+import { markAnalyticsImport, markReaderEntry } from "@/lib/analytics-local";
 import { segmentParagraphs } from "@/lib/segment";
 
 interface UploadNotice {
@@ -105,6 +105,7 @@ export default function Upload({ onStorageFull, droppedFile, onDroppedFileHandle
     });
 
     if (warnings.length === 0) {
+      markReaderEntry(docId, "upload");
       router.push(`/read/${docId}`);
       return;
     }
@@ -213,7 +214,7 @@ export default function Upload({ onStorageFull, droppedFile, onDroppedFileHandle
       {summary && <p className={styles.summary}>{summary}</p>}
 
       {readyDocId && (
-        <button type="button" className={styles.button} onClick={() => router.push(`/read/${readyDocId}`)}>
+        <button type="button" className={styles.button} onClick={() => { markReaderEntry(readyDocId, "upload"); router.push(`/read/${readyDocId}`); }}>
           开始阅读
         </button>
       )}

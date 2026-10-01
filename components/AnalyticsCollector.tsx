@@ -2,11 +2,11 @@
 
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { nextAnalyticsBatch, type AnalyticsDetail } from "@/lib/analytics-events";
+import { ANALYTICS_OPTOUT_KEY, nextAnalyticsBatch, type AnalyticsDetail } from "@/lib/analytics-events";
 import {
   acknowledgeAnalytics,
+  enforceAnalyticsOptout,
   enqueueAnalytics,
-  isAnalyticsOptedOut,
   pendingAnalytics,
   visitAnalytics,
 } from "@/lib/analytics-local";
@@ -19,7 +19,7 @@ export default function AnalyticsCollector() {
   useEffect(() => {
     visitAnalytics();
     const flush = async () => {
-      if (sending.current || isAnalyticsOptedOut()) return;
+      if (sending.current || enforceAnalyticsOptout()) return;
       sending.current = true;
       try {
         for (;;) {
@@ -41,7 +41,7 @@ export default function AnalyticsCollector() {
       }
     };
     const beacon = () => {
-      if (isAnalyticsOptedOut()) return;
+      if (enforceAnalyticsOptout()) return;
       const events = pendingAnalytics();
       for (let offset = 0; offset < events.length;) {
         const batch = nextAnalyticsBatch(events.slice(offset));
@@ -58,21 +58,27 @@ export default function AnalyticsCollector() {
       if (pendingAnalytics().length >= 10) void flush();
     };
     const onVisibility = () => { if (document.hidden) beacon(); };
+    // Another tab wrote the switch; writes in this tab are caught at the next check above.
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === ANALYTICS_OPTOUT_KEY || event.key === null) enforceAnalyticsOptout();
+    };
     window.addEventListener("gloss:analytics", onEvent);
     window.addEventListener("pagehide", beacon);
+    window.addEventListener("storage", onStorage);
     document.addEventListener("visibilitychange", onVisibility);
     const interval = window.setInterval(() => { void flush(); }, 30_000);
     if (pendingAnalytics().length >= 10) void flush();
     return () => {
       window.removeEventListener("gloss:analytics", onEvent);
       window.removeEventListener("pagehide", beacon);
+      window.removeEventListener("storage", onStorage);
       document.removeEventListener("visibilitychange", onVisibility);
       window.clearInterval(interval);
     };
   }, []);
 
   useEffect(() => {
-    if (previousPath.current !== null && previousPath.current !== pathname && !isAnalyticsOptedOut()) {
+    if (previousPath.current !== null && previousPath.current !== pathname && !enforceAnalyticsOptout()) {
       const events = pendingAnalytics();
       for (let offset = 0; offset < events.length;) {
         const batch = nextAnalyticsBatch(events.slice(offset));

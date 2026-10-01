@@ -28,8 +28,8 @@ import {
 import { MAX_AFTER, MAX_BEFORE, MAX_EXPLAIN_CONTEXT_CHARS } from "@/lib/context";
 import { streamExplain, type ExplainInput } from "@/lib/explain-client";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
-import { emitAnalytics } from "@/lib/analytics-events";
-import { markAnalyticsOpen } from "@/lib/analytics-local";
+import { DISMISS_EARLY_MS, emitAnalytics } from "@/lib/analytics-events";
+import { enqueueAnalytics, markAnalyticsOpen, takeReaderEntrySource, type ReaderEntrySource } from "@/lib/analytics-local";
 import { ReadCompleteClock } from "@/lib/analytics-read-complete";
 import { countChars, skippedSummary, type ParsedHeading, type SkippedContent } from "@/lib/parse/validate";
 import { GLOSS_PROMPT_VERSION, TERM_CLOSE, TERM_OPEN } from "@/lib/prompts/gloss";
@@ -224,6 +224,8 @@ export default function Reader({ docId }: { docId: string }) {
   const collapseTimerRef = useRef<number | undefined>(undefined);
   const lastToggleRef = useRef<{ index: number; time: number } | null>(null);
   const restoredDocRef = useRef<string | null>(null);
+  /** reader_enter 的来源标记一经取出即作废；StrictMode 重跑 effect 时沿用同一次取出的结果。 */
+  const entrySourceRef = useRef<{ docId: string; source: ReaderEntrySource } | null>(null);
   const pendingOpenRef = useRef<PendingOpen | null>(null);
   /** 宽度／字体导致全书重量时，事务必须留到最终（已插回）布局才消费。 */
   const pendingMeasureTransactionRef = useRef<Transaction | null>(null);
@@ -252,7 +254,7 @@ export default function Reader({ docId }: { docId: string }) {
   const clickCountsRef = useRef(new Map<number, number>());
   const readAttemptRef = useRef<{
     index: number; clickedAt: number; cacheHit: boolean; firstClick: boolean;
-    clock: ReadCompleteClock; completeReported: boolean; abortReported: boolean; settled: boolean;
+    clock: ReadCompleteClock; completeReported: boolean; abortReported: boolean; settled: boolean; dismissReported: boolean;
   } | null>(null);
   function sampleReadAttempt() {
     const attempt = readAttemptRef.current;
@@ -271,8 +273,25 @@ export default function Reader({ docId }: { docId: string }) {
       emitAnalytics({ event: "gloss_complete", sentenceIndex: attempt.index, cacheHit: attempt.cacheHit,
         durationMs: Math.max(0, now - attempt.clickedAt), glossChars: chars });
     }
-    if (result.readComplete && attempt.firstClick) emitAnalytics({ event: "gloss_read_complete", sentenceIndex: attempt.index,
+    if (result.readComplete && attempt.firstClick && !attempt.dismissReported) emitAnalytics({ event: "gloss_read_complete", sentenceIndex: attempt.index,
       visibleMs: result.visibleMs, bottomSeen: true, glossChars: result.glossChars });
+  }
+  /**
+   * 读者主动收起（再点同一句、点另一句）开始的那一刻判定 gloss_dismiss_early；
+   * 收起动画、G-46 自动收起、点别处、Esc、离页都不经过这里。
+   */
+  function reportEarlyDismiss() {
+    const attempt = readAttemptRef.current;
+    if (!attempt || attempt.dismissReported || expansion?.index !== attempt.index) return;
+    sampleReadAttempt();
+    // 分母同读完率：首次撑开且白话已完整显示；生成未完成时收起归 gloss_abort。
+    if (!attempt.completeReported || attempt.clock.readReported || attempt.clock.visibleMs >= DISMISS_EARLY_MS) return;
+    attempt.dismissReported = true;
+    emitAnalytics({ event: "gloss_dismiss_early", sentenceIndex: attempt.index, visibleMs: attempt.clock.visibleMs });
+  }
+  function entrySourceFor(id: string): ReaderEntrySource {
+    if (entrySourceRef.current?.docId !== id) entrySourceRef.current = { docId: id, source: takeReaderEntrySource(id) };
+    return entrySourceRef.current.source;
   }
   /** 全书结构摘要；开书时后台算，算好之前为 null */
   const structureRef = useRef<string | null>(null);
@@ -281,6 +300,7 @@ export default function Reader({ docId }: { docId: string }) {
   contextMenuRef.current = contextMenu;
 
   useEffect(() => {
+    entrySourceFor(docId);
     setReportedIndexes(new Set());
     clickCountsRef.current.clear();
     readAttemptRef.current = null;
@@ -613,6 +633,9 @@ export default function Reader({ docId }: { docId: string }) {
     if (restoredDocRef.current !== docId) {
       const saved = loadReadingPosition(docId);
       const initial = saved !== null && saved < sentences.length ? saved : 0;
+      // 整页加载时这里早于 AnalyticsCollector 开始监听（其外层另有 Suspense），派发事件会丢；
+      // 与 markAnalyticsOpen 一样直接写入本地队列。
+      enqueueAnalytics({ event: "reader_enter", source: entrySourceFor(docId), positionRestored: initial > 0 });
       scrollToSentence(body, initial);
       position.index = initial;
       position.offset = sentenceTop(body, initial);
@@ -794,6 +817,7 @@ export default function Reader({ docId }: { docId: string }) {
       : { event: "sentence_reclick", sentenceIndex: index, reclickOrdinal: nextCount });
     const priorAttempt = readAttemptRef.current;
     if (priorAttempt && priorAttempt.index !== index) {
+      reportEarlyDismiss();
       sampleReadAttempt();
       priorAttempt.clock.stop(performance.now());
       const priorView = gloss?.index === priorAttempt.index ? gloss.view : null;
@@ -804,7 +828,7 @@ export default function Reader({ docId }: { docId: string }) {
     }
     readAttemptRef.current = nextCount === null ? null : {
       index, clickedAt: performance.now(), cacheHit, firstClick: nextCount === 1,
-      clock: new ReadCompleteClock(), completeReported: false, abortReported: false, settled: cacheHit,
+      clock: new ReadCompleteClock(), completeReported: false, abortReported: false, settled: cacheHit, dismissReported: false,
     };
 
     cancelPendingCollapse();
@@ -888,6 +912,7 @@ export default function Reader({ docId }: { docId: string }) {
     lastToggleRef.current = { index, time: now };
 
     if (savedRegions?.has(index)) {
+      reportEarlyDismiss();
       const anchor = anchorAtClick(target, event.clientX, event.clientY);
       if (readingMode === "reading" && expandedSavedIndex !== index) {
         expandSaved(index, { anchor, showActions: true });
@@ -895,6 +920,7 @@ export default function Reader({ docId }: { docId: string }) {
         commitSaved(activeSavedIndex === index ? null : index, { anchor });
       }
     } else if (expansion?.index === index && collapseTimerRef.current === undefined) {
+      reportEarlyDismiss();
       collapse(true);
     } else {
       open(index, target, event.clientX, event.clientY);
@@ -1224,6 +1250,13 @@ export default function Reader({ docId }: { docId: string }) {
   }, [stageExplainView]);
 
   const retryExplainFor = useCallback((index: number) => startExplainFor(index, true), [startExplainFor]);
+  // 操作行「听不懂」；Paragraph 是 memo，回调必须恒定。失败后的「重试」走 retryExplainFor，不计点击。
+  const explainFromActionRow = useCallback((index: number) => {
+    const status = explainViewsRef.current.get(index)?.status ?? "idle";
+    if (status === "loading" || status === "streaming" || status === "done") return;
+    emitAnalytics({ event: "deep_explain_click", sentenceIndex: index, source: "action_row" });
+    startExplainFor(index);
+  }, [startExplainFor]);
   const recordExplainBlocked = useCallback((index: number) => {
     window.dispatchEvent(new CustomEvent("gloss:analytics", {
       detail: { event: "deep_explain_blocked", sentenceIndex: index },
@@ -1296,7 +1329,7 @@ export default function Reader({ docId }: { docId: string }) {
     }
     if (status === "loading" || status === "streaming") return;
     window.dispatchEvent(new CustomEvent("gloss:analytics", {
-      detail: { event: "deep_explain_click", sentenceIndex: index, source: "右键" },
+      detail: { event: "deep_explain_click", sentenceIndex: index, source: "context_menu" },
     }));
     closeContextMenu();
     startExplainFor(index);
@@ -1363,6 +1396,7 @@ export default function Reader({ docId }: { docId: string }) {
       }
       if (index !== activeIndex || glossView.status !== "done" || !expansion) return "E2";
       const entry = await saveSavedGloss(docId, sentence, glossView.text);
+      emitAnalytics({ event: "gloss_save", sentenceIndex: index, edited: false });
       const next = new Map(savedGlossesRef.current).set(index, entry);
       savedGlossesRef.current = next;
       const anchor = bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null;
@@ -1559,7 +1593,7 @@ export default function Reader({ docId }: { docId: string }) {
                   onAfterReveal={restorePanelGrowth}
                   onSave={toggleSavedGlossFor}
                   onExpandSaved={expandSavedFromMarker}
-                  onExplain={startExplainFor}
+                  onExplain={explainFromActionRow}
                   onExplainRetry={retryExplainFor}
                   onExplainBlocked={recordExplainBlocked}
                   sentences={sentences}

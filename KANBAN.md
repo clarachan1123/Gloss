@@ -418,8 +418,11 @@ gloss/
 
 **G-15a 验收**
 - [ ] 上报管道：最多 50 条、16 KB、事件与字段白名单、eventId 去重 SET NX、每条 TTL 60 天；本地队列最多 200 条，满 10 条或 30 秒发送，隐藏、pagehide、站内离开用 sendBeacon 冲刷
+      自测（Claude Code，2026-10-01）：单元测试覆盖 51 条整批 400、超 16 KB 413、关闭时 204 且写入 0 次、SET NX 与 TTL 5,184,000 秒（模拟存储）、本地 200 条上限、50/10 分批、满 10 条立即发送、30 秒定时发送、hidden 与站内跳转用 sendBeacon；本地 `dev:slow-gloss` 浏览器实测：30 秒定时 fetch 两次间隔 30.004 秒，满 10 条在页面 12.1 秒时立即发送（非 30 秒节拍），站内跳转与 hidden 各触发 sendBeacon 且记录留到 fetch 收到 204 才删除，本轮 `/api/analytics` 共 37 次全部 204。未自测：真实 Upstash 下的 SET NX 去重与 TTL（工作副本无 Upstash，`ANALYTICS_ENABLED` 未设）；pagehide 只经代码阅读。
 - [ ] **拒绝按 A1–A5、A7、A8 分类；A6、A9 作为警告单独计数**
+      自测（Claude Code，2026-10-01）：本地浏览器粘贴空文本得 doc_upload_reject A7、粘贴 50,002 字得 A8，各 1 次，均伴随 1 次 doc_upload_attempt（format paste）。未自测：A1–A5 与 A6、A9 警告（需上传文件，内置浏览器无文件上传入口）。
 - [ ] C1/C2/C3/C4/C6 及 D1/D2 分类；C2 与 C4 分开，WAF 403 与上游 429 分开；C5 客户端按普通完成处理
+      自测（Claude Code，2026-10-01，只验客户端映射）：本地浏览器在页面内替换 `/api/gloss` 响应，各 1 次——502 api_error→C2、502 empty→C4、403→C3/limitSource waf、429→C3/limitSource upstream、504 timeout→C1、422 refused→C6、200 首块后断流→D2、navigator.onLine=false→D1。未自测：服务端实际产生上述错误（本地慢上游只能返回 401）；C5 客户端按完成处理。
 - [x] 北极星（白话读完率）可计算
       读完 / 没读完 / 中止 / 重读四种情况——亲验 2026-10-01：Clara 启动服务，Claude 经内置浏览器代为操作与核对
       白话读完率口径：分子为 gloss_read_complete，分母为生成成功（含缓存命中）的首次撑开。
@@ -429,28 +432,45 @@ gloss/
       实现时如发现某条无法照做，先停下报告，不自行改口径。
 - [ ] 浏览器本地判定 reader_first_seen、reader_return_7d、doc_reopen_7d；不上传读者 ID、文档 ID 及其派生值。为 G3 在不存读者标识前提下新增；一人多设备、清缓存会造成已知误差
       上线前已使用的浏览器，首次使用日记为上线日；上线前导入的文档不参与 doc_reopen_7d。已知缺口，不追溯。
+      自测（Claude Code，2026-10-01）：单元测试覆盖第 0、1、7、8 天；本地浏览器首访得 reader_first_seen 1 条；把本机首用日与该文档导入日改为前一天后刷新，得 reader_return_7d、doc_reopen_7d 各 1 条，dayOffset 均为 1。上报内容不含 docId。
 - [x] 文件大小、parseChars、sentenceCount 只报分档；createdAt 服务端生成并截到分钟；无 PII 上报
       上报内容无原文、白话、书名、docId——亲验 2026-10-01：Clara 启动服务，Claude 经内置浏览器代为操作与核对
 - [ ] 客户端 firstTokenMs 从点击到白话首字出现在 DOM，只计缓存未命中；缓存命中不进 P90；服务端 firstChunkMs 单列诊断，不合并
+      自测（Claude Code，2026-10-01）：本地慢上游首字延迟 1,000ms 时，未命中句 gloss_first_token.firstTokenMs = 1,109.9ms，同一请求服务端日志 firstChunkMs = 1,021ms，单列记录；命中缓存的点击只有 sentence_click 与 gloss_complete，没有 gloss_first_token。未自测：P90（需线上数据）。
 - [ ] 服务端 ai_call 保存 usage；超长率只由服务端 gloss_overlength 与 ai_call.outcome 统计，客户端不区分 C5
+      未自测：工作副本无 Upstash、`ANALYTICS_ENABLED` 未设，服务端埋点不写入；本地慢上游不返回 usage。现有单元测试只覆盖关闭时写入 0 次。
 - [ ] **线上首字延迟 P90 ≤2.5s**（待上线亲验；来自 G-07：G-07 只有本地实测）——待上线后验证
+      未自测：需线上真实调用数据。
 - [ ] **线上单次调用成本**（待上线亲验），用于校准 PRD 3.8 的额度阈值——待上线后验证
+      未自测：需线上真实调用数据与 DeepSeek 账单。
 - [x] WAF 生效——Clara 亲验 2026-10-01：改规则后 31 次 /api/analytics 全为 400；随后 31 次 /api/gloss 为 30×400、第 31 次 403
 - [ ] **中止用量核对**：以服务端 abort 事件对照 DeepSeek 用量；上游在中止前已处理的 token 可能仍计费，不承诺零费用
       中止行为的验收口径为：a. 中止后本地不再发出新请求；b. 服务端日志记录 abort 事件。
       G-15 只负责记录与对账，不实现离页中止行为；离页中止、每日额度计数、用量显示分别移交 G-29、G-30、G-31。
       本轮第 6 条触发中止时 usage 为 null；中止前已处理 token 的费用无法从日志还原，实际扣款可能高于已知的 ¥0.00454。这是中止场景下日志口径缺口，纳入本项对账。
+      未自测：需服务端 abort 记录与 DeepSeek 后台用量对账；本地慢上游无计费。
 - [x] `gloss:analytics:optout` 为 `"1"` 时本浏览器不入队、不发送、不写回访标记；不阻断服务端 ai_call——亲验 2026-10-01：Clara 启动服务，Claude 经内置浏览器代为操作与核对
 - [ ] W4 结束顺序：Vercel 把 ANALYTICS_ENABLED 改为非 `"1"` 并重新部署 → export 核数 → 分析 → purge 核删除数
+      未自测：W4 结束时的线上步骤。
 - [x] 线上写入：ANALYTICS_ENABLED=1 仅设于 Production 并重新部署；无痕窗口访问后 export 得到 reader_first_seen，purge 后再 export 为 0——Clara 亲验 2026-10-01
 
 **G-15b 可验证增量（本轮不做）**：接入已有功能的其余 PRD 4.1 事件，包括 G-11 的 deep_explain_blocked；逐事件核对触发次数和字段。
 - [ ] G-15b 事件接入与导出核对
+      接入 7 个事件（分支 `claude/g15b-events`）：deep_explain_click {sentenceIndex, source: action_row | context_menu}、deep_explain_blocked {sentenceIndex}、report_error_click {sentenceIndex}、gloss_save {sentenceIndex, edited: false}、gloss_dismiss_early {sentenceIndex, visibleMs}、reader_enter {source: shelf | upload | direct, positionRestored}、shelf_book_click {entry: continue | cover | start, daysSinceOpenBucket}。page_view、session_end、sentence_hover 不接。
+      reader_enter 直接写入本地队列，不派发 gloss:analytics：整页加载时 Reader 在 226ms 派发、采集器在 258ms 才开始监听（本地实测 1 次），派发的事件会丢；与 markAnalyticsOpen 写法一致。
+      自测（Claude Code，2026-10-01）：单元测试 `npm test` 20 个文件 447 通过、17 跳过、0 失败，`npx tsc --noEmit` 通过；本地 `dev:slow-gloss` 浏览器逐事件核对派发 / 进队列 / 发出次数与字段，dismiss 的「可见满 2 秒」「已读完」「G-46 自动收起」三种情况因内置浏览器窗格处于隐藏状态（document.hidden 为 true）未在浏览器验证，只有单元测试。
+      导出核对待合并上线后在正式域名进行。
 - [ ] 退出开关打开时，本地队列里已有的待发事件未清除；关闭开关后会补发。应在开关生效时清空队列。来源：G-15a 亲验，2026-10-01。
+      处理（分支 `claude/g15b-events`）：所有检查开关的位置（入队、待发读取、回访标记、flush、beacon、路由变化）改为检查时一并清空 outbox，不动 firstUseDay、readerReturned、docs；另监听 storage 事件，其他标签页写入开关后立即清空。
+      自测（Claude Code，2026-10-01）：同页写入后 outbox 仍为 5 条，9.3 秒后在 30 秒节拍清空，期间发出 0 次；开关期间点击不入队；删除开关后 35.5 秒内只发出删除后新产生的事件，旧 eventId 0 条。另一标签页写入：本页 storage 事件在同一毫秒到达、队列立即为空（本页下一次 30 秒节拍尚未到）；删除开关后两页各等 36 秒以上，发出 0 次。
 
 **依赖功能的补接项（本轮不做）**：G-17 的 gloss_edit、G-18 的 lock_expand、G-14 的 doc_export、G-30 的 quota_exceeded、G-16 的 sample_doc_enter 等在各自功能完成后接入；不造假触发点。
 - [ ] `sentence_reclick` 与 G-18 的 `lock_expand` 可关联查询
 - [ ] C1 首字前自动重试与 PRD 3.9 C1「不自动重试」不一致；来源 G-15 复述，2026-09-30；不在 G-15 处理
+- [ ] 「术语行内」入口已不存在（G-11 改为每句操作行都有「听不懂」），PRD 4.1 deep_explain_click 的触发来源按 action_row / context_menu 记录；来源 G-15b，2026-10-01；只登记
+- [ ] PRD 4.1 report_error_click 的「句 hash + 原句 + 白话」与 shelf_book_click、reader_enter 的 doc_id 与隐私口径冲突，按隐私口径执行（埋点只带句序号、不带 docId）；来源 G-15b，2026-10-01；只登记
+- [ ] page_view（是否首访）、session_end（会话、时长、阅读进度）、sentence_hover（采样）口径未定义，暂不接；来源 G-15b，2026-10-01
+- [ ] rawErrorCode "network"（非断网的请求失败）归入 gloss_fail OTHER，分类待定；来源 G-15b，2026-10-01
 
 **会改**：G-15a 使用 `gloss:analytics` CustomEvent、独立客户端与服务端模块及 `/api/analytics`；不新建 `lib/analytics.ts`
 **不改**：PRD、现有业务文案与成功响应格式
@@ -657,6 +677,18 @@ gloss/
 
 **验收**
 - [ ] 查明原因，判断读者是否可察觉
+
+**回滚**：`git revert`
+
+---
+
+### G-50 · 句长与白话字数改为分档上报
+**P1 · W4 开始前完成** ｜ 来源：G-15b，2026-10-01 ｜ 分支待定
+
+**理由**：sentence_click.sentenceChars、gloss_complete.glossChars、gloss_read_complete.glossChars、gloss_overlength.outputChars 现为原始整数。「句序号 + 句长」序列可识别所读文本，与「字数、句数、大小一律只报分档」不一致。
+
+**验收**
+- [ ] sentenceChars、glossChars、outputChars 由原始整数改为分档
 
 **回滚**：`git revert`
 

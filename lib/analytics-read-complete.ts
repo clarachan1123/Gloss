@@ -28,6 +28,15 @@ export class ReadCompleteClock {
     return { firstText, readComplete, visibleMs: this.accrued, glossChars: this.glossChars };
   }
 
+  /** Visible time accrued up to the latest sample() or stop(). */
+  get visibleMs(): number {
+    return this.accrued;
+  }
+
+  get readReported(): boolean {
+    return this.reported;
+  }
+
   stop(now: number): void {
     if (this.visibleFrom !== null) this.accrued += Math.max(0, now - this.visibleFrom);
     this.visibleFrom = null;

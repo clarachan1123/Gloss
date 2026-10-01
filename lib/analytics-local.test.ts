@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { ANALYTICS_LOCAL_KEY, ANALYTICS_OPTOUT_KEY, nextAnalyticsBatch } from "./analytics-events";
-import { enqueueAnalytics, markAnalyticsImport, markAnalyticsOpen, readAnalyticsState, visitAnalytics } from "./analytics-local";
+import {
+  daysSinceOpenBucket,
+  enforceAnalyticsOptout,
+  enqueueAnalytics,
+  markAnalyticsImport,
+  markAnalyticsOpen,
+  markReaderEntry,
+  pendingAnalytics,
+  readAnalyticsState,
+  takeReaderEntrySource,
+  visitAnalytics,
+} from "./analytics-local";
 
 function memoryStore(): Storage {
   const values = new Map<string, string>();
@@ -53,5 +64,67 @@ describe("analytics local state", () => {
     const fullStore = { ...store, setItem: (_key: string, _value: string) => { throw new DOMException("full", "QuotaExceededError"); } } as Storage;
     expect(() => enqueueAnalytics({ event: "reader_first_seen" }, fullStore)).not.toThrow();
     expect(store.getItem("gloss:document:sample")).toBe("keep");
+  });
+});
+
+describe("G-15b optout clears the queue", () => {
+  it("drops queued records at the first check and never resends them after the switch is removed", () => {
+    const store = memoryStore();
+    visitAnalytics(new Date(2026, 8, 30), store);
+    markAnalyticsImport("local-only-doc", new Date(2026, 8, 30), store);
+    markAnalyticsOpen("local-only-doc", new Date(2026, 8, 30), store);
+    enqueueAnalytics({ event: "report_error_click", sentenceIndex: 1 }, store);
+    const before = readAnalyticsState(store)!;
+    expect(before.outbox).toHaveLength(2);
+
+    store.setItem(ANALYTICS_OPTOUT_KEY, "1");
+    expect(pendingAnalytics(store)).toEqual([]);
+    const cleared = readAnalyticsState(store)!;
+    expect(cleared.outbox).toEqual([]);
+    expect({ firstUseDay: cleared.firstUseDay, readerReturned: cleared.readerReturned, docs: cleared.docs })
+      .toEqual({ firstUseDay: before.firstUseDay, readerReturned: before.readerReturned, docs: before.docs });
+    expect(enqueueAnalytics({ event: "report_error_click", sentenceIndex: 2 }, store)).toBeNull();
+
+    store.removeItem(ANALYTICS_OPTOUT_KEY);
+    expect(pendingAnalytics(store)).toEqual([]);
+  });
+
+  it("reports whether the reader opted out and leaves an empty store unwritten", () => {
+    const store = memoryStore();
+    expect(enforceAnalyticsOptout(store)).toBe(false);
+    store.setItem(ANALYTICS_OPTOUT_KEY, "1");
+    expect(enforceAnalyticsOptout(store)).toBe(true);
+    expect(store.getItem(ANALYTICS_LOCAL_KEY)).toBeNull();
+  });
+});
+
+describe("G-15b shelf day bucket", () => {
+  const opened = new Date(2026, 8, 30, 23, 59).getTime();
+  it.each([
+    [new Date(2026, 8, 30, 23, 59, 30), "0"],
+    [new Date(2026, 9, 1, 0, 1), "1"],
+    [new Date(2026, 9, 2), "2-7"],
+    [new Date(2026, 9, 7), "2-7"],
+    [new Date(2026, 9, 8), "8-30"],
+    [new Date(2026, 9, 30), "8-30"],
+    [new Date(2026, 9, 31), ">30"],
+    [new Date(2026, 8, 29), "0"],
+  ])("local day difference to %s is %s", (now, bucket) => {
+    expect(daysSinceOpenBucket(opened, now)).toBe(bucket);
+  });
+
+  it.each([[undefined], [null], [Number.NaN], ["1700000000000"], [8.64e15 + 1]])("%s has no record", (value) => {
+    expect(daysSinceOpenBucket(value, new Date(2026, 9, 1))).toBe("never");
+  });
+});
+
+describe("G-15b reader entry marker", () => {
+  it("is one-shot and only applies to the document it was set for", () => {
+    markReaderEntry("doc-a", "shelf");
+    expect(takeReaderEntrySource("doc-a")).toBe("shelf");
+    expect(takeReaderEntrySource("doc-a")).toBe("direct");
+    markReaderEntry("doc-a", "upload");
+    expect(takeReaderEntrySource("doc-b")).toBe("direct");
+    expect(takeReaderEntrySource("doc-a")).toBe("direct");
   });
 });

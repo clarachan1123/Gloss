@@ -19,6 +19,8 @@ const format = oneOf("pdf", "docx", "txt", "paste", "unsupported");
 const index = (value: unknown) => integer(value) && (value as number) <= 100_000;
 const warnings = (value: unknown) => Array.isArray(value) && value.length <= 2 &&
   new Set(value).size === value.length && value.every((code) => code === "A6" || code === "A9");
+const daysSinceOpen = oneOf("never", "0", "1", "2-7", "8-30", ">30");
+export const DISMISS_EARLY_MS = 2_000;
 
 const fields: Record<string, Record<string, Check>> = {
   reader_first_seen: {},
@@ -46,12 +48,19 @@ const fields: Record<string, Record<string, Check>> = {
     bottomSeen: (value) => value === true,
     glossChars: integer,
   },
+  gloss_dismiss_early: { sentenceIndex: index, visibleMs: (value) => finite(value) && (value as number) < DISMISS_EARLY_MS },
   gloss_abort: { sentenceIndex: index, abortPhase: oneOf("waiting", "streaming") },
   gloss_fail: {
     sentenceIndex: index,
     failureCode: oneOf("C1", "C2", "C3", "C4", "C6", "D1", "D2", "OTHER"),
     limitSource: nullable(oneOf("waf", "upstream")),
   },
+  deep_explain_click: { sentenceIndex: index, source: oneOf("action_row", "context_menu") },
+  deep_explain_blocked: { sentenceIndex: index },
+  report_error_click: { sentenceIndex: index },
+  gloss_save: { sentenceIndex: index, edited: (value) => value === false },
+  reader_enter: { source: oneOf("shelf", "upload", "direct"), positionRestored: bool },
+  shelf_book_click: { entry: oneOf("continue", "cover", "start"), daysSinceOpenBucket: daysSinceOpen },
   ai_call: {
     callKind: oneOf("gloss", "structure", "explain"),
     attempt: (value) => integer(value) && (value as number) >= 1 && (value as number) <= 2,
@@ -76,7 +85,8 @@ export type AnalyticsDetail = { event: AnalyticsEventName; [key: string]: unknow
 export const CLIENT_EVENTS = new Set([
   "reader_first_seen", "reader_return_7d", "doc_reopen_7d", "doc_upload_attempt", "doc_upload_reject",
   "doc_parse_complete", "sentence_click", "sentence_reclick", "gloss_first_token", "gloss_complete",
-  "gloss_read_complete", "gloss_abort", "gloss_fail",
+  "gloss_read_complete", "gloss_abort", "gloss_fail", "gloss_dismiss_early", "deep_explain_click",
+  "deep_explain_blocked", "report_error_click", "gloss_save", "reader_enter", "shelf_book_click",
 ]);
 
 export function nextAnalyticsBatch(events: readonly AnalyticsEvent[]): AnalyticsEvent[] {

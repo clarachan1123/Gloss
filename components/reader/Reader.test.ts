@@ -1,11 +1,13 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import * as cache from "@/lib/cache";
 import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
-import { loadSavedGlosses } from "@/lib/storage";
+import { loadSavedGlosses, saveExplanation } from "@/lib/storage";
+import { validateAnalyticsEvent } from "@/lib/analytics-events";
+import { markReaderEntry } from "@/lib/analytics-local";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
 import Reader, { allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
 import { skippedSummary } from "@/lib/parse/validate";
@@ -409,5 +411,231 @@ describe("G-10b 性能注入记录", () => {
     );
     localStorage.setItem("gloss:saved:perf-fixture", JSON.stringify({ version: 1, entries }));
     expect(await loadSavedGlosses("perf-fixture", sentences)).toHaveLength(30);
+  });
+});
+
+describe("G-15b 阅读器事件", () => {
+  const text = "甲乙。丙丁。";
+  const glossText = "预载白话。";
+  type Detail = Record<string, unknown> & { event: string };
+  let events: Detail[] = [];
+  let now = 1_000;
+  let panelRect = { top: 100, bottom: 300, height: 200, left: 0, right: 600, width: 600, x: 0, y: 100 } as DOMRect;
+  let observers: { callback: IntersectionObserverCallback; targets: Element[] }[] = [];
+  const onAnalytics = (event: Event) => events.push((event as CustomEvent<Detail>).detail);
+  const of = (name: string) => events.filter((event) => event.event === name);
+  const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+  const originalRect = HTMLElement.prototype.getBoundingClientRect;
+  let roots: { root: ReturnType<typeof createRoot>; container: HTMLElement }[] = [];
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  function stubEnvironment(hitDocIds: readonly string[]) {
+    Object.defineProperty(document, "fonts", { configurable: true, value: { ready: Promise.resolve() } });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    fetchMock = vi.fn((url: string) => String(url).includes("/api/report")
+      ? Promise.resolve(new Response(null, { status: 204 }))
+      : new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("gloss-panel") ? panelRect : originalRect.call(this);
+    });
+    vi.stubGlobal("IntersectionObserver", class {
+      targets: Element[] = [];
+      constructor(callback: IntersectionObserverCallback) { observers.push({ callback, targets: this.targets }); }
+      observe(target: Element) { this.targets.push(target); }
+      disconnect() {}
+      unobserve() {}
+      takeRecords() { return []; }
+    });
+    vi.spyOn(cache, "preloadGlossCache").mockImplementation(async (docId) => hitDocIds.includes(docId)
+      ? new Map([[0, { text: glossText, hasStructure: false }], [1, { text: glossText, hasStructure: false }]])
+      : new Map());
+  }
+
+  async function mount(docId: string, options: { position?: string } = {}) {
+    localStorage.setItem(`gloss:doc:${docId}`, JSON.stringify({
+      version: 1, docId, paragraphs: [text], headings: [{ paraIndex: 0, level: 1, text: "测试" }],
+      footnotes: [], meta: { format: "txt", fileName: "测试.txt", charCount: 6 }, savedAt: 1,
+    }));
+    if (options.position !== undefined) localStorage.setItem(`gloss:pos:${docId}`, options.position);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    roots.push({ root, container });
+    await act(async () => { root.render(createElement(Reader, { docId })); });
+    for (let index = 0; index < 5; index++) await act(async () => { await Promise.resolve(); });
+    return container;
+  }
+
+  async function click(container: HTMLElement, selector: string, at: number) {
+    now = at;
+    const target = container.querySelector<HTMLElement>(selector) ?? document.querySelector<HTMLElement>(selector);
+    expect(target, selector).not.toBeNull();
+    await act(async () => { target!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    for (let index = 0; index < 3; index++) await act(async () => { await Promise.resolve(); });
+  }
+
+  function expectAccepted(names: readonly string[]) {
+    for (const detail of events.filter((event) => names.includes(event.event))) {
+      expect(validateAnalyticsEvent({ ...detail, eventId: crypto.randomUUID() }, true), JSON.stringify(detail)).toBe(true);
+    }
+  }
+
+  beforeEach(() => {
+    // 前面的 describe 可能留下 localStorage 替身；本组一律用环境自带的存储。
+    vi.unstubAllGlobals();
+    events = [];
+    now = 1_000;
+    observers = [];
+    panelRect = { top: 100, bottom: 300, height: 200, left: 0, right: 600, width: 600, x: 0, y: 100 } as DOMRect;
+    window.addEventListener("gloss:analytics", onAnalytics);
+  });
+
+  afterEach(async () => {
+    for (const { root, container } of roots) {
+      await act(async () => { root.unmount(); });
+      container.remove();
+    }
+    roots = [];
+    document.querySelectorAll(".reader-context-menu").forEach((menu) => menu.remove());
+    window.removeEventListener("gloss:analytics", onAnalytics);
+    localStorage.clear();
+    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+    else Reflect.deleteProperty(document, "fonts");
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("reader_enter 每次进入只发一次；来源取一次性标记，恢复位置要求大于 0 且有效", async () => {
+    stubEnvironment([]);
+    markReaderEntry("g15b-shelf", "shelf");
+    const shelf = await mount("g15b-shelf", { position: "1" });
+    await click(shelf, ".sentence[data-index='0']", 2_000);
+    await mount("g15b-direct-0", { position: "0" });
+    await mount("g15b-direct-invalid", { position: "9" });
+    markReaderEntry("g15b-other", "upload");
+    await mount("g15b-direct-none");
+    // 直接写入本地队列（整页加载时早于采集器监听），不经 gloss:analytics 派发。
+    const queued = (JSON.parse(localStorage.getItem("gloss:analytics:local:v1") ?? "{}").outbox ?? [])
+      .filter((entry: Detail) => entry.event === "reader_enter")
+      .map(({ eventId: _eventId, ...entry }: Detail) => entry);
+    expect(queued).toEqual([
+      { event: "reader_enter", source: "shelf", positionRestored: true },
+      { event: "reader_enter", source: "direct", positionRestored: false },
+      { event: "reader_enter", source: "direct", positionRestored: false },
+      { event: "reader_enter", source: "direct", positionRestored: false },
+    ]);
+    expect(of("reader_enter")).toEqual([]);
+  });
+
+  it("gloss_dismiss_early：再点同一句或切换到另一句，可见不足 2 秒才发", async () => {
+    stubEnvironment(["g15b-dismiss"]);
+    const container = await mount("g15b-dismiss");
+    await click(container, ".sentence[data-index='0']", 1_000);
+    expect(of("gloss_complete")).toHaveLength(1);
+    await click(container, ".sentence[data-index='0']", 2_500);
+    await click(container, ".sentence[data-index='1']", 4_000);
+    await click(container, ".sentence[data-index='0']", 4_800);
+    expect(of("gloss_dismiss_early")).toEqual([
+      { event: "gloss_dismiss_early", sentenceIndex: 0, visibleMs: 1_500 },
+      { event: "gloss_dismiss_early", sentenceIndex: 1, visibleMs: 800 },
+    ]);
+    expect(of("gloss_read_complete")).toEqual([]);
+    expectAccepted(["gloss_dismiss_early"]);
+  });
+
+  it("gloss_dismiss_early 不发：已读完、可见满 2 秒、生成未完成、G-46 自动收起、点别处与 Esc", async () => {
+    stubEnvironment(["g15b-read", "g15b-auto"]);
+    const read = await mount("g15b-read");
+    await click(read, ".sentence[data-index='0']", 1_000);
+    now = 4_000;
+    await act(async () => { window.dispatchEvent(new Event("scroll")); });
+    expect(of("gloss_read_complete")).toHaveLength(1);
+    await click(read, ".sentence[data-index='0']", 4_100);
+
+    panelRect = { ...panelRect, bottom: 5_000, height: 4_900 } as DOMRect;
+    await click(read, ".sentence[data-index='1']", 5_000);
+    await click(read, ".sentence[data-index='1']", 7_500);
+
+    panelRect = { ...panelRect, bottom: 300, height: 200 } as DOMRect;
+    await click(read, ".sentence[data-index='0']", 8_000);
+    await act(async () => { document.body.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await click(read, ".sentence[data-index='1']", 9_000);
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
+
+    const auto = await mount("g15b-auto");
+    await click(auto, ".sentence[data-index='0']", 10_000);
+    now = 10_500;
+    const observer = observers.at(-1)!;
+    await act(async () => {
+      observer.callback(observer.targets.map((target) => ({ target, isIntersecting: false }) as unknown as IntersectionObserverEntry), {} as IntersectionObserver);
+    });
+    expect(auto.querySelector(".gloss-panel")).toBeNull();
+
+    const miss = await mount("g15b-miss");
+    await click(miss, ".sentence[data-index='0']", 11_000);
+    await click(miss, ".sentence[data-index='0']", 11_500);
+    // 收起动画 220ms 结束后才提交收起并记 gloss_abort。
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    expect(of("gloss_abort").at(-1)).toEqual({ event: "gloss_abort", sentenceIndex: 0, abortPhase: "waiting" });
+
+    expect(of("gloss_dismiss_early")).toEqual([]);
+  });
+
+  it("gloss_save 写入成功发一次，取消保存不发；操作行「听不懂」发 action_row", async () => {
+    stubEnvironment(["g15b-save"]);
+    const container = await mount("g15b-save");
+    await click(container, ".sentence[data-index='0']", 1_000);
+    await click(container, ".action-row-explain", 1_500);
+    expect(of("deep_explain_click")).toEqual([{ event: "deep_explain_click", sentenceIndex: 0, source: "action_row" }]);
+    await click(container, ".action-row-explain", 1_600);
+    expect(of("deep_explain_click")).toHaveLength(1);
+
+    await click(container, ".action-row-save", 2_000);
+    expect(of("gloss_save")).toEqual([{ event: "gloss_save", sentenceIndex: 0, edited: false }]);
+    expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("已留下");
+    await click(container, ".action-row-save", 3_000);
+    expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("留下");
+    expect(of("gloss_save")).toHaveLength(1);
+    expectAccepted(["deep_explain_click", "gloss_save"]);
+  });
+
+  it("功能二已用：操作行与右键「听不懂」只发 deep_explain_blocked；右键「翻错了」只带句序号", async () => {
+    stubEnvironment(["g15b-blocked"]);
+    const [first] = segmentParagraphs([text]).sentences;
+    await saveExplanation("g15b-blocked", first, "整句理解。");
+    const container = await mount("g15b-blocked");
+    await click(container, ".sentence[data-index='0']", 1_000);
+    await click(container, ".action-row-explain", 1_500);
+
+    const sentence = container.querySelector<HTMLElement>(".sentence[data-index='0']")!;
+    await act(async () => { sentence.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 })); });
+    const [explain, report] = [...document.querySelectorAll<HTMLElement>(".reader-context-menu button")];
+    await act(async () => { explain.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { report.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    for (let index = 0; index < 5; index++) await act(async () => { await Promise.resolve(); });
+
+    expect(of("deep_explain_blocked")).toEqual([
+      { event: "deep_explain_blocked", sentenceIndex: 0 },
+      { event: "deep_explain_blocked", sentenceIndex: 0 },
+    ]);
+    expect(of("deep_explain_click")).toEqual([]);
+    expect(of("report_error_click")).toEqual([{ event: "report_error_click", sentenceIndex: 0 }]);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/explain"))).toEqual([]);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/report"))).toHaveLength(1);
+    expectAccepted(["deep_explain_blocked", "report_error_click"]);
+  });
+
+  it("右键「听不懂」未用时发 context_menu", async () => {
+    stubEnvironment(["g15b-menu"]);
+    const container = await mount("g15b-menu");
+    await click(container, ".sentence[data-index='1']", 1_000);
+    const sentence = container.querySelector<HTMLElement>(".sentence[data-index='1']")!;
+    await act(async () => { sentence.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 })); });
+    const [explain] = [...document.querySelectorAll<HTMLElement>(".reader-context-menu button")];
+    await act(async () => { explain.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(of("deep_explain_click")).toEqual([{ event: "deep_explain_click", sentenceIndex: 1, source: "context_menu" }]);
+    expectAccepted(["deep_explain_click"]);
   });
 });

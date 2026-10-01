@@ -461,9 +461,13 @@ gloss/
       reader_enter 直接写入本地队列，不派发 gloss:analytics：整页加载时 Reader 在 226ms 派发、采集器在 258ms 才开始监听（本地实测 1 次），派发的事件会丢；与 markAnalyticsOpen 写法一致。
       自测（Claude Code，2026-10-01）：单元测试 `npm test` 20 个文件 447 通过、17 跳过、0 失败，`npx tsc --noEmit` 通过；本地 `dev:slow-gloss` 浏览器逐事件核对派发 / 进队列 / 发出次数与字段，dismiss 的「可见满 2 秒」「已读完」「G-46 自动收起」三种情况因内置浏览器窗格处于隐藏状态（document.hidden 为 true）未在浏览器验证，只有单元测试。
       导出核对待合并上线后在正式域名进行。
+      单元测试（42c5b53）：npm test 453 通过、17 跳过、0 失败；npx tsc --noEmit 通过。
+      亲验 2026-10-01（Clara，gloss-verify，dev:slow-gloss，提交 42c5b53，Chrome 窗口可见）：缓存命中的首次撑开 1 秒内 Esc → gloss_dismiss_early，visibleMs 145；同句重读 1 秒内 Esc → 仅 sentence_reclick，无 dismiss；刷新后首次撑开停留约 4 秒再 Esc → sentence_click、gloss_complete，无 dismiss。G-46 自动收起只有单元测试覆盖。
+      2026-10-01 合并进 main；待线上核对：Claude 经内置浏览器在 withglossline.com 触发事件，Clara 运行 analytics-feedback export 核对字段；本次不 purge，记录测试时段供 W4 扣除。
 - [ ] 退出开关打开时，本地队列里已有的待发事件未清除；关闭开关后会补发。应在开关生效时清空队列。来源：G-15a 亲验，2026-10-01。
       处理（分支 `claude/g15b-events`）：所有检查开关的位置（入队、待发读取、回访标记、flush、beacon、路由变化）改为检查时一并清空 outbox，不动 firstUseDay、readerReturned、docs；另监听 storage 事件，其他标签页写入开关后立即清空。
       自测（Claude Code，2026-10-01）：同页写入后 outbox 仍为 5 条，9.3 秒后在 30 秒节拍清空，期间发出 0 次；开关期间点击不入队；删除开关后 35.5 秒内只发出删除后新产生的事件，旧 eventId 0 条。另一标签页写入：本页 storage 事件在同一毫秒到达、队列立即为空（本页下一次 30 秒节拍尚未到）；删除开关后两页各等 36 秒以上，发出 0 次。
+      2026-10-01 合并进 main；待线上核对：Claude 经内置浏览器在 withglossline.com 触发事件，Clara 运行 analytics-feedback export 核对字段；本次不 purge，记录测试时段供 W4 扣除。
 
 **依赖功能的补接项（本轮不做）**：G-17 的 gloss_edit、G-18 的 lock_expand、G-14 的 doc_export、G-30 的 quota_exceeded、G-16 的 sample_doc_enter 等在各自功能完成后接入；不造假触发点。
 - [ ] `sentence_reclick` 与 G-18 的 `lock_expand` 可关联查询
@@ -694,6 +698,20 @@ gloss/
 - [ ] sentenceChars、glossChars、outputChars 由原始整数改为分档
 
 **回滚**：`git revert`
+
+---
+
+### G-51 · next 升级到 16.3.8（安全公告）
+**P1 · G-15b 合并后立即做** ｜ 来源：G-15b npm audit，2026-10-01 ｜ 分支待定
+
+**理由**：npm audit 报 next 16.3.5 有 critical 公告 GHSA-vcvr-r3jv-pc5j（next/og ImageResponse 远程代码执行），修复版本 16.3.8。仓库未引用 next/og，但 next 是生产依赖，不以「用不到」为由跳过。
+
+**验收**
+- [ ] package.json 与 package-lock.json 中 next 为 16.3.8；npm audit --omit=dev 无 critical
+- [ ] npm test、npx tsc --noEmit、npm run build 通过
+- [ ] 合并部署后 Clara 在 withglossline.com 打开书架、点开一句白话，正常
+
+**回滚**：git revert
 
 ---
 

@@ -277,15 +277,16 @@ export default function Reader({ docId }: { docId: string }) {
       visibleMs: result.visibleMs, bottomSeen: true, glossChars: result.glossChars });
   }
   /**
-   * 读者主动收起（再点同一句、点另一句）开始的那一刻判定 gloss_dismiss_early；
-   * 收起动画、G-46 自动收起、点别处、Esc、离页都不经过这里。
+   * 读者主动收起（再点同一句、点另一句、Esc、点别处）开始的那一刻判定 gloss_dismiss_early；
+   * 收起动画、G-46 自动收起、离页都不经过这里。
    */
   function reportEarlyDismiss() {
     const attempt = readAttemptRef.current;
     if (!attempt || attempt.dismissReported || expansion?.index !== attempt.index) return;
     sampleReadAttempt();
     // 分母同读完率：首次撑开且白话已完整显示；生成未完成时收起归 gloss_abort。
-    if (!attempt.completeReported || attempt.clock.readReported || attempt.clock.visibleMs >= DISMISS_EARLY_MS) return;
+    if (!attempt.firstClick || !attempt.completeReported || attempt.clock.readReported ||
+      attempt.clock.visibleMs >= DISMISS_EARLY_MS) return;
     attempt.dismissReported = true;
     emitAnalytics({ event: "gloss_dismiss_early", sentenceIndex: attempt.index, visibleMs: attempt.clock.visibleMs });
   }
@@ -995,8 +996,12 @@ export default function Reader({ docId }: { docId: string }) {
     const activeIndexForDismiss = expansion?.index ?? activeSavedIndex;
     if (activeIndexForDismiss === null || !body) return;
     const dismiss = () => {
-      if (activeSavedIndex !== null) commitSaved(null);
-      else collapse(true);
+      if (activeSavedIndex !== null) {
+        commitSaved(null);
+        return;
+      }
+      reportEarlyDismiss();
+      collapse(true);
     };
 
     const onDocumentClick = (event: MouseEvent) => {

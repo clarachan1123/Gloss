@@ -415,7 +415,7 @@ describe("G-10b 性能注入记录", () => {
 });
 
 describe("G-15b 阅读器事件", () => {
-  const text = "甲乙。丙丁。";
+  const text = "甲乙。丙丁。戊己。庚辛。";
   const glossText = "预载白话。";
   type Detail = Record<string, unknown> & { event: string };
   let events: Detail[] = [];
@@ -449,7 +449,7 @@ describe("G-15b 阅读器事件", () => {
       takeRecords() { return []; }
     });
     vi.spyOn(cache, "preloadGlossCache").mockImplementation(async (docId) => hitDocIds.includes(docId)
-      ? new Map([[0, { text: glossText, hasStructure: false }], [1, { text: glossText, hasStructure: false }]])
+      ? new Map([0, 1, 2, 3].map((index) => [index, { text: glossText, hasStructure: false }]))
       : new Map());
   }
 
@@ -529,23 +529,41 @@ describe("G-15b 阅读器事件", () => {
     expect(of("reader_enter")).toEqual([]);
   });
 
-  it("gloss_dismiss_early：再点同一句或切换到另一句，可见不足 2 秒才发", async () => {
+  it("gloss_dismiss_early：再点同一句、切换到另一句、Esc、点别处，可见不足 2 秒都发", async () => {
     stubEnvironment(["g15b-dismiss"]);
     const container = await mount("g15b-dismiss");
     await click(container, ".sentence[data-index='0']", 1_000);
     expect(of("gloss_complete")).toHaveLength(1);
     await click(container, ".sentence[data-index='0']", 2_500);
     await click(container, ".sentence[data-index='1']", 4_000);
-    await click(container, ".sentence[data-index='0']", 4_800);
+    await click(container, ".sentence[data-index='2']", 4_800);
+    now = 5_500;
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
+    await click(container, ".sentence[data-index='3']", 7_000);
+    now = 7_600;
+    await act(async () => { document.body.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(of("gloss_dismiss_early")).toEqual([
       { event: "gloss_dismiss_early", sentenceIndex: 0, visibleMs: 1_500 },
       { event: "gloss_dismiss_early", sentenceIndex: 1, visibleMs: 800 },
+      { event: "gloss_dismiss_early", sentenceIndex: 2, visibleMs: 700 },
+      { event: "gloss_dismiss_early", sentenceIndex: 3, visibleMs: 600 },
     ]);
     expect(of("gloss_read_complete")).toEqual([]);
     expectAccepted(["gloss_dismiss_early"]);
   });
 
-  it("gloss_dismiss_early 不发：已读完、可见满 2 秒、生成未完成、G-46 自动收起、点别处与 Esc", async () => {
+  it("gloss_dismiss_early 限首次撑开：同一句第二次撑开后 1 秒内收起不发，第一次同样操作发 1 次", async () => {
+    stubEnvironment(["g15b-reclick"]);
+    const container = await mount("g15b-reclick");
+    await click(container, ".sentence[data-index='0']", 1_000);
+    await click(container, ".sentence[data-index='0']", 2_000);
+    await click(container, ".sentence[data-index='0']", 3_000);
+    await click(container, ".sentence[data-index='0']", 3_800);
+    expect(of("sentence_reclick")).toEqual([{ event: "sentence_reclick", sentenceIndex: 0, reclickOrdinal: 2 }]);
+    expect(of("gloss_dismiss_early")).toEqual([{ event: "gloss_dismiss_early", sentenceIndex: 0, visibleMs: 1_000 }]);
+  });
+
+  it("gloss_dismiss_early 不发：已读完、可见满 2 秒、生成未完成、G-46 自动收起", async () => {
     stubEnvironment(["g15b-read", "g15b-auto"]);
     const read = await mount("g15b-read");
     await click(read, ".sentence[data-index='0']", 1_000);
@@ -559,10 +577,6 @@ describe("G-15b 阅读器事件", () => {
     await click(read, ".sentence[data-index='1']", 7_500);
 
     panelRect = { ...panelRect, bottom: 300, height: 200 } as DOMRect;
-    await click(read, ".sentence[data-index='0']", 8_000);
-    await act(async () => { document.body.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await click(read, ".sentence[data-index='1']", 9_000);
-    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
 
     const auto = await mount("g15b-auto");
     await click(auto, ".sentence[data-index='0']", 10_000);

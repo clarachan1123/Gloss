@@ -454,9 +454,10 @@ gloss/
       未自测：W4 结束时的线上步骤。
 - [x] 线上写入：ANALYTICS_ENABLED=1 仅设于 Production 并重新部署；无痕窗口访问后 export 得到 reader_first_seen，purge 后再 export 为 0——Clara 亲验 2026-10-01
 
-**G-15b 可验证增量（本轮不做）**：接入已有功能的其余 PRD 4.1 事件，包括 G-11 的 deep_explain_blocked；逐事件核对触发次数和字段。
+**G-15b 可验证增量**：接入已有功能的其余 PRD 4.1 事件，包括 G-11 的 deep_explain_blocked；逐事件核对触发次数和字段。
 - [ ] G-15b 事件接入与导出核对
       接入 7 个事件（分支 `claude/g15b-events`）：deep_explain_click {sentenceIndex, source: action_row | context_menu}、deep_explain_blocked {sentenceIndex}、report_error_click {sentenceIndex}、gloss_save {sentenceIndex, edited: false}、gloss_dismiss_early {sentenceIndex, visibleMs}、reader_enter {source: shelf | upload | direct, positionRestored}、shelf_book_click {entry: continue | cover | start, daysSinceOpenBucket}。page_view、session_end、sentence_hover 不接。
+      dismiss 判定为读者主动收起（再点同一句、点另一句、Esc、点别处），且限首次撑开。
       reader_enter 直接写入本地队列，不派发 gloss:analytics：整页加载时 Reader 在 226ms 派发、采集器在 258ms 才开始监听（本地实测 1 次），派发的事件会丢；与 markAnalyticsOpen 写法一致。
       自测（Claude Code，2026-10-01）：单元测试 `npm test` 20 个文件 447 通过、17 跳过、0 失败，`npx tsc --noEmit` 通过；本地 `dev:slow-gloss` 浏览器逐事件核对派发 / 进队列 / 发出次数与字段，dismiss 的「可见满 2 秒」「已读完」「G-46 自动收起」三种情况因内置浏览器窗格处于隐藏状态（document.hidden 为 true）未在浏览器验证，只有单元测试。
       导出核对待合并上线后在正式域名进行。
@@ -471,6 +472,8 @@ gloss/
 - [ ] PRD 4.1 report_error_click 的「句 hash + 原句 + 白话」与 shelf_book_click、reader_enter 的 doc_id 与隐私口径冲突，按隐私口径执行（埋点只带句序号、不带 docId）；来源 G-15b，2026-10-01；只登记
 - [ ] page_view（是否首访）、session_end（会话、时长、阅读进度）、sentence_hover（采样）口径未定义，暂不接；来源 G-15b，2026-10-01
 - [ ] rawErrorCode "network"（非断网的请求失败）归入 gloss_fail OTHER，分类待定；来源 G-15b，2026-10-01
+- [ ] Ctrl 或中键在新标签页打开书时不记 shelf_book_click，新标签页的 reader_enter 记为 direct；来源 G-15b，2026-10-01；已知缺口
+- [ ] `components/reader/Reader.test.ts` 中 G-10b 测试组的 localStorage 替身未还原，会带到后续测试组；G-15b 用 `vi.unstubAllGlobals()` 隔离，未修根因；来源 G-15b，2026-10-01
 
 **会改**：G-15a 使用 `gloss:analytics` CustomEvent、独立客户端与服务端模块及 `/api/analytics`；不新建 `lib/analytics.ts`
 **不改**：PRD、现有业务文案与成功响应格式
@@ -741,6 +744,7 @@ gloss/
 | WAF 限流按 IP 计数 | 共用出口 IP 的读者（校园网、公司网络、运营商共享地址）共享 10 分钟 30 次的额度，几个人同时读会很快被拦 | 暂不改（Hobby 只有一条规则，放宽会让单个 IP 的最坏花费同比例翻倍）。**G-15 做用量显示时重新评估** |
 | 大陆可达性依赖 `76.223.126.88`，这不是 Vercel 当前推荐的 A 值 | 该 IP 被封或下线时，大陆读者会突然全部打不开，且不会有任何告警 | W4 期间每周由 Clara 用大陆手机流量复测一次可达性；失效时按 G-45 的 Plan B 表处置，不再试别的 IP |
 | 大陆线路用的 `76.223.126.88` 不是 Vercel 推荐的 A 值，Domains 状态与证书续期的关系未经历过一次实际续期 | 若续期因此失败，大陆与境外读者会同时遇到 HTTPS 警告或打不开 | 当前证书有效期至 2026-12-25。2026-12-10 前由 Clara 检查一次证书是否已自动续期；未续期则立即把默认线路改回 `216.198.79.1` 恢复推荐配置，再另行处理大陆可达性 |
+| `next` 16.3.5 有 critical 安全公告 GHSA-vcvr-r3jv-pc5j（next/og ImageResponse 远程代码执行）；`npm audit --omit=dev` 与 `npm audit` 都报这一项，修复版本 16.3.8 | `next` 是直接生产依赖（`package.json` 锁定 `"16.3.5"`，依赖链 gloss → next），随线上部署运行。仓库代码未引用 `next/og`、`ImageResponse`（检索 0 个文件）；未使用该功能时能否被利用未核实 | 只登记，G-15b 不修。升级 `next` 由 Clara 决定是否另开卡。来源：G-15b npm audit，2026-10-01 |
 
 ---
 

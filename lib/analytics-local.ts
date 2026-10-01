@@ -209,8 +209,9 @@ export function takeReaderEntrySource(docId: string): ReaderEntrySource {
   return pending?.docId === docId ? pending.source : "direct";
 }
 
-export function daysSinceOpenBucket(lastOpenedAt: unknown, now = new Date()): string {
-  if (typeof lastOpenedAt !== "number" || !Number.isFinite(lastOpenedAt)) return "never";
+/** 书架条目导入时 lastOpenedAt 与 addedAt 同值，阅读页打开才会更新；两者相等即从未打开。 */
+export function daysSinceOpenBucket(lastOpenedAt: unknown, addedAt: unknown, now = new Date()): string {
+  if (typeof lastOpenedAt !== "number" || !Number.isFinite(lastOpenedAt) || lastOpenedAt === addedAt) return "never";
   const difference = localDayDifference(localDay(new Date(lastOpenedAt)), localDay(now));
   if (difference === null) return "never";
   if (difference <= 0) return "0";

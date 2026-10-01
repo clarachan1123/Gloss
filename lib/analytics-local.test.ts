@@ -100,6 +100,7 @@ describe("G-15b optout clears the queue", () => {
 
 describe("G-15b shelf day bucket", () => {
   const opened = new Date(2026, 8, 30, 23, 59).getTime();
+  const added = new Date(2026, 8, 20, 9, 0).getTime();
   it.each([
     [new Date(2026, 8, 30, 23, 59, 30), "0"],
     [new Date(2026, 9, 1, 0, 1), "1"],
@@ -110,11 +111,22 @@ describe("G-15b shelf day bucket", () => {
     [new Date(2026, 9, 31), ">30"],
     [new Date(2026, 8, 29), "0"],
   ])("local day difference to %s is %s", (now, bucket) => {
-    expect(daysSinceOpenBucket(opened, now)).toBe(bucket);
+    expect(daysSinceOpenBucket(opened, added, now)).toBe(bucket);
   });
 
   it.each([[undefined], [null], [Number.NaN], ["1700000000000"], [8.64e15 + 1]])("%s has no record", (value) => {
-    expect(daysSinceOpenBucket(value, new Date(2026, 9, 1))).toBe("never");
+    expect(daysSinceOpenBucket(value, added, new Date(2026, 9, 1))).toBe("never");
+  });
+
+  it("导入后从未在阅读页打开（lastOpenedAt 等于 addedAt）记 never，差 1 毫秒即按天数分档", () => {
+    const now = new Date(2026, 9, 1);
+    expect(daysSinceOpenBucket(added, added, now)).toBe("never");
+    expect(daysSinceOpenBucket(added + 1, added, now)).toBe("8-30");
+    expect(daysSinceOpenBucket(opened, opened - 1, now)).toBe("1");
+  });
+
+  it.each([[undefined], [null], [Number.NaN], ["1700000000000"]])("addedAt 为 %s 时只按 lastOpenedAt 分档", (value) => {
+    expect(daysSinceOpenBucket(opened, value, new Date(2026, 9, 1))).toBe("1");
   });
 });
 

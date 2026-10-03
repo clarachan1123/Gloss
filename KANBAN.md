@@ -696,7 +696,7 @@ gloss/
 ---
 
 ### G-50 · 句长与白话字数改为分档上报
-**P1 · W4 开始前完成** ｜ 来源：G-15b，2026-10-01 ｜ 分支 `codex/g50-bucket-fields`
+**P1 · W4 开始前完成** ｜ 来源：G-15b，2026-10-01 ｜ 分支 `codex/g50-bucket-fields` ｜ 已合并 4c3a509
 
 **理由**：sentence_click.sentenceChars、gloss_complete.glossChars、gloss_read_complete.glossChars、gloss_overlength.outputChars 现为原始整数。「句序号 + 句长」序列可识别所读文本，与「字数、句数、大小一律只报分档」不一致。
 
@@ -709,8 +709,10 @@ gloss/
 - sentenceIndex 仍为原始句序号，本卡不改，登记。
 
 **验收**
-- [ ] sentenceChars、glossChars 改名并分档；gloss_overlength 删除 outputChars
+- [x] sentenceChars、glossChars 改名并分档；gloss_overlength 删除 outputChars
       自测（Codex，2026-10-03，gloss-g50）：npm test 483 通过 / 17 跳过 / 0 失败；npx tsc --noEmit 退出码 0；npm run build 成功。
+      本地实测（Claude，2026-10-03，Claude 桌面应用内置浏览器，gloss-g50 的 npm run dev:slow-gloss，http://localhost:3430，本机模拟上游）：outbox 预置一条旧格式 sentence_click {sentenceChars: 33} 后刷新，该条被过滤并写回删除，同队列 reader_first_seen 保留；点第 1 句派发 sentence_click {sentenceCharsBucket: "1-40"}、gloss_complete {glossCharsBucket: "101-150"}、gloss_read_complete {glossCharsBucket: "101-150", visibleMs: 18578}（模拟白话 148 字，148÷8=18.5 秒，计时仍用原始字数）；/api/analytics 请求全部 204；直接请求接口：新字段 sentence_click 与 gloss_read_complete 均 204，旧整数字段均 400。
+      线上核对（Claude，2026-10-03 UTC 13:18–13:20，main = 4c3a509）：withglossline.com 加载的前端代码含 sentenceCharsBucket、glossCharsBucket，window.next.version 为 16.3.8；书架「继续阅读」进入阅读页，点第 2 句白话完整显示（86 字），页面派发 sentence_click、gloss_complete、gloss_read_complete。内置浏览器退出开关为 "1"，outbox 为 0，未入库；该句为本地缓存命中，无 /api/gloss 请求、无 ai_call，W4 无需扣除。
 
 **回滚**：`git revert`
 

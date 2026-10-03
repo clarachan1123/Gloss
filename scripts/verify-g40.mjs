@@ -103,6 +103,15 @@ async function navigate(cdp, url) {
   await waitForValue(() => cdp.evaluate(`location.href.replace(/\\/$/, '') === ${JSON.stringify(url.replace(/\/$/, ""))} && document.readyState === 'complete'`, false, "wait:page-load"), "page load");
 }
 
+async function assertSinglePage(browserCdp, testTargetId, label) {
+  const { targetInfos } = await browserCdp.call("Target.getTargets", {}, label);
+  const pages = targetInfos.filter((info) => info.type === "page");
+  if (pages.length !== 1 || pages[0].targetId !== testTargetId) {
+    const extraUrls = pages.filter((info) => info.targetId !== testTargetId).map((info) => info.url);
+    throw new Error(`${label}: expected only the test page; page count=${pages.length}; extra page URLs=${JSON.stringify(extraUrls)}`);
+  }
+}
+
 async function runScenario(cdp, index, name) {
   const docId = `g40-viewport-${index}`;
   await navigate(cdp, `${ORIGIN}/read/${docId}`);
@@ -121,13 +130,7 @@ async function runScenario(cdp, index, name) {
   const target = name === "above" ? -220 : name === "crossing" ? -40 : 180;
   await cdp.evaluate(`(() => {const p=document.querySelector('.gloss-panel[data-sentence-index="0"]'); const r=p.getBoundingClientRect(); const current=${name === "above" ? "r.bottom" : "r.top"}; window.scrollBy({top:current-(${target}),behavior:'instant'});})()`, false, "scenario:place-panel");
   if (DISABLE_COMPENSATION) await cdp.evaluate("(() => {window.scrollBy = () => {}; document.head.insertAdjacentHTML('beforeend', '<style>.reader-body { translate: none !important }</style>');})()", false, "scenario:disable-compensation");
-  let foregroundError = null;
-  const keepForeground = setInterval(() => {
-    void cdp.call("Page.bringToFront", {}, "scenario:keep-foreground").catch((error) => { foregroundError = error; });
-  }, 1000);
-  let result;
-  try {
-    result = await cdp.evaluate(`(() => {
+  const result = await cdp.evaluate(`(() => {
     let onVisibilityChange = null;
     return new Promise((resolve, reject) => {
     let hiddenEvents = 0, maxFrameGapMs = 0, lastFrameAt = null;
@@ -187,11 +190,7 @@ async function runScenario(cdp, index, name) {
     const initialBelow = below ? top(below) : null;
     requestAnimationFrame(tick);
   }).finally(() => document.removeEventListener('visibilitychange', onVisibilityChange));
-  })()`, true, "scenario:measure-promise");
-  } finally {
-    clearInterval(keepForeground);
-  }
-  if (foregroundError) throw foregroundError;
+   })()`, true, "scenario:measure-promise");
   console.log(JSON.stringify({ mode: DISABLE_COMPENSATION ? "compensation-off" : "compensation-on", run: index + 1, scenario: name, changes: result.changes, maxStep: result.maxStep, maxCumulative: result.maxCumulative, signedSum: result.signedSum, initialPanelHeight: result.initialPanelHeight, finalPanelHeight: result.finalPanelHeight, belowDelta: result.belowDelta, hiddenEvents: result.hiddenEvents, maxFrameGapMs: result.maxFrameGapMs }));
   if (result.hiddenEvents > 0) throw new Error(`${name}: hidden during measurement (${result.hiddenEvents} events)`);
   if (name === "above" && result.initialPanelBottom > 0) throw new Error("above: panel was not fully above viewport");
@@ -212,15 +211,19 @@ async function runScenario(cdp, index, name) {
 const profile = await mkdtemp(join(tmpdir(), "gloss-g40-"));
 const port = await freePort();
 browserStartedAt = performance.now();
-const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu", "--no-sandbox", `--remote-debugging-port=${port}`, "--remote-allow-origins=*", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
+const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu", "--no-sandbox", `--remote-debugging-port=${port}`, "--remote-allow-origins=*", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-sync", "about:blank"], { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
 let chromeErrors = "";
 chrome.stderr.on("data", (chunk) => { chromeErrors = `${chromeErrors}${chunk}`.slice(-2000); });
-let cdp;
+let cdp, browserCdp;
 try {
   const target = await waitForValue(async () => {
     const response = await fetch(`http://127.0.0.1:${port}/json`);
     return (await response.json()).find((item) => item.type === "page");
   }, "Chrome CDP");
+  const versionResponse = await fetch(`http://127.0.0.1:${port}/json/version`);
+  const version = await versionResponse.json();
+  browserCdp = new Cdp(version.webSocketDebuggerUrl);
+  await browserCdp.ready;
   cdp = new Cdp(target.webSocketDebuggerUrl);
   await cdp.ready;
   const browser = await cdp.call("Browser.getVersion", {}, "browser:version");
@@ -231,6 +234,7 @@ try {
   await cdp.call("Emulation.setDeviceMetricsOverride", { width: 754, height: 440, deviceScaleFactor: 1, mobile: false }, "setup:viewport");
   await cdp.call("Page.addScriptToEvaluateOnNewDocument", { source: "window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };" }, "setup:new-document-script");
   await navigate(cdp, ORIGIN);
+  await assertSinglePage(browserCdp, target.id, "setup:single-page-after-origin");
   for (let index = 0; index < 9; index++) {
     await cdp.evaluate(`localStorage.setItem('gloss:doc:g40-viewport-${index}', ${JSON.stringify(JSON.stringify(fixture(index)))})`, false, `fixture:${index}`);
   }
@@ -238,6 +242,7 @@ try {
   else for (const [scenarioIndex, name] of ["above", "crossing", "inside"].entries()) {
     for (let repeat = 0; repeat < 3; repeat++) await runScenario(cdp, scenarioIndex * 3 + repeat, name);
   }
+  await assertSinglePage(browserCdp, target.id, "finish:single-page-after-scenarios");
   console.log(DISABLE_COMPENSATION ? "G-40 negative control exposed drift" : "G-40 viewport checks passed");
 } catch (error) {
   console.error(`Chrome exit code: ${chrome.exitCode}`);
@@ -245,6 +250,7 @@ try {
   throw error;
 } finally {
   cdp?.close();
+  browserCdp?.close();
   chrome.kill();
   if (chrome.exitCode === null) await Promise.race([new Promise((done) => chrome.once("exit", done)), sleep(5000)]);
   const resolved = resolve(profile);

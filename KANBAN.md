@@ -689,11 +689,18 @@ gloss/
 - 正式脚本保留 `Page.bringToFront` 定时器，在测量 Promise 开始时拒绝 hidden，记录 `hiddenEvents` 与相邻 rAF 最大间隔 `maxFrameGapMs`，Promise resolve/reject 均移除监听；测量期间发生 hidden 就报错退出。`node --check` 退出码 0。
 - 新版验收均在沙箱外、Edge 154.0.4258.53、754×440、DPR 1；无效 key 的慢服务预检为主页 200、gloss 客户端 502、服务端 HTTP 401。默认 12 秒完整模式共 11 次：第 3、5、7、8 次各 9/9 通过且 hiddenEvents 最大 0；第 1、2、4、6、9、10、11 次因 hidden 自检失败，hiddenEvents 最大 1；最长只连续通过 2 次，未满足连续 3 次。3 秒完整模式 3 次均因 hidden 自检失败，最长连续通过 0 次。3 秒正向单场景探针 1/1 通过（hiddenEvents 0）；负对照 1/1 输出 `G-40 negative control exposed drift`（hiddenEvents 0）。全部运行都输出 `maxFrameGapMs`，逐轮数值见本卡交付报告；新版完整模式验收未通过，根因仍停在「页面被置为 hidden」这一层。
 
+**第三、四轮（2026-10-04；Codex 自测）**
+- 第三轮（实测）：`scripts/tmp-g48-targets.mjs` 的 15/15 轮都在测量期间变 hidden；每轮在 hidden 前 8–11 ms 创建非测试页 `https://www.gwdang.com/app/extension/?browser=edge` target，hidden 时 `Target.getTargets` 同时列出测试页、该欢迎页和 `edge://sync-confirmation-dialog/`。测试页 `document.hasFocus()` 均为 true，窗口状态均为 normal；这是时间关联，未单凭该关联断定是哪一个后台组件打开页面。
+- 第四轮 A/B/A（实测；默认 12 秒、完整模式、沙箱外、Edge 154.0.4258.53、754×440、DPR 1；A 不加参数且无前台定时器）：起始 A 3/3 在 above 第 1 遍 hidden，完成数各 0/9，结束时各 3 个 page；B1 只加 `--disable-sync`，连续 3 次各 9/9 通过、hiddenEvents 全为 0、整轮均无 gwdang 与 sync 页面、结束时各 1 个 page；恢复 A 3/3 再次在 above 第 1 遍 hidden，结束时各 3 个 page。B1 满足严格 A/B/A。B2 只加 `--disable-extensions`，连续 3 次各 9/9 通过且 hiddenEvents 为 0、无 gwdang 页面，但整轮均有 sync 页面且结束时各 2 个 page，不满足 B 判据；最终恢复 A 3/3 hidden，结束时各 3 个 page。15 轮结束后命令行含 `gloss-g40-` 的 Edge 残留进程数均为 0。
+- 根因与修复（实测/读代码）：`--disable-sync` 这个单一启动参数同时阻止本环境的 sync 确认页与 gwdang 欢迎页出现，并消除测量期间的 hidden；Edge 内部是哪一步创建欢迎页仍未单独证明。正式脚本只加 `--disable-sync`，删除 `Page.bringToFront` 定时器，避免靠周期性抢前台掩盖页面被置 hidden；保留 hidden 与帧间隔自检。首次导航后、写 fixture 前及全部场景后，用浏览器级 `Target.getTargets` 断言仅有测试页，失败时列出额外页面 URL。
+- 验收（实测）：`node --check` 退出码 0；默认 12 秒完整模式连续 3 次各 9/9 通过，3 秒完整模式连续 3 次各 9/9 通过，合计 54 遍 hiddenEvents 均为 0，逐遍视口 754×440、DPR 1，首行浏览器版本 `Edg/154.0.4258.53`；3 秒正向探针 1/1 通过，负对照 1/1 输出 `G-40 negative control exposed drift`，两者 hiddenEvents 均为 0。所有验收轮次均在沙箱外，慢服务以无效 key 预检出服务端 HTTP 401，结束后 Edge 残留进程数均为 0。
+- 第一轮提交 `5525a5f` 的「连续 3 次通过」依赖 `Page.bringToFront` 前台定时器，当时测量期间没有 hidden 自检，不作为本轮验收依据。
+
 **说明**：G-29、G-39 改动自动收起时机之前，完整模式必须恢复可用。
 
 **验收**
-- [ ] 查明超时根因（rAF 停帧使页内超时失效；见上方 A/B/A；第二轮停在 hidden 这一层）
-- [x] 完整模式 3 场景 × 3 遍一次跑通，连续 3 次（12 秒和 3 秒均完成）
+- [x] 查明超时根因（第四轮 `--disable-sync` 通过严格 A/B/A；页面 hidden 的 Edge 内部触发步骤仍未单独证明）
+- [x] 完整模式 3 场景 × 3 遍一次跑通，连续 3 次（第四轮 12 秒和 3 秒各连续 3 次 9/9，hiddenEvents 全为 0）
 - [x] 脚本固定并输出视口与浏览器版本（每遍 754×440、DPR 1）
 
 **回滚**：`git revert`

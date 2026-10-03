@@ -20,6 +20,7 @@ if (DISABLE_COMPENSATION && !PROBE_ABOVE) throw new Error("G40_DISABLE_COMPENSAT
 const ORIGIN = "http://localhost:3430";
 const CHROME = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+let browserStartedAt = 0;
 
 async function freePort() {
   const server = createServer();
@@ -63,13 +64,14 @@ class Cdp {
       this.pending.clear();
     };
   }
-  async call(method, params = {}) {
+  async call(method, params = {}, label = method) {
     await this.ready;
     const id = ++this.sequence;
+    const started = performance.now();
     return new Promise((done, fail) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        fail(new Error(`Chrome CDP timed out: ${method}`));
+        fail(new Error(`Chrome CDP timed out: ${method} [${label}; elapsed=${Math.round(performance.now() - started)}ms; browserAge=${Math.round(performance.now() - browserStartedAt)}ms]`));
       }, 40_000);
       this.pending.set(id, {
         done: (value) => { clearTimeout(timer); done(value); },
@@ -78,8 +80,8 @@ class Cdp {
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
-  async evaluate(expression, awaitPromise = false) {
-    const result = await this.call("Runtime.evaluate", { expression, awaitPromise, returnByValue: true });
+  async evaluate(expression, awaitPromise = false, label = "evaluate") {
+    const result = await this.call("Runtime.evaluate", { expression, awaitPromise, returnByValue: true }, label);
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
     return result.result.value;
   }
@@ -97,26 +99,35 @@ function fixture(index) {
 }
 
 async function navigate(cdp, url) {
-  await cdp.call("Page.navigate", { url });
-  await waitForValue(() => cdp.evaluate(`location.href.replace(/\\/$/, '') === ${JSON.stringify(url.replace(/\/$/, ""))} && document.readyState === 'complete'`), "page load");
+  await cdp.call("Page.navigate", { url }, `navigate:${url}`);
+  await waitForValue(() => cdp.evaluate(`location.href.replace(/\\/$/, '') === ${JSON.stringify(url.replace(/\/$/, ""))} && document.readyState === 'complete'`, false, "wait:page-load"), "page load");
 }
 
 async function runScenario(cdp, index, name) {
   const docId = `g40-viewport-${index}`;
   await navigate(cdp, `${ORIGIN}/read/${docId}`);
-  await waitForValue(() => cdp.evaluate("!!document.querySelector('.reader-body .sentence[data-index=\"0\"]')"), "reader sentence");
-  await cdp.evaluate("document.querySelector('.sentence[data-index=\"0\"]').scrollIntoView({block:'center',behavior:'instant'})");
-  const point = await cdp.evaluate("(() => { const r=document.querySelector('.sentence[data-index=\"0\"]').getBoundingClientRect(); return {x:r.left+Math.min(r.width/2,30),y:r.top+r.height/2}; })()");
+  const viewport = await cdp.evaluate("({innerWidth,innerHeight,devicePixelRatio})", false, "scenario:viewport");
+  console.log(JSON.stringify({ scenario: name, run: index + 1, viewport }));
+  if (viewport.innerWidth !== 754 || viewport.innerHeight !== 440 || viewport.devicePixelRatio !== 1) throw new Error(`${name}: unexpected viewport`);
+  await waitForValue(() => cdp.evaluate("!!document.querySelector('.reader-body .sentence[data-index=\"0\"]')", false, "wait:reader-sentence"), "reader sentence");
+  await cdp.evaluate("document.querySelector('.sentence[data-index=\"0\"]').scrollIntoView({block:'center',behavior:'instant'})", false, "scenario:scroll-to-sentence");
+  const point = await cdp.evaluate("(() => { const r=document.querySelector('.sentence[data-index=\"0\"]').getBoundingClientRect(); return {x:r.left+Math.min(r.width/2,30),y:r.top+r.height/2}; })()", false, "scenario:click-point");
   for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
-    await cdp.call("Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: 1 });
+    await cdp.call("Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: 1 }, `input:${type}`);
   }
-  await waitForValue(() => cdp.evaluate("!!document.querySelector('.gloss-panel[data-sentence-index=\"0\"]')"), "gloss panel");
-  await cdp.evaluate("document.querySelector('.gloss-panel[data-sentence-index=\"0\"]').style.width = '58px'"); // Test-only narrow column: near-150-character text must cause at least 30 real height changes.
+  await waitForValue(() => cdp.evaluate("!!document.querySelector('.gloss-panel[data-sentence-index=\"0\"]')", false, "wait:gloss-panel"), "gloss panel");
+  await cdp.evaluate("document.querySelector('.gloss-panel[data-sentence-index=\"0\"]').style.width = '58px'", false, "scenario:narrow-panel"); // Test-only narrow column: near-150-character text must cause at least 30 real height changes.
   await sleep(1000); // Let the one-time G-07 visibility adjustment finish before measuring growth.
   const target = name === "above" ? -220 : name === "crossing" ? -40 : 180;
-  await cdp.evaluate(`(() => {const p=document.querySelector('.gloss-panel[data-sentence-index="0"]'); const r=p.getBoundingClientRect(); const current=${name === "above" ? "r.bottom" : "r.top"}; window.scrollBy({top:current-(${target}),behavior:'instant'});})()`);
-  if (DISABLE_COMPENSATION) await cdp.evaluate("(() => {window.scrollBy = () => {}; document.head.insertAdjacentHTML('beforeend', '<style>.reader-body { translate: none !important }</style>');})()");
-  const result = await cdp.evaluate(`new Promise((resolve, reject) => {
+  await cdp.evaluate(`(() => {const p=document.querySelector('.gloss-panel[data-sentence-index="0"]'); const r=p.getBoundingClientRect(); const current=${name === "above" ? "r.bottom" : "r.top"}; window.scrollBy({top:current-(${target}),behavior:'instant'});})()`, false, "scenario:place-panel");
+  if (DISABLE_COMPENSATION) await cdp.evaluate("(() => {window.scrollBy = () => {}; document.head.insertAdjacentHTML('beforeend', '<style>.reader-body { translate: none !important }</style>');})()", false, "scenario:disable-compensation");
+  let foregroundError = null;
+  const keepForeground = setInterval(() => {
+    void cdp.call("Page.bringToFront", {}, "scenario:keep-foreground").catch((error) => { foregroundError = error; });
+  }, 1000);
+  let result;
+  try {
+    result = await cdp.evaluate(`new Promise((resolve, reject) => {
     const panel = document.querySelector('.gloss-panel[data-sentence-index="0"]');
     const sentences = [...document.querySelectorAll('.reader-body .sentence')];
     const below = sentences.find(el => Number(el.dataset.index) > 0 && el.getBoundingClientRect().top > panel.getBoundingClientRect().bottom);
@@ -166,7 +177,11 @@ async function runScenario(cdp, index, name) {
     const initialPanelBottom = initialRect.bottom;
     const initialBelow = below ? top(below) : null;
     requestAnimationFrame(tick);
-  })`, true);
+  })`, true, "scenario:measure-promise");
+  } finally {
+    clearInterval(keepForeground);
+  }
+  if (foregroundError) throw foregroundError;
   console.log(JSON.stringify({ mode: DISABLE_COMPENSATION ? "compensation-off" : "compensation-on", run: index + 1, scenario: name, changes: result.changes, maxStep: result.maxStep, maxCumulative: result.maxCumulative, signedSum: result.signedSum, initialPanelHeight: result.initialPanelHeight, finalPanelHeight: result.finalPanelHeight, belowDelta: result.belowDelta }));
   if (name === "above" && result.initialPanelBottom > 0) throw new Error("above: panel was not fully above viewport");
   if (name === "crossing" && !(result.initialPanelTop < 0 && result.initialPanelBottom > 0)) throw new Error("crossing: viewport did not cut through panel");
@@ -185,6 +200,7 @@ async function runScenario(cdp, index, name) {
 
 const profile = await mkdtemp(join(tmpdir(), "gloss-g40-"));
 const port = await freePort();
+browserStartedAt = performance.now();
 const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu", "--no-sandbox", `--remote-debugging-port=${port}`, "--remote-allow-origins=*", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
 let chromeErrors = "";
 chrome.stderr.on("data", (chunk) => { chromeErrors = `${chromeErrors}${chunk}`.slice(-2000); });
@@ -196,13 +212,16 @@ try {
   }, "Chrome CDP");
   cdp = new Cdp(target.webSocketDebuggerUrl);
   await cdp.ready;
+  const browser = await cdp.call("Browser.getVersion", {}, "browser:version");
+  console.log(browser.product);
   await sleep(500);
-  await cdp.call("Page.enable");
-  await cdp.call("Runtime.enable");
-  await cdp.call("Page.addScriptToEvaluateOnNewDocument", { source: "window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };" });
+  await cdp.call("Page.enable", {}, "setup:page-enable");
+  await cdp.call("Runtime.enable", {}, "setup:runtime-enable");
+  await cdp.call("Emulation.setDeviceMetricsOverride", { width: 754, height: 440, deviceScaleFactor: 1, mobile: false }, "setup:viewport");
+  await cdp.call("Page.addScriptToEvaluateOnNewDocument", { source: "window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };" }, "setup:new-document-script");
   await navigate(cdp, ORIGIN);
   for (let index = 0; index < 9; index++) {
-    await cdp.evaluate(`localStorage.setItem('gloss:doc:g40-viewport-${index}', ${JSON.stringify(JSON.stringify(fixture(index)))})`);
+    await cdp.evaluate(`localStorage.setItem('gloss:doc:g40-viewport-${index}', ${JSON.stringify(JSON.stringify(fixture(index)))})`, false, `fixture:${index}`);
   }
   if (PROBE_ABOVE) await runScenario(cdp, 0, "above");
   else for (const [scenarioIndex, name] of ["above", "crossing", "inside"].entries()) {

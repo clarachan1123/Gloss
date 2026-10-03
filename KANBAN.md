@@ -658,7 +658,7 @@ gloss/
 ---
 
 ### G-48 · verify-g40 完整模式超时与测量环境不固定
-**P1** ｜ 来源：G-47，2026-10-01 ｜ 分支待定
+**P1** ｜ 来源：G-47，2026-10-01 ｜ 分支 `codex/g48-verify-timeout`
 
 **现象**
 - 完整模式反复报 `Chrome CDP timed out: Runtime.evaluate`（40 秒），没能跑完一次：
@@ -672,12 +672,22 @@ gloss/
 - 输出不含视口与浏览器版本。
 - 超时原因未查。
 
+**诊断与修复（Codex 自测，2026-10-04）**
+- 根因（读代码）：`verify-g40.mjs` 的逐帧测量使用 `Runtime.evaluate(awaitPromise: true)`；25 秒超时只在 rAF 回调 `tick` 内检查。页面变为 hidden 且 rAF 停止调度后，测量 Promise 无法自行结算，外层 `Cdp.call` 40 秒后报 `Runtime.evaluate` 超时。
+- 根因（实测）：诊断脚本 `scripts/tmp-g48-verify.mjs` 为每次 CDP 调用记录 method、标签、开始时间、耗时和离浏览器启动时间。挂起时并行 `1+1` evaluate 约 1 ms 返回，状态 evaluate 返回 `document.visibilityState=hidden`、最近 rAF 回调时间早于采样、定时器计数仍增长；不支持渲染主线程持续被占满的假设。Edge 154.0.4258.53 headless，默认首字 12 秒，以下运行均在沙箱外，诊断脚本不提交：
+  - A（不维持前台）：3/3 超时，分别完成 0、3、0 遍；超时均为 `scenario:measure-promise`，浏览器启动后 44.447、89.970、42.621 秒，单次 CDP 耗时 40.002、40.000、40.012 秒。
+  - B（仅测量期间每秒 `Page.bringToFront`）：连续 3 次完整 9/9 通过。
+  - 恢复 A：3/3 再次超时，分别完成 0、0、0 遍；浏览器启动后 42.559、42.577、42.570 秒，单次 CDP 耗时 40.012、40.013、40.007 秒。A/B/A 满足全超时→全通过→全超时。单场景也会在第一遍停帧，因此不归因于浏览器跨遍复用；Edge 为何将 headless 页面置为 hidden 仍未查明。
+  - `Page.addScriptToEvaluateOnNewDocument` 设 `gloss:analytics:optout=1` 的单变量对照，3/3 仍超时，分别完成 1、0、0 遍；浏览器启动后 58.349、42.544、42.517 秒。30 秒 analytics flush 假设未通过 B 阶段，不认定为根因。
+- 修复（读代码）：仅在逐帧测量期间每秒调用 `Page.bringToFront`，结束即清除计时器；保留原 25 秒与 40 秒门槛，不重试、不跳遍。首次导航前设 `Emulation.setDeviceMetricsOverride` 为 754×440、deviceScaleFactor 1、mobile false；首行输出 `Browser.getVersion.product`，逐遍输出并断言 `innerWidth`、`innerHeight`、`devicePixelRatio`。诊断 B 中未固定视口时，第一遍为 754×440，之后读到 754×406；固定后下述每遍均为 754×440、DPR 1。754×406 的底层成因仍未查明。
+- 验收（实测；均在沙箱外、Edge 154.0.4258.53 headless、754×440、DPR 1、无效 key 与本地慢上游；每次启动后预检服务端日志均有 HTTP 401）：`node --check scripts/verify-g40.mjs` 退出码 0；默认 12 秒完整模式连续 3 次各 9/9 通过，失败 0；3 秒完整模式连续 3 次各 9/9 通过，失败 0；12 秒 `G40_PROBE_ABOVE=1` 一次通过（changes 35、maxStep 0、maxCumulative 0、signedSum 0）；12 秒再加 `G40_DISABLE_COMPENSATION=1` 一次输出 `G-40 negative control exposed drift`（changes 35、maxStep 57.375、maxCumulative 1043.03125、signedSum 1043.03125）。
+
 **说明**：G-29、G-39 改动自动收起时机之前，完整模式必须恢复可用。
 
 **验收**
-- [ ] 查明超时根因
-- [ ] 完整模式 3 场景 × 3 遍一次跑通，连续 3 次
-- [ ] 脚本固定并输出视口与浏览器版本
+- [x] 查明超时根因（rAF 停帧使页内超时失效；见上方 A/B/A）
+- [x] 完整模式 3 场景 × 3 遍一次跑通，连续 3 次（12 秒和 3 秒均完成）
+- [x] 脚本固定并输出视口与浏览器版本（每遍 754×440、DPR 1）
 
 **回滚**：`git revert`
 
@@ -742,7 +752,7 @@ gloss/
 - 两次站内跳转各有一次 sendBeacon 到 /api/analytics；
 - gloss_dismiss_early：未验证（本地无效 key，无可用生成）。
 
-**未验证项**：G-40 单场景回归（G-48 超时 ×3）、gloss_dismiss_early 本地未测（无可用生成）。
+**未验证项**：G-40 单场景回归（G-48 超时 ×3）、gloss_dismiss_early 本地未测（无可用生成）。后续补测（Codex 自测，2026-10-04，G-48 修复脚本，沙箱外）：默认 12 秒 `G40_PROBE_ABOVE=1` 一次通过，changes 35、maxStep 0、maxCumulative 0、signedSum 0；不改写上面的 G-51 当时未验证记录。
 
 **回滚**：git revert
 

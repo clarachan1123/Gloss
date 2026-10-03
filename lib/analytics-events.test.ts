@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CLIENT_EVENTS, validateAnalyticsEvent } from "./analytics-events";
+import { CLIENT_EVENTS, glossCharsBucket, sentenceCharsBucket, validateAnalyticsEvent } from "./analytics-events";
 
 const eventId = "00000000-0000-4000-8000-000000000000";
 const valid: Record<string, Record<string, unknown>> = {
@@ -48,7 +48,49 @@ describe("G-15b client event whitelist", () => {
   });
 
   it("server-only events stay out of browser batches", () => {
-    expect(validateAnalyticsEvent({ event: "gloss_overlength", eventId, overlength: true, outputChars: 1,
+    expect(validateAnalyticsEvent({ event: "gloss_overlength", eventId, overlength: true,
       model: "m", promptVersion: "p" }, true)).toBe(false);
+  });
+});
+
+describe("G-50 length buckets", () => {
+  it.each([
+    [0, "0"], [1, "1-40"], [40, "1-40"], [41, "41-80"], [80, "41-80"],
+    [81, "81-150"], [150, "81-150"], [151, ">150"],
+  ])("sentenceCharsBucket(%i) is %s", (count, bucket) => {
+    expect(sentenceCharsBucket(count)).toBe(bucket);
+  });
+
+  it.each([
+    [0, "0"], [1, "1-50"], [50, "1-50"], [51, "51-100"], [100, "51-100"],
+    [101, "101-150"], [150, "101-150"], [151, ">150"],
+  ])("glossCharsBucket(%i) is %s", (count, bucket) => {
+    expect(glossCharsBucket(count)).toBe(bucket);
+  });
+
+  it.each([
+    ["sentence_click", { sentenceIndex: 0, sentenceCharsBucket: "1-40", cacheHit: false }, true],
+    ["gloss_complete", { sentenceIndex: 0, cacheHit: false, durationMs: 10, glossCharsBucket: "1-50" }, true],
+    ["gloss_read_complete", { sentenceIndex: 0, visibleMs: 2000, bottomSeen: true, glossCharsBucket: "101-150" }, true],
+    ["gloss_overlength", { overlength: true, model: "m", promptVersion: "p" }, false],
+  ] as const)("accepts %s with the new fields", (event, detail, clientOnly) => {
+    expect(validateAnalyticsEvent({ event, eventId, ...detail }, clientOnly)).toBe(true);
+  });
+
+  it.each([
+    ["sentence_click", { sentenceIndex: 0, sentenceChars: 3, cacheHit: false }, true],
+    ["gloss_complete", { sentenceIndex: 0, cacheHit: false, durationMs: 10, glossChars: 3 }, true],
+    ["gloss_read_complete", { sentenceIndex: 0, visibleMs: 2000, bottomSeen: true, glossChars: 3 }, true],
+    ["gloss_overlength", { overlength: true, outputChars: 150, model: "m", promptVersion: "p" }, false],
+  ] as const)("rejects %s with the old integer field", (event, detail, clientOnly) => {
+    expect(validateAnalyticsEvent({ event, eventId, ...detail }, clientOnly)).toBe(false);
+  });
+
+  it.each([
+    ["sentence_click", { sentenceIndex: 0, sentenceCharsBucket: "1-50", cacheHit: false }],
+    ["gloss_complete", { sentenceIndex: 0, cacheHit: false, durationMs: 10, glossCharsBucket: "1-40" }],
+    ["gloss_read_complete", { sentenceIndex: 0, visibleMs: 2000, bottomSeen: true, glossCharsBucket: "150" }],
+  ])("rejects %s with an unlisted bucket", (event, detail) => {
+    expect(validateAnalyticsEvent({ event, eventId, ...detail }, true)).toBe(false);
   });
 });

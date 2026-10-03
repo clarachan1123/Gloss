@@ -54,6 +54,20 @@ describe("analytics local state", () => {
     expect(nextAnalyticsBatch(events.slice(50, 60))).toHaveLength(10);
   });
 
+  it("drops old integer events from a mixed outbox and persists only new buckets", () => {
+    const store = memoryStore();
+    const metadata = {
+      version: 1, firstUseDay: "2026-10-01", readerReturned: true,
+      docs: { sample: { importDay: "2026-10-01", opened: true, returned: false } },
+    };
+    const oldEvent = { event: "sentence_click", eventId: crypto.randomUUID(), sentenceIndex: 0, sentenceChars: 3, cacheHit: false };
+    const newEvent = { event: "sentence_click", eventId: crypto.randomUUID(), sentenceIndex: 1, sentenceCharsBucket: "1-40", cacheHit: false };
+    store.setItem(ANALYTICS_LOCAL_KEY, JSON.stringify({ ...metadata, outbox: [oldEvent, newEvent] }));
+
+    expect(pendingAnalytics(store)).toEqual([newEvent]);
+    expect(JSON.parse(store.getItem(ANALYTICS_LOCAL_KEY)!)).toEqual({ ...metadata, outbox: [newEvent] });
+  });
+
   it("optout and storage write failure leave document keys untouched", () => {
     const store = memoryStore();
     store.setItem("gloss:document:sample", "keep");

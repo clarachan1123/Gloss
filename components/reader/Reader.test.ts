@@ -89,7 +89,7 @@ it("G-15a 已保存白话在 savedRegions 尚未测量时不发事件，普通�
       await act(async () => { target!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
       if (saved) expect(events).toHaveLength(0);
       else expect(events.filter((event) => event.event === "sentence_click")).toEqual([
-        expect.objectContaining({ sentenceIndex: 0, sentenceChars: 3, cacheHit: expectedCacheHit }),
+        expect.objectContaining({ sentenceIndex: 0, sentenceCharsBucket: "1-40", cacheHit: expectedCacheHit }),
       ]);
       await act(async () => { root.unmount(); });
       container.remove();
@@ -429,7 +429,7 @@ describe("G-15b 阅读器事件", () => {
   let roots: { root: ReturnType<typeof createRoot>; container: HTMLElement }[] = [];
   let fetchMock: ReturnType<typeof vi.fn>;
 
-  function stubEnvironment(hitDocIds: readonly string[]) {
+  function stubEnvironment(hitDocIds: readonly string[], cachedText = glossText) {
     Object.defineProperty(document, "fonts", { configurable: true, value: { ready: Promise.resolve() } });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     fetchMock = vi.fn((url: string) => String(url).includes("/api/report")
@@ -449,7 +449,7 @@ describe("G-15b 阅读器事件", () => {
       takeRecords() { return []; }
     });
     vi.spyOn(cache, "preloadGlossCache").mockImplementation(async (docId) => hitDocIds.includes(docId)
-      ? new Map([0, 1, 2, 3].map((index) => [index, { text: glossText, hasStructure: false }]))
+      ? new Map([0, 1, 2, 3].map((index) => [index, { text: cachedText, hasStructure: false }]))
       : new Map());
   }
 
@@ -534,6 +534,7 @@ describe("G-15b 阅读器事件", () => {
     const container = await mount("g15b-dismiss");
     await click(container, ".sentence[data-index='0']", 1_000);
     expect(of("gloss_complete")).toHaveLength(1);
+    expect(of("gloss_complete")[0]).toEqual(expect.objectContaining({ glossCharsBucket: "1-50" }));
     await click(container, ".sentence[data-index='0']", 2_500);
     await click(container, ".sentence[data-index='1']", 4_000);
     await click(container, ".sentence[data-index='2']", 4_800);
@@ -570,6 +571,7 @@ describe("G-15b 阅读器事件", () => {
     now = 4_000;
     await act(async () => { window.dispatchEvent(new Event("scroll")); });
     expect(of("gloss_read_complete")).toHaveLength(1);
+    expect(of("gloss_read_complete")[0]).toEqual(expect.objectContaining({ glossCharsBucket: "1-50" }));
     await click(read, ".sentence[data-index='0']", 4_100);
 
     panelRect = { ...panelRect, bottom: 5_000, height: 4_900 } as DOMRect;
@@ -595,6 +597,21 @@ describe("G-15b 阅读器事件", () => {
     expect(of("gloss_abort").at(-1)).toEqual({ event: "gloss_abort", sentenceIndex: 0, abortPhase: "waiting" });
 
     expect(of("gloss_dismiss_early")).toEqual([]);
+  });
+
+  it("120 visible gloss chars require 15 seconds before gloss_read_complete", async () => {
+    stubEnvironment(["g50-raw-clock"], "甲".repeat(120));
+    const container = await mount("g50-raw-clock");
+    await click(container, ".sentence[data-index='0']", 1_000);
+    expect(of("gloss_complete")[0]).toEqual(expect.objectContaining({ glossCharsBucket: "101-150" }));
+    now = 15_999;
+    await act(async () => { window.dispatchEvent(new Event("scroll")); });
+    expect(of("gloss_read_complete")).toEqual([]);
+    now = 16_000;
+    await act(async () => { window.dispatchEvent(new Event("scroll")); });
+    expect(of("gloss_read_complete")).toEqual([
+      expect.objectContaining({ glossCharsBucket: "101-150", visibleMs: 15_000 }),
+    ]);
   });
 
   it("gloss_save 写入成功发一次，取消保存不发；操作行「听不懂」发 action_row", async () => {

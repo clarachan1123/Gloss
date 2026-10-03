@@ -15,6 +15,8 @@ const short = (value: unknown) => typeof value === "string" && value.length > 0 
 const fileSize = oneOf("0", "1-100KiB", "100KiB-1MiB", "1-5MiB", "5-20MiB", ">20MiB");
 const parseChars = oneOf("0", "1-1000", "1001-5000", "5001-20000", "20001-50000", ">50000");
 const sentenceCount = oneOf("0", "1-20", "21-100", "101-500", "501-2000", ">2000");
+const sentenceChars = oneOf("0", "1-40", "41-80", "81-150", ">150");
+const glossChars = oneOf("0", "1-50", "51-100", "101-150", ">150");
 const format = oneOf("pdf", "docx", "txt", "paste", "unsupported");
 const index = (value: unknown) => integer(value) && (value as number) <= 100_000;
 const warnings = (value: unknown) => Array.isArray(value) && value.length <= 2 &&
@@ -37,16 +39,16 @@ const fields: Record<string, Record<string, Check>> = {
     aiSegmented: bool,
     warningCodes: warnings,
   },
-  sentence_click: { sentenceIndex: index, sentenceChars: integer, cacheHit: bool },
+  sentence_click: { sentenceIndex: index, sentenceCharsBucket: sentenceChars, cacheHit: bool },
   sentence_reclick: { sentenceIndex: index, reclickOrdinal: (value) => integer(value) && (value as number) >= 2 },
   gloss_first_token: { sentenceIndex: index, firstTokenMs: finite, cacheHit: (value) => value === false },
-  gloss_complete: { sentenceIndex: index, cacheHit: bool, durationMs: finite, glossChars: integer },
-  gloss_overlength: { overlength: (value) => value === true, outputChars: integer, model: short, promptVersion: short },
+  gloss_complete: { sentenceIndex: index, cacheHit: bool, durationMs: finite, glossCharsBucket: glossChars },
+  gloss_overlength: { overlength: (value) => value === true, model: short, promptVersion: short },
   gloss_read_complete: {
     sentenceIndex: index,
     visibleMs: finite,
     bottomSeen: (value) => value === true,
-    glossChars: integer,
+    glossCharsBucket: glossChars,
   },
   gloss_dismiss_early: { sentenceIndex: index, visibleMs: (value) => finite(value) && (value as number) < DISMISS_EARLY_MS },
   gloss_abort: { sentenceIndex: index, abortPhase: oneOf("waiting", "streaming") },
@@ -137,6 +139,22 @@ export function parseCharsBucket(count: number): string {
   if (count <= 20000) return "5001-20000";
   if (count <= 50000) return "20001-50000";
   return ">50000";
+}
+
+export function sentenceCharsBucket(count: number): string {
+  if (count === 0) return "0";
+  if (count <= 40) return "1-40";
+  if (count <= 80) return "41-80";
+  if (count <= 150) return "81-150";
+  return ">150";
+}
+
+export function glossCharsBucket(count: number): string {
+  if (count === 0) return "0";
+  if (count <= 50) return "1-50";
+  if (count <= 100) return "51-100";
+  if (count <= 150) return "101-150";
+  return ">150";
 }
 
 export function sentenceCountBucket(count: number): string {

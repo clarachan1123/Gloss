@@ -28,7 +28,7 @@ import {
 import { MAX_AFTER, MAX_BEFORE, MAX_EXPLAIN_CONTEXT_CHARS } from "@/lib/context";
 import { streamExplain, type ExplainInput } from "@/lib/explain-client";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
-import { DISMISS_EARLY_MS, emitAnalytics } from "@/lib/analytics-events";
+import { DISMISS_EARLY_MS, emitAnalytics, glossCharsBucket, sentenceCharsBucket } from "@/lib/analytics-events";
 import { enqueueAnalytics, markAnalyticsOpen, takeReaderEntrySource, type ReaderEntrySource } from "@/lib/analytics-local";
 import { ReadCompleteClock } from "@/lib/analytics-read-complete";
 import { countChars, skippedSummary, type ParsedHeading, type SkippedContent } from "@/lib/parse/validate";
@@ -271,10 +271,10 @@ export default function Reader({ docId }: { docId: string }) {
     if (fullyShown && attempt.firstClick && !attempt.completeReported) {
       attempt.completeReported = true;
       emitAnalytics({ event: "gloss_complete", sentenceIndex: attempt.index, cacheHit: attempt.cacheHit,
-        durationMs: Math.max(0, now - attempt.clickedAt), glossChars: chars });
+        durationMs: Math.max(0, now - attempt.clickedAt), glossCharsBucket: glossCharsBucket(chars) });
     }
     if (result.readComplete && attempt.firstClick && !attempt.dismissReported) emitAnalytics({ event: "gloss_read_complete", sentenceIndex: attempt.index,
-      visibleMs: result.visibleMs, bottomSeen: true, glossChars: result.glossChars });
+      visibleMs: result.visibleMs, bottomSeen: true, glossCharsBucket: glossCharsBucket(result.glossChars) });
   }
   /**
    * 读者主动收起（再点同一句、点另一句、Esc、点别处）开始的那一刻判定 gloss_dismiss_early；
@@ -814,7 +814,7 @@ export default function Reader({ docId }: { docId: string }) {
     if (nextCount !== null) clickCountsRef.current.set(index, nextCount);
     const cacheHit = nextCount !== null && lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null).status === "hit";
     if (nextCount !== null) emitAnalytics(nextCount === 1
-      ? { event: "sentence_click", sentenceIndex: index, sentenceChars: countChars(sentence.text), cacheHit }
+      ? { event: "sentence_click", sentenceIndex: index, sentenceCharsBucket: sentenceCharsBucket(countChars(sentence.text)), cacheHit }
       : { event: "sentence_reclick", sentenceIndex: index, reclickOrdinal: nextCount });
     const priorAttempt = readAttemptRef.current;
     if (priorAttempt && priorAttempt.index !== index) {

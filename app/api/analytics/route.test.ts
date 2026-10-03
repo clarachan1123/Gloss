@@ -23,6 +23,15 @@ describe("POST /api/analytics", () => {
     expect(set).toHaveBeenCalledTimes(0);
   });
 
+  it("rejects a batch containing one old integer event without writing its valid neighbor", async () => {
+    const set = vi.fn(async () => "OK");
+    const post = createAnalyticsPost({ enabled: () => true, store: () => ({ set }) });
+    const valid = { event: "sentence_click", eventId: crypto.randomUUID(), sentenceIndex: 0, sentenceCharsBucket: "1-40", cacheHit: false };
+    const old = { event: "sentence_click", eventId: crypto.randomUUID(), sentenceIndex: 1, sentenceChars: 3, cacheHit: false };
+    expect((await post(request({ events: [valid, old] }))).status).toBe(400);
+    expect(set).not.toHaveBeenCalled();
+  });
+
   it("sets one event key with NX and a 60-day TTL", async () => {
     const set = vi.fn(async () => "OK");
     const post = createAnalyticsPost({ enabled: () => true, store: () => ({ set }) });

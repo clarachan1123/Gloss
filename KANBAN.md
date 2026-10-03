@@ -696,12 +696,21 @@ gloss/
 ---
 
 ### G-50 · 句长与白话字数改为分档上报
-**P1 · W4 开始前完成** ｜ 来源：G-15b，2026-10-01 ｜ 分支待定
+**P1 · W4 开始前完成** ｜ 来源：G-15b，2026-10-01 ｜ 分支 `codex/g50-bucket-fields`
 
 **理由**：sentence_click.sentenceChars、gloss_complete.glossChars、gloss_read_complete.glossChars、gloss_overlength.outputChars 现为原始整数。「句序号 + 句长」序列可识别所读文本，与「字数、句数、大小一律只报分档」不一致。
 
+**决定（Clara，2026-10-03）**
+- 句长分档 0 / 1-40 / 41-80 / 81-150 / >150；白话分档 0 / 1-50 / 51-100 / 101-150 / >150；字段改名为 sentenceCharsBucket、glossCharsBucket。W4 样本量小，粗档每档有数，可识别性更低。
+- gloss_overlength 删除 outputChars：截断在第 151 字，上报值恒为 150。PRD 4.1「gloss_overlength：实际字数」与实现不一致，PRD 未同步（不改 PRD）。
+- 上线时未刷新的旧页面发旧格式事件会被整批 400、当页受阻；刷新后新代码读取时过滤并写回删除旧事件。接受此窗口。
+- 服务端日志 logAiEvent（app/api/gloss、structure、explain）里的原始 sentenceChars / outputChars 只进 Vercel 运行日志、不进 Upstash，本卡不改，登记。
+- Upstash 里本卡上线前的记录仍是原始整数字段名（sentenceChars、glossChars、outputChars），W4 分析时按字段名区分，不追溯改写。
+- sentenceIndex 仍为原始句序号，本卡不改，登记。
+
 **验收**
-- [ ] sentenceChars、glossChars、outputChars 由原始整数改为分档
+- [ ] sentenceChars、glossChars 改名并分档；gloss_overlength 删除 outputChars
+      自测（Codex，2026-10-03，gloss-g50）：npm test 483 通过 / 17 跳过 / 0 失败；npx tsc --noEmit 退出码 0；npm run build 成功。
 
 **回滚**：`git revert`
 
@@ -784,7 +793,7 @@ gloss/
 | WAF 限流按 IP 计数 | 共用出口 IP 的读者（校园网、公司网络、运营商共享地址）共享 10 分钟 30 次的额度，几个人同时读会很快被拦 | 暂不改（Hobby 只有一条规则，放宽会让单个 IP 的最坏花费同比例翻倍）。**G-15 做用量显示时重新评估** |
 | 大陆可达性依赖 `76.223.126.88`，这不是 Vercel 当前推荐的 A 值 | 该 IP 被封或下线时，大陆读者会突然全部打不开，且不会有任何告警 | W4 期间每周由 Clara 用大陆手机流量复测一次可达性；失效时按 G-45 的 Plan B 表处置，不再试别的 IP |
 | 大陆线路用的 `76.223.126.88` 不是 Vercel 推荐的 A 值，Domains 状态与证书续期的关系未经历过一次实际续期 | 若续期因此失败，大陆与境外读者会同时遇到 HTTPS 警告或打不开 | 当前证书有效期至 2026-12-25。2026-12-10 前由 Clara 检查一次证书是否已自动续期；未续期则立即把默认线路改回 `216.198.79.1` 恢复推荐配置，再另行处理大陆可达性 |
-| `next` 16.3.5 有 critical 安全公告 GHSA-vcvr-r3jv-pc5j（next/og ImageResponse 远程代码执行）；`npm audit --omit=dev` 与 `npm audit` 都报这一项。公告受影响范围 `>=16.2.0 <16.3.6`（首个修复版 16.3.6）；G-51 选 16.3.8，因 npm audit 的 fixAvailable 指向它且 16.3.8 另含安全修复 | `next` 是直接生产依赖（当前生产基线 main 的 `package.json` 锁定 `"16.3.5"`，依赖链 gloss → next），随线上部署运行。仓库代码未引用 `next/og`、`ImageResponse`（检索 0 个文件）；未使用该功能时能否被利用未核实 | G-51 已修：升级到 16.3.8 并上线（3aade51，2026-10-03）。来源：G-15b npm audit，2026-10-01； |
+| `next` 16.3.5 有 critical 安全公告 GHSA-vcvr-r3jv-pc5j（next/og ImageResponse 远程代码执行）；`npm audit --omit=dev` 与 `npm audit` 都报这一项。公告受影响范围 `>=16.2.0 <16.3.6`（首个修复版 16.3.6）；G-51 选 16.3.8，因 npm audit 的 fixAvailable 指向它且 16.3.8 另含安全修复 | `next` 是直接生产依赖（当前生产基线 main 的 `package.json` 锁定 `"16.3.8"`，依赖链 gloss → next），随线上部署运行。仓库代码未引用 `next/og`、`ImageResponse`（检索 0 个文件）；未使用该功能时能否被利用未核实 | G-51 已修：升级到 16.3.8 并上线（3aade51，2026-10-03）。来源：G-15b npm audit，2026-10-01 |
 
 ---
 

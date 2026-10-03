@@ -72,13 +72,18 @@ export function readAnalyticsState(storage?: Storage): AnalyticsLocalState | nul
     const value = JSON.parse(raw) as Partial<AnalyticsLocalState> | null;
     if (value?.version !== 1 || !Array.isArray(value.outbox) || !value.docs || typeof value.docs !== "object" ||
         !(value.firstUseDay === null || typeof value.firstUseDay === "string") || typeof value.readerReturned !== "boolean") return null;
-    return {
+    const state: AnalyticsLocalState = {
       version: 1,
       firstUseDay: value.firstUseDay,
       readerReturned: value.readerReturned,
       docs: value.docs as Record<string, LocalDoc>,
       outbox: value.outbox.filter((entry) => validateAnalyticsEvent(entry, true)).slice(-ANALYTICS_MAX_LOCAL_EVENTS),
     };
+    if (state.outbox.length < value.outbox.length) {
+      const target = availableStorage(storage);
+      if (target) commit(target, state);
+    }
+    return state;
   } catch {
     return null;
   }

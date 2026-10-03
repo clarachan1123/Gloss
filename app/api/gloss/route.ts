@@ -261,7 +261,7 @@ export async function POST(request: Request): Promise<Response> {
           controller.close();
           await recordCall(output.truncated ? "overlength" : "done");
           if (output.truncated) await recordServerAnalytics({ event: "gloss_overlength", overlength: true,
-            outputChars: output.charCount, model: variant.model, promptVersion: variant.promptVersion });
+            model: variant.model, promptVersion: variant.promptVersion });
         } catch (error) {
           if (cancelled || request.signal.aborted) {
             log("gloss_abort", { phase: "streaming" });

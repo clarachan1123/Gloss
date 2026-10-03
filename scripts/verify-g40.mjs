@@ -127,7 +127,13 @@ async function runScenario(cdp, index, name) {
   }, 1000);
   let result;
   try {
-    result = await cdp.evaluate(`new Promise((resolve, reject) => {
+    result = await cdp.evaluate(`(() => {
+    let onVisibilityChange = null;
+    return new Promise((resolve, reject) => {
+    let hiddenEvents = 0, maxFrameGapMs = 0, lastFrameAt = null;
+    onVisibilityChange = () => { if (document.visibilityState === 'hidden') hiddenEvents++; };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    if (document.visibilityState !== 'visible') return reject(new Error('hidden at start'));
     const panel = document.querySelector('.gloss-panel[data-sentence-index="0"]');
     const sentences = [...document.querySelectorAll('.reader-body .sentence')];
     const below = sentences.find(el => Number(el.dataset.index) > 0 && el.getBoundingClientRect().top > panel.getBoundingClientRect().bottom);
@@ -151,6 +157,9 @@ async function runScenario(cdp, index, name) {
     const timeline = [];
     const started = performance.now();
     const tick = () => {
+      const frameAt = performance.now();
+      if (lastFrameAt !== null) maxFrameGapMs = Math.max(maxFrameGapMs, frameAt - lastFrameAt);
+      lastFrameAt = frameAt;
       if (!panel.isConnected) return reject(new Error('Panel unmounted'));
       const rect = panel.getBoundingClientRect();
       const current = top(anchor);
@@ -167,7 +176,7 @@ async function runScenario(cdp, index, name) {
         previous = current;
       }
       stable = panel.dataset.state === 'done' ? stable + 1 : 0;
-      if (stable >= 3) return resolve({scenario:${JSON.stringify(name)},changes,maxStep,maxCumulative,signedSum,initialTop:first,finalTop:current,initialPanelHeight:initialHeight,finalPanelHeight:rect.height,initialPanelTop,initialPanelBottom,belowDelta:below ? top(below)-initialBelow : null,panelTop:rect.top,panelBottom:rect.bottom,timeline});
+      if (stable >= 3) return resolve({scenario:${JSON.stringify(name)},changes,maxStep,maxCumulative,signedSum,initialTop:first,finalTop:current,initialPanelHeight:initialHeight,finalPanelHeight:rect.height,initialPanelTop,initialPanelBottom,belowDelta:below ? top(below)-initialBelow : null,panelTop:rect.top,panelBottom:rect.bottom,timeline,hiddenEvents,maxFrameGapMs});
       if (performance.now() - started > 25_000) return reject(new Error('Stream did not finish'));
       requestAnimationFrame(tick);
     };
@@ -177,12 +186,14 @@ async function runScenario(cdp, index, name) {
     const initialPanelBottom = initialRect.bottom;
     const initialBelow = below ? top(below) : null;
     requestAnimationFrame(tick);
-  })`, true, "scenario:measure-promise");
+  }).finally(() => document.removeEventListener('visibilitychange', onVisibilityChange));
+  })()`, true, "scenario:measure-promise");
   } finally {
     clearInterval(keepForeground);
   }
   if (foregroundError) throw foregroundError;
-  console.log(JSON.stringify({ mode: DISABLE_COMPENSATION ? "compensation-off" : "compensation-on", run: index + 1, scenario: name, changes: result.changes, maxStep: result.maxStep, maxCumulative: result.maxCumulative, signedSum: result.signedSum, initialPanelHeight: result.initialPanelHeight, finalPanelHeight: result.finalPanelHeight, belowDelta: result.belowDelta }));
+  console.log(JSON.stringify({ mode: DISABLE_COMPENSATION ? "compensation-off" : "compensation-on", run: index + 1, scenario: name, changes: result.changes, maxStep: result.maxStep, maxCumulative: result.maxCumulative, signedSum: result.signedSum, initialPanelHeight: result.initialPanelHeight, finalPanelHeight: result.finalPanelHeight, belowDelta: result.belowDelta, hiddenEvents: result.hiddenEvents, maxFrameGapMs: result.maxFrameGapMs }));
+  if (result.hiddenEvents > 0) throw new Error(`${name}: hidden during measurement (${result.hiddenEvents} events)`);
   if (name === "above" && result.initialPanelBottom > 0) throw new Error("above: panel was not fully above viewport");
   if (name === "crossing" && !(result.initialPanelTop < 0 && result.initialPanelBottom > 0)) throw new Error("crossing: viewport did not cut through panel");
   if (name === "inside" && result.initialPanelTop < 0) throw new Error("inside: panel was not in viewport");

@@ -682,10 +682,17 @@ gloss/
 - 修复（读代码）：仅在逐帧测量期间每秒调用 `Page.bringToFront`，结束即清除计时器；保留原 25 秒与 40 秒门槛，不重试、不跳遍。首次导航前设 `Emulation.setDeviceMetricsOverride` 为 754×440、deviceScaleFactor 1、mobile false；首行输出 `Browser.getVersion.product`，逐遍输出并断言 `innerWidth`、`innerHeight`、`devicePixelRatio`。诊断 B 中未固定视口时，第一遍为 754×440，之后读到 754×406；固定后下述每遍均为 754×440、DPR 1。754×406 的底层成因仍未查明。
 - 验收（实测；均在沙箱外、Edge 154.0.4258.53 headless、754×440、DPR 1、无效 key 与本地慢上游；每次启动后预检服务端日志均有 HTTP 401）：`node --check scripts/verify-g40.mjs` 退出码 0；默认 12 秒完整模式连续 3 次各 9/9 通过，失败 0；3 秒完整模式连续 3 次各 9/9 通过，失败 0；12 秒 `G40_PROBE_ABOVE=1` 一次通过（changes 35、maxStep 0、maxCumulative 0、signedSum 0）；12 秒再加 `G40_DISABLE_COMPENSATION=1` 一次输出 `G-40 negative control exposed drift`（changes 35、maxStep 57.375、maxCumulative 1043.03125、signedSum 1043.03125）。
 
+**第二轮（2026-10-04；Codex 自测）**
+- 诊断只改 `scripts/tmp-g48-hidden.mjs`，以 `5525a5f` 为底，保留视口覆盖，去掉 `Page.bringToFront`；以下均为沙箱外、默认 12 秒、Edge 154.0.4258.53、754×440、DPR 1。每项依序列出完整模式完成遍数 / 测量期间 hidden 次数；失败均为 `scenario:measure-promise` 的 40 秒 `Runtime.evaluate` 超时。
+  - A/B1/A：A `9/0、0/1、9/0`（失败时浏览器启动后 42.587 秒，CDP 40.005 秒）；B1 只加 `--disable-features=CalculateNativeWinOcclusion`，`9/0、0/1、9/0`（42.586 秒，40.005 秒）；恢复 A `9/0、9/0、0/1`（42.554 秒，40.005 秒）。
+  - A/B2/A：以紧接 B1 的恢复 A 组作为起始 A；B2 只加 `--disable-backgrounding-occluded-windows`，`9/0、9/0、9/0`；恢复 A `9/0、0/1、9/0`（失败时 42.544 秒，CDP 40.006 秒）。B1 的 B 阶段失败，B2 两侧的 A 均非连续 3 次超时；两者都不满足严格 A/B/A，不能认定启动参数解释 hidden，未加入正式脚本。
+- 正式脚本保留 `Page.bringToFront` 定时器，在测量 Promise 开始时拒绝 hidden，记录 `hiddenEvents` 与相邻 rAF 最大间隔 `maxFrameGapMs`，Promise resolve/reject 均移除监听；测量期间发生 hidden 就报错退出。`node --check` 退出码 0。
+- 新版验收均在沙箱外、Edge 154.0.4258.53、754×440、DPR 1；无效 key 的慢服务预检为主页 200、gloss 客户端 502、服务端 HTTP 401。默认 12 秒完整模式共 11 次：第 3、5、7、8 次各 9/9 通过且 hiddenEvents 最大 0；第 1、2、4、6、9、10、11 次因 hidden 自检失败，hiddenEvents 最大 1；最长只连续通过 2 次，未满足连续 3 次。3 秒完整模式 3 次均因 hidden 自检失败，最长连续通过 0 次。3 秒正向单场景探针 1/1 通过（hiddenEvents 0）；负对照 1/1 输出 `G-40 negative control exposed drift`（hiddenEvents 0）。全部运行都输出 `maxFrameGapMs`，逐轮数值见本卡交付报告；新版完整模式验收未通过，根因仍停在「页面被置为 hidden」这一层。
+
 **说明**：G-29、G-39 改动自动收起时机之前，完整模式必须恢复可用。
 
 **验收**
-- [x] 查明超时根因（rAF 停帧使页内超时失效；见上方 A/B/A）
+- [ ] 查明超时根因（rAF 停帧使页内超时失效；见上方 A/B/A；第二轮停在 hidden 这一层）
 - [x] 完整模式 3 场景 × 3 遍一次跑通，连续 3 次（12 秒和 3 秒均完成）
 - [x] 脚本固定并输出视口与浏览器版本（每遍 754×440、DPR 1）
 

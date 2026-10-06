@@ -695,6 +695,7 @@ gloss/
 - 根因与修复（实测/读代码）：`--disable-sync` 这个单一启动参数同时阻止本环境的 sync 确认页与 gwdang 欢迎页出现，并消除测量期间的 hidden；Edge 内部是哪一步创建欢迎页仍未单独证明。正式脚本只加 `--disable-sync`，删除 `Page.bringToFront` 定时器，避免靠周期性抢前台掩盖页面被置 hidden；保留 hidden 与帧间隔自检。首次导航后、写 fixture 前及全部场景后，用浏览器级 `Target.getTargets` 断言仅有测试页，失败时列出额外页面 URL。
 - 验收（实测）：`node --check` 退出码 0；默认 12 秒完整模式连续 3 次各 9/9 通过，3 秒完整模式连续 3 次各 9/9 通过，合计 54 遍 hiddenEvents 均为 0，逐遍视口 754×440、DPR 1，首行浏览器版本 `Edg/154.0.4258.53`；3 秒正向探针 1/1 通过，负对照 1/1 输出 `G-40 negative control exposed drift`，两者 hiddenEvents 均为 0。所有验收轮次均在沙箱外，慢服务以无效 key 预检出服务端 HTTP 401，结束后 Edge 残留进程数均为 0。
 - 第一轮提交 `5525a5f` 的「连续 3 次通过」依赖 `Page.bringToFront` 前台定时器，当时测量期间没有 hidden 自检，不作为本轮验收依据。
+- 第五轮（2026-10-06；Codex 自测）：`scenario:measure-promise` 的 `visibilitychange` 回调在 `hiddenEvents++` 后立即 `reject(new Error('hidden during measurement'))`，保留 Node 侧 `result.hiddenEvents > 0` 检查；`node --check` 退出码 0。默认 12 秒慢服务以无效 key 预检出服务端 HTTP 401；正式脚本完整模式 1 次 9/9 通过，最后一行 `G-40 viewport checks passed`，hiddenEvents 最大 0，总耗时 149.541 秒。仅去掉 `--disable-sync` 的临时脚本 1 次在 above 第 2 遍报 `Error: Error: hidden during measurement`，未等到 40 秒 CDP 超时；总耗时 23.949 秒，超过预期的 15 秒，因此该时间目标未通过。两轮结束后命令行含 `gloss-g40-` 的 Edge 残留进程数均为 0；慢服务已停止，3430/3431 均无监听。
 
 **说明**：G-29、G-39 改动自动收起时机之前，完整模式必须恢复可用。
 

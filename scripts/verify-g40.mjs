@@ -134,7 +134,12 @@ async function runScenario(cdp, index, name) {
     let onVisibilityChange = null;
     return new Promise((resolve, reject) => {
     let hiddenEvents = 0, maxFrameGapMs = 0, lastFrameAt = null;
-    onVisibilityChange = () => { if (document.visibilityState === 'hidden') hiddenEvents++; };
+    onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenEvents++;
+        reject(new Error('hidden during measurement'));
+      }
+    };
     document.addEventListener('visibilitychange', onVisibilityChange);
     if (document.visibilityState !== 'visible') return reject(new Error('hidden at start'));
     const panel = document.querySelector('.gloss-panel[data-sentence-index="0"]');

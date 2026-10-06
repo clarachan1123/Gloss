@@ -658,7 +658,7 @@ gloss/
 ---
 
 ### G-48 · verify-g40 完整模式超时与测量环境不固定
-**P1** ｜ 来源：G-47，2026-10-01 ｜ 分支 `codex/g48-verify-timeout`
+**P1** ｜ 来源：G-47，2026-10-01 ｜ 分支 `codex/g48-verify-timeout` ｜ 完成：2026-10-06 ｜ 合并 commit：`0dcaf5b`
 
 **现象**
 - 完整模式反复报 `Chrome CDP timed out: Runtime.evaluate`（40 秒），没能跑完一次：
@@ -696,6 +696,8 @@ gloss/
 - 验收（实测）：`node --check` 退出码 0；默认 12 秒完整模式连续 3 次各 9/9 通过，3 秒完整模式连续 3 次各 9/9 通过，合计 54 遍 hiddenEvents 均为 0，逐遍视口 754×440、DPR 1，首行浏览器版本 `Edg/154.0.4258.53`；3 秒正向探针 1/1 通过，负对照 1/1 输出 `G-40 negative control exposed drift`，两者 hiddenEvents 均为 0。所有验收轮次均在沙箱外，慢服务以无效 key 预检出服务端 HTTP 401，结束后 Edge 残留进程数均为 0。
 - 第一轮提交 `5525a5f` 的「连续 3 次通过」依赖 `Page.bringToFront` 前台定时器，当时测量期间没有 hidden 自检，不作为本轮验收依据。
 - 第五轮（2026-10-06；Codex 自测）：`scenario:measure-promise` 的 `visibilitychange` 回调在 `hiddenEvents++` 后立即 `reject(new Error('hidden during measurement'))`，保留 Node 侧 `result.hiddenEvents > 0` 检查；`node --check` 退出码 0。默认 12 秒慢服务以无效 key 预检出服务端 HTTP 401；正式脚本完整模式 1 次 9/9 通过，最后一行 `G-40 viewport checks passed`，hiddenEvents 最大 0，总耗时 149.541 秒。仅去掉 `--disable-sync` 的临时脚本 1 次在 above 第 2 遍报 `Error: Error: hidden during measurement`，未等到 40 秒 CDP 超时；总耗时 23.949 秒，超过预期的 15 秒，因此该时间目标未通过。两轮结束后命令行含 `gloss-g40-` 的 Edge 残留进程数均为 0；慢服务已停止，3430/3431 均无监听。
+  更正（Claude，2026-10-06）：「15 秒」是指令里设错的判据——hidden 可能发生在第 1 遍完成之后，总耗时包含已完成的遍次。应验证的是「hidden 后立即报错、不等 40 秒 CDP 超时」，本轮已满足。
+- 亲验（Clara，2026-10-06）：gloss-verify 检出 origin/codex/g48-verify-timeout（0dcaf5b），npm run dev:slow-gloss 默认 12 秒，node scripts\verify-g40.mjs 完整模式 1 次：首行以 Edg/ 开头，末行 G-40 viewport checks passed。
 
 **说明**：G-29、G-39 改动自动收起时机之前，完整模式必须恢复可用。
 

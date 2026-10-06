@@ -357,6 +357,8 @@ body {
   animation: sample-sentence-breathe 1.8s ease-in-out infinite;
 }
 .reader-body-sample-breathing .sentence:not(.sentence-breathe) { color: var(--ink); }
+/* 示例句继承祖先的动画色；自身的颜色过渡会让 Chromium 每帧从旧值重启，造成快闪。呼吸期间关闭，点过后自动恢复悬停过渡。 */
+.reader-body-sample-breathing .sentence-breathe { transition: none; }
 .reader-body-sample-breathing .sentence:not(.sentence-breathe):hover,
 .reader-body-sample-breathing .sentence-breathe:hover { color: var(--hover); }
 @keyframes sample-sentence-breathe {

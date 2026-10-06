@@ -229,4 +229,10 @@ describe("术语标记只有颜色", () => {
   it("reader.css 里只有一处给 .gloss-term 定样式（没有别处偷偷加底色）", () => {
     expect(READER.match(/\.gloss-term\b/g)).toHaveLength(1);
   });
+
+  it("示例句呼吸期间关闭自身颜色过渡", () => {
+    const rule = /\.reader-body-sample-breathing\s+\.sentence-breathe\s*\{([^}]*)\}/.exec(READER);
+    expect(rule).not.toBeNull();
+    expect(rule![1]).toMatch(/(?:^|;)\s*transition:\s*none\s*;/);
+  });
 });

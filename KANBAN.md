@@ -502,6 +502,7 @@ gloss/
 - 随书白话不用 `/api/gloss`、`/api/structure` 或 G-09 自动缓存；首帧显示首 4 字，其后沿用每 45ms 4 字的 GlossPanel 节奏和 `splitTerms` / `limitTerms`。减少动态效果设置下直接显示全文。
 - 「听不懂」仍请求 `/api/explain`；摘要来自内容文件，`null` 走已有无摘要路径。「留下」「翻错了」按固定 docId `sample` 照常存取。
 - 内容指定句序 5 呼吸，只动画 `color`，周期 2.4 秒；点过一次写 `gloss:sample:breathed = "1"`，再次进入不播放；减少动态效果时不播放。句子片段共用父元素的动画相位。
+- 2026-10-07 呼吸改为方案甲：墨色向纸色变淡，谷底纸色占 48%，1.8 秒一个来回；Clara 从对比页四个候选（字色变淡、底色晕染、光泽扫过、原方案调满）里选定；下划线已否决。代价：谷底那一刻示例句对比度约 3.3:1（羊皮纸、月白）和 3.0:1（护眼绿），低于 WCAG AA 的 4.5:1；只在动画谷底瞬间出现，点一下这句就永久停止，开启减少动态效果时不播放。
 - `sample_doc_enter.from` 为 `shelf | landing | direct`，本卡只产生 shelf/direct；指定句子、白话、解释、反馈事件可选 `sample: true`，普通事件和旧 outbox 无此字段仍合法；示例白话不发 `gloss_first_token`、`gloss_fail`，`reader_enter` 照常发。
 - PRD 3.5 的「`/` 空书架 → 示例书」与当前决定不同：示例书常驻书架；G-52 将在没有读者自己的书时由 `/` 显示落地页。PRD 本卡不改。
 

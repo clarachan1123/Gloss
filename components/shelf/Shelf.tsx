@@ -29,8 +29,10 @@ function importMonth(value: number): string {
 }
 
 /** 只在站内跳转进阅读页时记一次；单击书脊只是选中，不经过这里。 */
-function enterFromShelf(entry: ShelfEntry, kind: "continue" | "cover" | "start"): void {
-  emitAnalytics({ event: "shelf_book_click", entry: kind, daysSinceOpenBucket: daysSinceOpenBucket(entry.lastOpenedAt, entry.addedAt) });
+export function enterFromShelf(entry: ShelfEntry, kind: "continue" | "cover" | "start"): void {
+  if (entry.docId !== SAMPLE_DOC_ID) {
+    emitAnalytics({ event: "shelf_book_click", entry: kind, daysSinceOpenBucket: daysSinceOpenBucket(entry.lastOpenedAt, entry.addedAt) });
+  }
   markReaderEntry(entry.docId, "shelf");
 }
 

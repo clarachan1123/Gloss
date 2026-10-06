@@ -351,6 +351,8 @@ body {
 
 /* 同一个祖先驱动颜色，行尾拆成多个片段时仍保持同一呼吸相位。 */
 .reader-body-sample-breathing {
+  /* 调幅度只改这一个值。 */
+  --sample-breathe-mix: 60%;
   animation: sample-sentence-breathe 2.4s ease-in-out infinite;
 }
 .reader-body-sample-breathing .sentence:not(.sentence-breathe) { color: var(--ink); }
@@ -358,7 +360,7 @@ body {
 .reader-body-sample-breathing .sentence-breathe:hover { color: var(--hover); }
 @keyframes sample-sentence-breathe {
   0%, 100% { color: var(--ink); }
-  50% { color: color-mix(in srgb, var(--ink) 82%, var(--hover)); }
+  50% { color: color-mix(in srgb, var(--hover) var(--sample-breathe-mix), var(--ink)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .reader-body-sample-breathing { animation: none; }

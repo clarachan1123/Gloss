@@ -514,7 +514,18 @@ gloss/
 
 **实际改动**：`components/shelf/Shelf.tsx`、`components/reader/Reader.tsx`、`components/reader/Sentence.tsx`、`components/reader/GlossPanel.tsx`、`styles/reader.css`、`styles/shelf.css`、`lib/analytics-events.ts`、`components/shelf/Shelf.test.ts`、`components/reader/Reader.test.ts`、`lib/analytics-events.test.ts`、`lib/analytics-local.test.ts`、`app/api/analytics/route.test.ts`、`KANBAN.md`；新建 `public/samples/ziyou-yu-biran.json`、`lib/sample.ts`、`lib/sample.test.ts`。条件项 `lib/analytics-local.ts` 与 `app/read/[docId]/page.tsx` 未改：现有入口标记、动态路由已足够。
 
-**自测（Codex，2026-10-07）**：`npm test`：21 个文件，500 通过、17 跳过；`npx tsc --noEmit` 退出码 0；`npm run build` 成功。开发服务以 `local-test-invalid` 启动，向 `/api/gloss` 发 1 次请求，服务端记录上游 `HTTP 401`。Edge headless + CDP 尝试启动后端口未开放、进程退出，浏览器项目未验证。开发服务进程已结束，3460 端口无监听。以上均为 Codex 自测，Clara 亲验未进行。
+**自测（Codex，2026-10-07）**：`npm test`：21 个文件，500 通过、17 跳过；`npx tsc --noEmit` 退出码 0；`npm run build` 成功。开发服务以 `local-test-invalid` 启动，向 `/api/gloss` 发 1 次请求，服务端记录上游 `HTTP 401`。Edge headless + CDP 尝试启动后端口未开放、进程退出，浏览器项目未验证。开发服务进程已结束，3460 端口无监听。以上均为 Codex 自测；Clara 本人亲验未进行。
+
+**亲验（Claude 经内置浏览器代验，2026-10-07；提交 `3a40aad`、无效 key）**
+- 空书架只有示例书，书脊有「示例」；导入一本自有书后两本并排，示例书脊仍有「示例」。
+- 从书架进入 `/read/sample`，点击 index 5：`/api/gloss` 和 `/api/structure` 请求数均为 0；撑开第一帧显示「人的感觉」（4 字），其后逐字放出，「科学公律」术语着色。
+- 被点行 top 带符号位移：index 5（480 帧）为 0，index 0 为 0，index 9 为 0。
+- 呼吸只作用于 index 5；点击后停止并写入 `gloss:sample:breathed = "1"`，整页刷新后不再呼吸。
+- 示例书右键菜单没有「换颜色」；移除确认框说明保留阅读位置与已存白话。移除后刷新书架只剩自有书，`gloss:pos:sample` 仍在；直达 `/read/sample` 仍显示 13 句。
+- outbox 中示例书的 `sentence_click`、`gloss_complete` 带 `sample: true`；自有书的 `sentence_click`、`gloss_fail` 不带。示例书无 `gloss_first_token`；`sample_doc_enter.from` 从书架为 `shelf`、直达为 `direct`。
+- 代验发现：示例书进入时错误派发 `shelf_book_click`，`daysSinceOpenBucket` 恒为 `never`；呼吸颜色的 oklab 亮度仅在 0.248–0.275 间变化。本次 G-16a-2 修复入口事件并把呼吸幅度设为可调，浏览器复验由 Clara 进行。
+
+**G-16a-2 自测（Codex，2026-10-07）**：`npm test`：21 个文件，501 通过、17 跳过；`npx tsc --noEmit` 退出码 0；`npm run build` 成功。未启动服务；上述两项修复的浏览器复验仍待 Clara 进行。
 **回滚**：`git revert`
 
 ---

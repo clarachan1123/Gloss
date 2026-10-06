@@ -3,7 +3,28 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import * as cache from "@/lib/cache";
-import Shelf, { relatedTargetLeftSlot } from "./Shelf";
+import { takeReaderEntrySource } from "@/lib/analytics-local";
+import { SAMPLE_SHELF_ENTRY } from "@/lib/sample";
+import Shelf, { enterFromShelf, relatedTargetLeftSlot } from "./Shelf";
+
+it("G-16a-2 示例书入口只标记 shelf 来源，自有书照常派发 shelf_book_click", () => {
+  const events: unknown[] = [];
+  const onAnalytics = (event: Event) => events.push((event as CustomEvent).detail);
+  window.addEventListener("gloss:analytics", onAnalytics);
+  try {
+    enterFromShelf(SAMPLE_SHELF_ENTRY, "cover");
+    expect(events).toEqual([]);
+    expect(takeReaderEntrySource("sample")).toBe("shelf");
+
+    const ownBook = { ...SAMPLE_SHELF_ENTRY, docId: "own-book", addedAt: 123, lastOpenedAt: 123 };
+    enterFromShelf(ownBook, "start");
+    expect(events).toEqual([{ event: "shelf_book_click", entry: "start", daysSinceOpenBucket: "never" }]);
+    expect(takeReaderEntrySource("own-book")).toBe("shelf");
+  } finally {
+    window.removeEventListener("gloss:analytics", onAnalytics);
+    takeReaderEntrySource("");
+  }
+});
 
 describe("G-44 预览离开判据", () => {
   it("relatedTarget 不是 Node 时按已离开处理，不抛异常", () => {

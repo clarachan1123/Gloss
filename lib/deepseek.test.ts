@@ -329,11 +329,18 @@ describe("/api/gloss 实验参数（模型、提示词版本、温度）只在�
     expect(response.headers.get("X-Gloss-Prompt")).toBe("gloss-v9");
   });
 
+  it("开发环境：X-Gloss-Prompt 可以选中存档 gloss-v10", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const response = await POST(withHeaders({ "X-Gloss-Prompt": "gloss-v10" }));
+    expect(sentBody().messages[0].content).toBe(GLOSS_PROMPT_ARCHIVE["gloss-v10"]);
+    expect(response.headers.get("X-Gloss-Prompt")).toBe("gloss-v10");
+  });
+
   it("开发环境：不合规的值一律忽略，回到默认", async () => {
     vi.stubEnv("NODE_ENV", "development");
     const invalid: Record<string, string>[] = [
       { "X-Gloss-Model": "some-expensive-model" },
-      { "X-Gloss-Prompt": "gloss-v10" },
+      { "X-Gloss-Prompt": "gloss-v999" },
       { "X-Gloss-Prompt": "constructor" },
       { "X-Gloss-Temperature": "abc" },
       { "X-Gloss-Temperature": "5" },

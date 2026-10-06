@@ -145,14 +145,18 @@ describe("buildGlossMessages：稳定的部分在前，服务于前缀缓存", (
 /** 生效版本和存档里的历史版本都要守这些规则：对照实验跑的也是真实产品会发出去的提示词 */
 const ALL_PROMPTS = Object.entries({ [GLOSS_PROMPT_VERSION]: GLOSS_SYSTEM_PROMPT, ...GLOSS_PROMPT_ARCHIVE });
 
-describe("gloss-v10 版本与存档", () => {
+describe("gloss-v11 版本与存档", () => {
   it("gloss-v9 存档与 origin/main 生效提示词逐字相同", () => {
     const digest = createHash("sha256").update(GLOSS_PROMPT_ARCHIVE["gloss-v9"], "utf8").digest("hex");
     expect(digest).toBe("2e208ed558dbda99d4b127692d16bc8928d0b40a3d1048d74497c47bb8875057");
   });
 
+  it("gloss-v10 存档与 5b491fc 生效提示词逐字相同", () => {
+    const digest = createHash("sha256").update(GLOSS_PROMPT_ARCHIVE["gloss-v10"], "utf8").digest("hex");
+    expect(digest).toBe("38b86e88f6f808abd402b12775acfe46a23a54d3c11425d928f97ff8473b9c64");
+  });
+
   it("gloss-v10 相比 v9 恰好新增五条指定指令", () => {
-    expect(GLOSS_PROMPT_VERSION).toBe("gloss-v10");
     const additions = [
       "原句省了主语或承接关系时，若目标句及可见前后文足以确定，就在白话里点明谁在做什么、这层关系怎样接上；不能确定就不要补造。",
       "写完再看白话里新用了哪些‘这、那、这些’等回指；若读者只看白话不能认出所指，且前文能明确指出，就写出所指的名字。",
@@ -160,10 +164,22 @@ describe("gloss-v10 版本与存档", () => {
       "同一个词在这里可能有不同意思时，结合目标句的搭配和可见前后文确定本句用法；把这个词在本句承担的意思讲出来，不要漏掉。证据不足时保留原句的含混。",
       "白话从【要讲白的句子】开始；若开头写成了【前文】某句的改写，就删去那一段，只讲目标句。",
     ];
-    const currentLines = GLOSS_SYSTEM_PROMPT.split("\n");
+    const currentLines = GLOSS_PROMPT_ARCHIVE["gloss-v10"].split("\n");
     const archiveLines = GLOSS_PROMPT_ARCHIVE["gloss-v9"].split("\n");
     expect(currentLines.filter((line) => !archiveLines.includes(line))).toEqual(additions);
     expect(currentLines.filter((line) => !additions.includes(line))).toEqual(archiveLines);
+  });
+
+  it("gloss-v11 相比 v9 恰好新增文言词和成语一行，其余四条不出现", () => {
+    expect(GLOSS_PROMPT_VERSION).toBe("gloss-v11");
+    const idiomRule = "不承载理论的文言词、成语和固定说法，如果照搬后读者仍难懂，也换成日常说法；不要因它是常见成语就原样留下。";
+    const v9Lines = GLOSS_PROMPT_ARCHIVE["gloss-v9"].split("\n");
+    const v10Additions = GLOSS_PROMPT_ARCHIVE["gloss-v10"].split("\n").filter((line) => !v9Lines.includes(line));
+    const v11Lines = GLOSS_SYSTEM_PROMPT.split("\n");
+    expect(v10Additions).toHaveLength(5);
+    expect(v11Lines.filter((line) => !v9Lines.includes(line))).toEqual([idiomRule]);
+    expect(v11Lines.filter((line) => line !== idiomRule)).toEqual(v9Lines);
+    for (const line of v10Additions.filter((line) => line !== idiomRule)) expect(v11Lines).not.toContain(line);
   });
 });
 

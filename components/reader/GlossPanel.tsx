@@ -23,6 +23,8 @@ export interface GlossView {
   failure: GlossFailure | null;
   /** 本次会话里生成过的句子：整段直接出现，不再逐块放 */
   instant: boolean;
+  /** 随书白话已在本机，撑开首帧直接显示第一块，余下仍按正常节奏播放。 */
+  firstChunkNow?: boolean;
 }
 
 export const LOADING_VIEW: GlossView = { status: "loading", text: "", failure: null, instant: false };
@@ -125,7 +127,7 @@ export default function GlossPanel({
   const immediate = view.instant || reducedMotion;
   const [shown, setShown] = useState(0);
   const pendingRevealAnchor = useRef<RevealAnchor | null>(null);
-  const visible = immediate ? chars.length : Math.min(shown, chars.length);
+  const visible = immediate ? chars.length : Math.min(Math.max(shown, view.firstChunkNow ? REVEAL_CHARS : 0), chars.length);
   const revealing = visible < chars.length;
 
   useEffect(() => {

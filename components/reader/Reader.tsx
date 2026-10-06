@@ -35,6 +35,7 @@ import { countChars, skippedSummary, type ParsedHeading, type SkippedContent } f
 import { GLOSS_PROMPT_VERSION, TERM_CLOSE, TERM_OPEN } from "@/lib/prompts/gloss";
 import { STRUCTURE_PROMPT_VERSION } from "@/lib/prompts/structure";
 import { segmentParagraphs, type Sentence as SentenceData } from "@/lib/segment";
+import { SAMPLE_DOC_ID, hasSampleBreathed, loadSampleBook, markSampleBreathed, type SampleContent } from "@/lib/sample";
 import {
   StorageError,
   loadDocument,
@@ -72,7 +73,7 @@ const VISIBLE_MARGIN_PX = 16;
 
 type LoadState =
   | { status: "loading" }
-  | { status: "ready"; doc: StoredDocument; headingsAvailable: boolean; savedGlosses: Map<number, SavedGloss> }
+  | { status: "ready"; doc: StoredDocument; headingsAvailable: boolean; savedGlosses: Map<number, SavedGloss>; sample: SampleContent | null }
   | { status: "missing" }
   | { status: "unreadable" }
   | { status: "unavailable" };
@@ -168,6 +169,8 @@ interface ReaderContextMenu {
 
 const EMPTY_SAVED_GLOSSES = new Map<number, SavedGloss>();
 const EMPTY_EXPLAIN_VIEWS = new Map<number, ExplainView>();
+const SAMPLE_ANALYTICS_FIELD = { sample: true as const };
+const NO_SAMPLE_ANALYTICS_FIELD = {};
 const GLOSS_SHAPE_KEY = "gloss:settings:gloss-shape";
 const READING_MODE_KEY = "gloss:settings:reading-mode";
 
@@ -200,7 +203,10 @@ export function retainGlossAfterUnsave(
 }
 
 export default function Reader({ docId }: { docId: string }) {
+  const isSample = docId === SAMPLE_DOC_ID;
+  const sampleAnalytics = isSample ? SAMPLE_ANALYTICS_FIELD : NO_SAMPLE_ANALYTICS_FIELD;
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [sampleBreathed, setSampleBreathed] = useState(false);
   const [expansion, setExpansion] = useState<Expansion | null>(null);
   const [savedRegions, setSavedRegions] = useState<ReadonlyMap<number, SavedRegion> | null>(null);
   const [measuringParaIndex, setMeasuringParaIndex] = useState<number | null>(null);
@@ -266,15 +272,15 @@ export default function Reader({ docId }: { docId: string }) {
     const chars = countChars(displayedText);
     const result = attempt.clock.sample(now, chars > 0, fullyShown, chars,
       panel?.getBoundingClientRect() ?? null, window.innerHeight, document.hidden);
-    if (result.firstText && !attempt.cacheHit) emitAnalytics({ event: "gloss_first_token", sentenceIndex: attempt.index,
+    if (result.firstText && !attempt.cacheHit && !isSample) emitAnalytics({ event: "gloss_first_token", sentenceIndex: attempt.index,
       firstTokenMs: Math.max(0, now - attempt.clickedAt), cacheHit: false });
     if (fullyShown && attempt.firstClick && !attempt.completeReported) {
       attempt.completeReported = true;
       emitAnalytics({ event: "gloss_complete", sentenceIndex: attempt.index, cacheHit: attempt.cacheHit,
-        durationMs: Math.max(0, now - attempt.clickedAt), glossCharsBucket: glossCharsBucket(chars) });
+        durationMs: Math.max(0, now - attempt.clickedAt), glossCharsBucket: glossCharsBucket(chars), ...sampleAnalytics });
     }
     if (result.readComplete && attempt.firstClick && !attempt.dismissReported) emitAnalytics({ event: "gloss_read_complete", sentenceIndex: attempt.index,
-      visibleMs: result.visibleMs, bottomSeen: true, glossCharsBucket: glossCharsBucket(result.glossChars) });
+      visibleMs: result.visibleMs, bottomSeen: true, glossCharsBucket: glossCharsBucket(result.glossChars), ...sampleAnalytics });
   }
   /**
    * 读者主动收起（再点同一句、点另一句、Esc、点别处）开始的那一刻判定 gloss_dismiss_early；
@@ -288,7 +294,7 @@ export default function Reader({ docId }: { docId: string }) {
     if (!attempt.firstClick || !attempt.completeReported || attempt.clock.readReported ||
       attempt.clock.visibleMs >= DISMISS_EARLY_MS) return;
     attempt.dismissReported = true;
-    emitAnalytics({ event: "gloss_dismiss_early", sentenceIndex: attempt.index, visibleMs: attempt.clock.visibleMs });
+    emitAnalytics({ event: "gloss_dismiss_early", sentenceIndex: attempt.index, visibleMs: attempt.clock.visibleMs, ...sampleAnalytics });
   }
   function entrySourceFor(id: string): ReaderEntrySource {
     if (entrySourceRef.current?.docId !== id) entrySourceRef.current = { docId: id, source: takeReaderEntrySource(id) };
@@ -376,6 +382,8 @@ export default function Reader({ docId }: { docId: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    setState({ status: "loading" });
+    setSampleBreathed(isSample && hasSampleBreathed());
     savedGlossesRef.current = EMPTY_SAVED_GLOSSES;
     explainViewsRef.current = EMPTY_EXPLAIN_VIEWS;
     setExplainViews(EMPTY_EXPLAIN_VIEWS);
@@ -385,10 +393,10 @@ export default function Reader({ docId }: { docId: string }) {
     setExpandedSavedIndex(null);
     setFontsReady(false);
     setReadingMode(readReadingMode());
-    try {
-      const doc = loadDocument(docId);
+    const finish = (doc: StoredDocument | null, sample: SampleContent | null) => {
+      if (cancelled) return;
       if (!doc) {
-        setState({ status: "missing" });
+        setState({ status: isSample ? "unreadable" : "missing" });
         return;
       }
       const readable = prepareReadableDocument(doc);
@@ -412,7 +420,7 @@ export default function Reader({ docId }: { docId: string }) {
           );
           explainViewsRef.current = loadedViews;
           setExplainViews(loadedViews);
-          setState({ status: "ready", doc: safeDoc, headingsAvailable, savedGlosses });
+          setState({ status: "ready", doc: safeDoc, headingsAvailable, savedGlosses, sample });
         })
         .catch(() => {
           if (cancelled) return;
@@ -420,8 +428,17 @@ export default function Reader({ docId }: { docId: string }) {
           savedGlossesRef.current = EMPTY_SAVED_GLOSSES;
           explainViewsRef.current = EMPTY_EXPLAIN_VIEWS;
           setExplainViews(EMPTY_EXPLAIN_VIEWS);
-          setState({ status: "ready", doc: safeDoc, headingsAvailable, savedGlosses: EMPTY_SAVED_GLOSSES });
+          setState({ status: "ready", doc: safeDoc, headingsAvailable, savedGlosses: EMPTY_SAVED_GLOSSES, sample });
         });
+    };
+    try {
+      if (isSample) {
+        void loadSampleBook()
+          .then((book) => finish(book?.doc ?? null, book?.content ?? null))
+          .catch(() => { if (!cancelled) setState({ status: "unreadable" }); });
+      } else {
+        finish(loadDocument(docId), null);
+      }
     } catch (err) {
       if (!(err instanceof StorageError)) throw err;
       setState({ status: "unavailable" });
@@ -429,19 +446,22 @@ export default function Reader({ docId }: { docId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [docId]);
+  }, [docId, isSample]);
 
   const doc = state.status === "ready" ? state.doc : null;
+  const sample = state.status === "ready" ? state.sample : null;
   const headingsAvailable = state.status === "ready" && state.headingsAvailable;
   const savedGlosses = state.status === "ready" ? state.savedGlosses : EMPTY_SAVED_GLOSSES;
 
   // G-13：只有文档已成功载入才计作一次打开，避免无效路由污染最近阅读。
   useEffect(() => {
     if (doc) {
-      touchShelfEntry(docId);
-      markAnalyticsOpen(docId);
+      if (!isSample) {
+        touchShelfEntry(docId);
+        markAnalyticsOpen(docId);
+      }
     }
-  }, [doc, docId]);
+  }, [doc, docId, isSample]);
 
   // 本机中文字体没有可可靠等待的浏览器事件；这里只等 Next 注入的拉丁字体完成，
   // 实际拆行永远读取真实正文 DOM 的 getClientRects()，不把 fonts.ready 当作中文字体证明。
@@ -532,8 +552,11 @@ export default function Reader({ docId }: { docId: string }) {
     if (pending) {
       const sentence = sentences[pending.index];
       if (sentence) {
-        const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, pending.index, structureRef.current !== null);
-        if (cacheLookup.status === "hit") {
+        const cacheLookup = isSample ? null : lookupPreloadedGloss(glossMemoRef.current, pending.index, structureRef.current !== null);
+        if (sample && !savedGlosses.has(pending.index)) {
+          setGloss({ index: pending.index, view: { status: "done", text: sample.glosses[pending.index], failure: null,
+            instant: false, firstChunkNow: true } });
+        } else if (cacheLookup?.status === "hit") {
           setGloss({ index: pending.index, view: { status: "done", text: cacheLookup.entry.text, failure: null, instant: true } });
         }
         transactionRef.current = { anchor: pending.anchor, animateOpen: pending.animateOpen };
@@ -547,7 +570,7 @@ export default function Reader({ docId }: { docId: string }) {
         setExpansion({ ...expansion, splitAt: expansionSplit === undefined ? expansion.splitAt : expansionSplit });
       }
     }
-  }, [doc, expansion, fontsReady, headingByParagraph, measuringParaIndex, savedGlosses, savedRegions, sentences]);
+  }, [doc, expansion, fontsReady, headingByParagraph, isSample, measuringParaIndex, sample, savedGlosses, savedRegions, sentences]);
 
   const cacheInputs = useMemo(
     () => sentences.map((_, index) => ({ index, input: glossInput(sentences, index, null) })),
@@ -614,6 +637,7 @@ export default function Reader({ docId }: { docId: string }) {
 
   const preloadAutoGloss = useCallback(
     (structure: string | null) => {
+      if (isSample) return;
       const token = ++cachePreloadTokenRef.current;
       performance.mark("gloss:preload:start");
       void preloadGlossCache(docId, cacheInputs, structure).then((entries) => {
@@ -621,7 +645,7 @@ export default function Reader({ docId }: { docId: string }) {
         performance.mark("gloss:preload:end");
       });
     },
-    [cacheInputs, docId],
+    [cacheInputs, docId, isSample],
   );
 
   // 阅读位置：恢复到保存的句子；滚动时记录视口顶部所在的句子；布局变化时保持它在视口中的位置
@@ -636,7 +660,9 @@ export default function Reader({ docId }: { docId: string }) {
       const initial = saved !== null && saved < sentences.length ? saved : 0;
       // 整页加载时这里早于 AnalyticsCollector 开始监听（其外层另有 Suspense），派发事件会丢；
       // 与 markAnalyticsOpen 一样直接写入本地队列。
-      enqueueAnalytics({ event: "reader_enter", source: entrySourceFor(docId), positionRestored: initial > 0 });
+      const entrySource = entrySourceFor(docId);
+      enqueueAnalytics({ event: "reader_enter", source: entrySource, positionRestored: initial > 0 });
+      if (isSample) enqueueAnalytics({ event: "sample_doc_enter", from: entrySource === "shelf" ? "shelf" : "direct" });
       scrollToSentence(body, initial);
       position.index = initial;
       position.offset = sentenceTop(body, initial);
@@ -696,7 +722,7 @@ export default function Reader({ docId }: { docId: string }) {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [doc, docId, savedGlosses, savedRegions, sentences.length]);
+  }, [doc, docId, isSample, savedGlosses, savedRegions, sentences.length]);
 
   /* ---------------- 撑开 / 收起 ---------------- */
 
@@ -808,14 +834,19 @@ export default function Reader({ docId }: { docId: string }) {
     const body = bodyRef.current;
     const sentence = sentences[index];
     if (!body || !sentence) return;
+    if (sample?.breatheSentenceIndex === index && !sampleBreathed) {
+      markSampleBreathed();
+      setSampleBreathed(true);
+    }
 
     const savedClick = savedGlosses.has(index);
     const nextCount = savedClick ? null : (clickCountsRef.current.get(index) ?? 0) + 1;
     if (nextCount !== null) clickCountsRef.current.set(index, nextCount);
-    const cacheHit = nextCount !== null && lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null).status === "hit";
+    const cacheHit = nextCount !== null && !isSample &&
+      lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null).status === "hit";
     if (nextCount !== null) emitAnalytics(nextCount === 1
-      ? { event: "sentence_click", sentenceIndex: index, sentenceCharsBucket: sentenceCharsBucket(countChars(sentence.text)), cacheHit }
-      : { event: "sentence_reclick", sentenceIndex: index, reclickOrdinal: nextCount });
+      ? { event: "sentence_click", sentenceIndex: index, sentenceCharsBucket: sentenceCharsBucket(countChars(sentence.text)), cacheHit, ...sampleAnalytics }
+      : { event: "sentence_reclick", sentenceIndex: index, reclickOrdinal: nextCount, ...sampleAnalytics });
     const priorAttempt = readAttemptRef.current;
     if (priorAttempt && priorAttempt.index !== index) {
       reportEarlyDismiss();
@@ -829,7 +860,7 @@ export default function Reader({ docId }: { docId: string }) {
     }
     readAttemptRef.current = nextCount === null ? null : {
       index, clickedAt: performance.now(), cacheHit, firstClick: nextCount === 1,
-      clock: new ReadCompleteClock(), completeReported: false, abortReported: false, settled: cacheHit, dismissReported: false,
+      clock: new ReadCompleteClock(), completeReported: false, abortReported: false, settled: isSample || cacheHit, dismissReported: false,
     };
 
     cancelPendingCollapse();
@@ -848,6 +879,9 @@ export default function Reader({ docId }: { docId: string }) {
     const saved = savedGlosses.get(index);
     if (saved) {
       setGloss({ index, view: { status: "done", text: saved.text, failure: null, instant: true } });
+    } else if (sample) {
+      setGloss({ index, view: { status: "done", text: sample.glosses[index], failure: null,
+        instant: false, firstChunkNow: true } });
     } else {
       const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null);
       if (cacheLookup.status === "hit") {
@@ -1089,6 +1123,10 @@ export default function Reader({ docId }: { docId: string }) {
   useEffect(() => {
     structureRef.current = null;
     if (!doc) return;
+    if (sample) {
+      structureRef.current = sample.structure;
+      return;
+    }
     const cached = loadStructure(docId, STRUCTURE_PROMPT_VERSION);
     if (cached) {
       structureRef.current = cached;
@@ -1108,7 +1146,7 @@ export default function Reader({ docId }: { docId: string }) {
       preloadAutoGloss(result.structure);
     });
     return () => controller.abort();
-  }, [doc, docId, preloadAutoGloss]);
+  }, [doc, docId, preloadAutoGloss, sample]);
 
   useEffect(() => {
     // 预载尚未完成的点击按未命中处理；这里不写 state，段落不会因预载重渲染。
@@ -1126,6 +1164,7 @@ export default function Reader({ docId }: { docId: string }) {
 
   useEffect(() => {
     if (activeIndex === null) return;
+    if (isSample) return;
     // 保存区优先于预载缓存；命中时既不读缓存，也不请求接口。
     if (savedGlossesRef.current.has(activeIndex)) return;
     const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, activeIndex, structureRef.current !== null);
@@ -1164,7 +1203,7 @@ export default function Reader({ docId }: { docId: string }) {
       }
     });
     return () => controller.abort();
-  }, [activeIndex, capturePanelGrowth, docId, retryCount, sentences]);
+  }, [activeIndex, capturePanelGrowth, docId, isSample, retryCount, sentences]);
 
   const retryGloss = useCallback(() => setRetryCount((n) => n + 1), []);
 
@@ -1199,6 +1238,7 @@ export default function Reader({ docId }: { docId: string }) {
       structureRef.current,
       savedGlossesRef.current,
       glossMemoRef.current,
+      sample?.glosses[index] ?? null,
     );
 
     void streamExplain(input, (_sentence, fullText) => {
@@ -1252,21 +1292,21 @@ export default function Reader({ docId }: { docId: string }) {
       .finally(() => {
         if (explainRunsRef.current.get(key) === runId) explainRunsRef.current.delete(key);
       });
-  }, [stageExplainView]);
+  }, [sample, stageExplainView]);
 
   const retryExplainFor = useCallback((index: number) => startExplainFor(index, true), [startExplainFor]);
   // 操作行「听不懂」；Paragraph 是 memo，回调必须恒定。失败后的「重试」走 retryExplainFor，不计点击。
   const explainFromActionRow = useCallback((index: number) => {
     const status = explainViewsRef.current.get(index)?.status ?? "idle";
     if (status === "loading" || status === "streaming" || status === "done") return;
-    emitAnalytics({ event: "deep_explain_click", sentenceIndex: index, source: "action_row" });
+    emitAnalytics({ event: "deep_explain_click", sentenceIndex: index, source: "action_row", ...sampleAnalytics });
     startExplainFor(index);
-  }, [startExplainFor]);
+  }, [startExplainFor, sampleAnalytics]);
   const recordExplainBlocked = useCallback((index: number) => {
     window.dispatchEvent(new CustomEvent("gloss:analytics", {
-      detail: { event: "deep_explain_blocked", sentenceIndex: index },
+      detail: { event: "deep_explain_blocked", sentenceIndex: index, ...sampleAnalytics },
     }));
-  }, []);
+  }, [sampleAnalytics]);
 
   function reportViewFor(index: number): GlossView | null {
     const saved = savedGlosses.get(index);
@@ -1286,7 +1326,7 @@ export default function Reader({ docId }: { docId: string }) {
         sentence: sentence.text,
         gloss: view.text,
         result: "done" as const,
-        promptVersion: savedGlosses.has(index) ? null : GLOSS_PROMPT_VERSION,
+        promptVersion: savedGlosses.has(index) ? null : sample?.glossPromptVersion ?? GLOSS_PROMPT_VERSION,
       };
     }
     if (view.status === "failed" && view.failure === "refused") {
@@ -1302,7 +1342,7 @@ export default function Reader({ docId }: { docId: string }) {
     setReportPendingIndex(index);
     setReportFeedback(null);
     window.dispatchEvent(new CustomEvent("gloss:analytics", {
-      detail: { event: "report_error_click", sentenceIndex: index },
+      detail: { event: "report_error_click", sentenceIndex: index, ...sampleAnalytics },
     }));
     try {
       const hash = await sha256(candidate.sentence);
@@ -1334,7 +1374,7 @@ export default function Reader({ docId }: { docId: string }) {
     }
     if (status === "loading" || status === "streaming") return;
     window.dispatchEvent(new CustomEvent("gloss:analytics", {
-      detail: { event: "deep_explain_click", sentenceIndex: index, source: "context_menu" },
+      detail: { event: "deep_explain_click", sentenceIndex: index, source: "context_menu", ...sampleAnalytics },
     }));
     closeContextMenu();
     startExplainFor(index);
@@ -1401,7 +1441,7 @@ export default function Reader({ docId }: { docId: string }) {
       }
       if (index !== activeIndex || glossView.status !== "done" || !expansion) return "E2";
       const entry = await saveSavedGloss(docId, sentence, glossView.text);
-      emitAnalytics({ event: "gloss_save", sentenceIndex: index, edited: false });
+      emitAnalytics({ event: "gloss_save", sentenceIndex: index, edited: false, ...sampleAnalytics });
       const next = new Map(savedGlossesRef.current).set(index, entry);
       savedGlossesRef.current = next;
       const anchor = bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null;
@@ -1562,7 +1602,7 @@ export default function Reader({ docId }: { docId: string }) {
         )}
         {state.status === "unreadable" && (
           <div className="reader-status">
-            <Notice tone="block" message="这份文档的本地数据不完整，打不开。可以回到书架重新导入原文件。" />
+            <Notice tone="block" message={isSample ? "示例文档不可用。" : "这份文档的本地数据不完整，打不开。可以回到书架重新导入原文件。"} />
             <Link href="/" className="reader-back">← 回到书架</Link>
           </div>
         )}
@@ -1575,7 +1615,7 @@ export default function Reader({ docId }: { docId: string }) {
         {doc && (
           <article
             ref={bodyRef}
-            className={measuringSavedLayout ? "reader-body reader-body-measuring" : "reader-body"}
+            className={`reader-body${measuringSavedLayout ? " reader-body-measuring" : ""}${sample && !sampleBreathed ? " reader-body-sample-breathing" : ""}`}
             lang="zh-CN"
             onClick={handleBodyClick}
             onContextMenu={handleReaderContextMenu}
@@ -1602,6 +1642,7 @@ export default function Reader({ docId }: { docId: string }) {
                   onExplainRetry={retryExplainFor}
                   onExplainBlocked={recordExplainBlocked}
                   sentences={sentences}
+                  breatheSentenceIndex={sample?.breatheSentenceIndex ?? null}
                 />
               );
             })}
@@ -1834,6 +1875,7 @@ interface ParagraphProps {
   onExplainRetry: (index: number) => void;
   onExplainBlocked: (index: number) => void;
   sentences: readonly SentenceData[];
+  breatheSentenceIndex: number | null;
 }
 
 /** 功能一的上下文窗口：目标句 + 前后各至多 2 句（跨段照取）+ 全书结构摘要 */
@@ -1857,11 +1899,12 @@ export function buildExplainInput(
   structure: string | null,
   savedGlosses: ReadonlyMap<number, SavedGloss>,
   automaticGlosses: ReadonlyMap<number, MemoryGloss>,
+  sampleGloss: string | null = null,
 ): ExplainInput {
   const sentence = sentences[index];
   if (!sentence) throw new Error("explain input requires an existing sentence");
   const context = cropExplainContext(paragraphs, sentence);
-  const source = savedGlosses.get(index)?.text ?? automaticGlosses.get(index)?.text ?? null;
+  const source = savedGlosses.get(index)?.text ?? automaticGlosses.get(index)?.text ?? sampleGloss;
   return {
     sentence: sentence.text.trim(),
     context,
@@ -1972,6 +2015,7 @@ const Paragraph = memo(function Paragraph({
   onExplainRetry,
   onExplainBlocked,
   sentences,
+  breatheSentenceIndex,
 }: ParagraphProps) {
   const Tag: ElementType = heading ? HEADING_TAGS[Math.min(Math.max(heading.level, 1), 6) - 1] : "p";
   const className = heading ? "reader-heading" : "reader-para";
@@ -1981,7 +2025,7 @@ const Paragraph = memo(function Paragraph({
   if (regions.length === 0) {
     return (
       <Tag id={`para-${paraIndex}`} data-para={paraIndex} className={className}>
-        {renderPieces(pieces, markerIndexes, pieceEnds, onExpandSaved)}
+        {renderPieces(pieces, markerIndexes, pieceEnds, onExpandSaved, breatheSentenceIndex)}
       </Tag>
     );
   }
@@ -2005,7 +2049,7 @@ const Paragraph = memo(function Paragraph({
                 data-para={paraIndex}
                 className={splitFragmentClassName(className, heading !== undefined, isFirst, hasTail)}
               >
-                {renderPieces(part, markerIndexes, pieceEnds, onExpandSaved)}
+                {renderPieces(part, markerIndexes, pieceEnds, onExpandSaved, breatheSentenceIndex)}
               </Tag>
             )}
             {groups.get(boundary)!.map((region) => (
@@ -2034,7 +2078,7 @@ const Paragraph = memo(function Paragraph({
       })}
       {hasTrailingFragment && (
         <Tag data-para={paraIndex} className="reader-para reader-para-cont">
-          {renderPieces(fragments[boundaries.length]!, markerIndexes, pieceEnds, onExpandSaved)}
+          {renderPieces(fragments[boundaries.length]!, markerIndexes, pieceEnds, onExpandSaved, breatheSentenceIndex)}
         </Tag>
       )}
     </Fragment>
@@ -2077,10 +2121,11 @@ function renderPieces(
   markerIndexes: ReadonlySet<number>,
   pieceEnds: ReadonlyMap<number, number>,
   onExpandSaved: (index: number) => void,
+  breatheSentenceIndex: number | null,
 ) {
   return pieces.map((p) => (
     <Fragment key={`${p.index}:${p.start}`}>
-      <Sentence index={p.index} offset={p.start} text={p.text} />
+      <Sentence index={p.index} offset={p.start} text={p.text} breathe={p.index === breatheSentenceIndex} />
       {shouldRenderSavedMarker(p, markerIndexes, pieceEnds) && (
         <button
           type="button"

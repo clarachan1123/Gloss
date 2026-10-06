@@ -53,6 +53,36 @@ describe("G-15b client event whitelist", () => {
   });
 });
 
+describe("G-16a sample analytics", () => {
+  const sampleFields: Record<string, Record<string, unknown>> = {
+    sentence_click: { sentenceIndex: 5, sentenceCharsBucket: "41-80", cacheHit: false },
+    sentence_reclick: { sentenceIndex: 5, reclickOrdinal: 2 },
+    gloss_complete: { sentenceIndex: 5, cacheHit: false, durationMs: 900, glossCharsBucket: "51-100" },
+    gloss_read_complete: { sentenceIndex: 5, visibleMs: 2000, bottomSeen: true, glossCharsBucket: "51-100" },
+    gloss_dismiss_early: { sentenceIndex: 5, visibleMs: 500 },
+    gloss_save: { sentenceIndex: 5, edited: false },
+    deep_explain_click: { sentenceIndex: 5, source: "action_row" },
+    deep_explain_blocked: { sentenceIndex: 5 },
+    report_error_click: { sentenceIndex: 5 },
+  };
+
+  it.each(Object.entries(sampleFields))("accepts %s with or without optional sample field", (event, detail) => {
+    expect(validateAnalyticsEvent({ event, eventId, ...detail }, true)).toBe(true);
+    expect(validateAnalyticsEvent({ event, eventId, ...detail, sample: true }, true)).toBe(true);
+    expect(validateAnalyticsEvent({ event, eventId, ...detail, sample: false }, true)).toBe(false);
+    expect(validateAnalyticsEvent({ event, eventId, ...detail, sample: "true" }, true)).toBe(false);
+  });
+
+  it("sample_doc_enter accepts only shelf, landing or direct; other events reject sample", () => {
+    expect(CLIENT_EVENTS.has("sample_doc_enter")).toBe(true);
+    for (const from of ["shelf", "landing", "direct"]) {
+      expect(validateAnalyticsEvent({ event: "sample_doc_enter", eventId, from }, true)).toBe(true);
+    }
+    expect(validateAnalyticsEvent({ event: "sample_doc_enter", eventId, from: "upload" }, true)).toBe(false);
+    expect(validateAnalyticsEvent({ event: "reader_enter", eventId, source: "shelf", positionRestored: false, sample: true }, true)).toBe(false);
+  });
+});
+
 describe("G-50 length buckets", () => {
   it.each([
     [0, "0"], [1, "1-40"], [40, "1-40"], [41, "41-80"], [80, "41-80"],

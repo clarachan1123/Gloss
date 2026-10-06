@@ -491,21 +491,30 @@ gloss/
 
 ---
 
-### G-16 · 内置示例文档与首次引导
-**P0** ｜ 依赖 G-13 ｜ 分支 `feat/g16-sample`
+### G-16a · 内置示例书
+**P0** ｜ 依赖 G-13 ｜ 分支 `codex/g16a-sample-book`
 
-**可验证增量**：首次访问 → 点示例书 → 第一个难句有呼吸动效 → 点一下就理解了全部交互。**全程无需上传任何文件。**
+**可验证增量**：书架常驻虚拟示例书 → `/read/sample` → 指定难句轻微呼吸 → 点句后用随书白话按阅读器现有节奏播放。G-52 另做首页落地页。
 
-**验收**
-- [ ] **不做 tooltip 教程**
-- [ ] 示例文本第一个难句自带轻微呼吸/高亮动效
-- [ ] **该难句必须含术语标记**（让用户第一次就见到功能二）
-- [ ] 版权路径已落实：公有领域原文 + 自行生成的新中译
-- [ ] **产品中不出现任何现行译本的署名**
-- [ ] 示例书在书架上明确标记为「示例」
+**Clara 决定（2026-10-06 / 07）**
+- 示例书不写 `gloss:doc:*` 或 `gloss:shelf:v1`，不算读者自己的书；书架无论有无自己的书都显示，书脊标「示例」。右键移除只写 `gloss:sample:removed = "1"`，保留阅读位置、已存白话和整句理解；移除后直达 `/read/sample` 仍可读。
+- 内容在 `public/samples/ziyou-yu-biran.json`，标题《自由与必然》，作者瞿秋白，出处《社会哲学概论》（1924）第一部分第七章；白话为 G-53 后续替换的占位内容，不含现行出版社或整理者署名。当前切句必须恰好得到 13 句并对应 13 条白话，否则整份示例不可用。
+- 随书白话不用 `/api/gloss`、`/api/structure` 或 G-09 自动缓存；首帧显示首 4 字，其后沿用每 45ms 4 字的 GlossPanel 节奏和 `splitTerms` / `limitTerms`。减少动态效果设置下直接显示全文。
+- 「听不懂」仍请求 `/api/explain`；摘要来自内容文件，`null` 走已有无摘要路径。「留下」「翻错了」按固定 docId `sample` 照常存取。
+- 内容指定句序 5 呼吸，只动画 `color`，周期 2.4 秒；点过一次写 `gloss:sample:breathed = "1"`，再次进入不播放；减少动态效果时不播放。句子片段共用父元素的动画相位。
+- `sample_doc_enter.from` 为 `shelf | landing | direct`，本卡只产生 shelf/direct；指定句子、白话、解释、反馈事件可选 `sample: true`，普通事件和旧 outbox 无此字段仍合法；示例白话不发 `gloss_first_token`、`gloss_fail`，`reader_enter` 照常发。
+- PRD 3.5 的「`/` 空书架 → 示例书」与当前决定不同：示例书常驻书架；G-52 将在没有读者自己的书时由 `/` 显示落地页。PRD 本卡不改。
 
-**会改**：`public/samples/**`、`components/shelf/EmptyShelf.tsx`、`components/reader/Sentence.tsx`
-**不改**：`lib/**`、`app/api/**`
+**验收（自测与 Clara 亲验分开）**
+- [ ] 无 tooltip，书架在空书架和有自己书时均有明确「示例」书脊；移除、刷新及直达路由亲验。
+- [ ] 第 6 句呼吸颜色变化且片段同步，点击后和再次进入停止；减少动态效果时停止；撑开视口位移亲验。
+- [ ] 首帧 4 字、后续逐字、无 `/api/gloss` / `/api/structure`；G-40/G-47 补偿亲验。
+- [ ] 术语标记、存储、解释、埋点及旧 outbox 亲验。
+- [ ] 原文版权路径与署名由 Clara 最终核实；产品不显示现行译本署名。
+
+**实际改动**：`components/shelf/Shelf.tsx`、`components/reader/Reader.tsx`、`components/reader/Sentence.tsx`、`components/reader/GlossPanel.tsx`、`styles/reader.css`、`styles/shelf.css`、`lib/analytics-events.ts`、`components/shelf/Shelf.test.ts`、`components/reader/Reader.test.ts`、`lib/analytics-events.test.ts`、`lib/analytics-local.test.ts`、`app/api/analytics/route.test.ts`、`KANBAN.md`；新建 `public/samples/ziyou-yu-biran.json`、`lib/sample.ts`、`lib/sample.test.ts`。条件项 `lib/analytics-local.ts` 与 `app/read/[docId]/page.tsx` 未改：现有入口标记、动态路由已足够。
+
+**自测（Codex，2026-10-07）**：`npm test`：21 个文件，500 通过、17 跳过；`npx tsc --noEmit` 退出码 0；`npm run build` 成功。开发服务以 `local-test-invalid` 启动，向 `/api/gloss` 发 1 次请求，服务端记录上游 `HTTP 401`。Edge headless + CDP 尝试启动后端口未开放、进程退出，浏览器项目未验证。开发服务进程已结束，3460 端口无监听。以上均为 Codex 自测，Clara 亲验未进行。
 **回滚**：`git revert`
 
 ---

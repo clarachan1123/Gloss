@@ -349,6 +349,21 @@ body {
   color: var(--hover);
 }
 
+/* 同一个祖先驱动颜色，行尾拆成多个片段时仍保持同一呼吸相位。 */
+.reader-body-sample-breathing {
+  animation: sample-sentence-breathe 2.4s ease-in-out infinite;
+}
+.reader-body-sample-breathing .sentence:not(.sentence-breathe) { color: var(--ink); }
+.reader-body-sample-breathing .sentence:not(.sentence-breathe):hover,
+.reader-body-sample-breathing .sentence-breathe:hover { color: var(--hover); }
+@keyframes sample-sentence-breathe {
+  0%, 100% { color: var(--ink); }
+  50% { color: color-mix(in srgb, var(--ink) 82%, var(--hover)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-body-sample-breathing { animation: none; }
+}
+
 .saved-marker {
   appearance: none;
   display: inline;

@@ -68,6 +68,18 @@ describe("analytics local state", () => {
     expect(JSON.parse(store.getItem(ANALYTICS_LOCAL_KEY)!)).toEqual({ ...metadata, outbox: [newEvent] });
   });
 
+  it("G-16a 保留不带 sample 的旧 outbox 与带 sample 的新记录", () => {
+    const store = memoryStore();
+    const oldEvent = { event: "sentence_click", eventId: crypto.randomUUID(),
+      sentenceIndex: 0, sentenceCharsBucket: "1-40", cacheHit: false };
+    const sampleEvent = { ...oldEvent, eventId: crypto.randomUUID(), sentenceIndex: 5, sample: true };
+    store.setItem(ANALYTICS_LOCAL_KEY, JSON.stringify({
+      version: 1, firstUseDay: null, readerReturned: false, docs: {}, outbox: [oldEvent, sampleEvent],
+    }));
+    expect(pendingAnalytics(store)).toEqual([oldEvent, sampleEvent]);
+    expect(enqueueAnalytics({ event: "sample_doc_enter", from: "direct" }, store)?.event).toBe("sample_doc_enter");
+  });
+
   it("optout and storage write failure leave document keys untouched", () => {
     const store = memoryStore();
     store.setItem("gloss:document:sample", "keep");

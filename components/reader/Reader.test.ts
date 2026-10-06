@@ -12,6 +12,7 @@ import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
 import Reader, { allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
 import { skippedSummary } from "@/lib/parse/validate";
 import type { StoredDocument } from "@/lib/storage";
+import sampleContent from "@/public/samples/ziyou-yu-biran.json";
 
 describe("G-26 本地文档容错", () => {
   const record = {
@@ -527,6 +528,34 @@ describe("G-15b 阅读器事件", () => {
       { event: "reader_enter", source: "direct", positionRestored: false },
     ]);
     expect(of("reader_enter")).toEqual([]);
+  });
+
+  it("G-16a 示例句首帧已有 4 字，跳过结构与白话接口并记 sample 来源", async () => {
+    stubEnvironment([]);
+    fetchMock.mockImplementation((url: string) => String(url).includes("/samples/ziyou-yu-biran.json")
+      ? Promise.resolve(Response.json(sampleContent)) : new Promise<Response>(() => {}));
+    markReaderEntry("sample", "shelf");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    roots.push({ root, container });
+    await act(async () => { root.render(createElement(Reader, { docId: "sample" })); });
+    for (let index = 0; index < 6; index++) await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector(".reader-body-sample-breathing")).not.toBeNull();
+    await click(container, ".sentence[data-index='5']", 2_000);
+    expect(container.querySelector(".gloss-panel-text")?.textContent).toBe("人的感觉");
+    expect(container.querySelector(".gloss-panel-pending")).toBeNull();
+    expect(container.querySelector(".reader-body-sample-breathing")).toBeNull();
+    expect(localStorage.getItem("gloss:sample:breathed")).toBe("1");
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(["/samples/ziyou-yu-biran.json"]);
+    expect(cache.preloadGlossCache).not.toHaveBeenCalled();
+    expect(of("sentence_click")).toEqual([expect.objectContaining({ sample: true, cacheHit: false })]);
+    expect(of("gloss_first_token")).toEqual([]);
+    const outbox = JSON.parse(localStorage.getItem("gloss:analytics:local:v1") ?? "{}").outbox ?? [];
+    expect(outbox).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: "reader_enter", source: "shelf" }),
+      expect.objectContaining({ event: "sample_doc_enter", from: "shelf" }),
+    ]));
   });
 
   it("gloss_dismiss_early：再点同一句、切换到另一句、Esc、点别处，可见不足 2 秒都发", async () => {

@@ -32,6 +32,18 @@ describe("POST /api/analytics", () => {
     expect(set).not.toHaveBeenCalled();
   });
 
+  it("G-16a accepts old and sample-marked events together, rejects invalid sample", async () => {
+    const set = vi.fn(async () => "OK");
+    const post = createAnalyticsPost({ enabled: () => false, store: () => ({ set }) });
+    const base = { event: "sentence_click", sentenceIndex: 5, sentenceCharsBucket: "41-80", cacheHit: false };
+    const old = { ...base, eventId: crypto.randomUUID() };
+    const sample = { ...base, eventId: crypto.randomUUID(), sample: true };
+    const enter = { event: "sample_doc_enter", eventId: crypto.randomUUID(), from: "shelf" };
+    expect((await post(request({ events: [old, sample, enter] }))).status).toBe(204);
+    expect((await post(request({ events: [{ ...sample, sample: false }] }))).status).toBe(400);
+    expect(set).not.toHaveBeenCalled();
+  });
+
   it("sets one event key with NX and a 60-day TTL", async () => {
     const set = vi.fn(async () => "OK");
     const post = createAnalyticsPost({ enabled: () => true, store: () => ({ set }) });

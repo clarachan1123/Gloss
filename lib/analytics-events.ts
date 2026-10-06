@@ -25,6 +25,7 @@ const daysSinceOpen = oneOf("never", "0", "1", "2-7", "8-30", ">30");
 export const DISMISS_EARLY_MS = 2_000;
 
 const fields: Record<string, Record<string, Check>> = {
+  sample_doc_enter: { from: oneOf("shelf", "landing", "direct") },
   reader_first_seen: {},
   reader_return_7d: { dayOffset: (value) => integer(value) && (value as number) >= 1 && (value as number) <= 7 },
   doc_reopen_7d: { dayOffset: (value) => integer(value) && (value as number) >= 1 && (value as number) <= 7 },
@@ -85,10 +86,17 @@ export type AnalyticsEvent = { event: AnalyticsEventName; eventId: string; [key:
 export type AnalyticsDetail = { event: AnalyticsEventName; [key: string]: unknown };
 
 export const CLIENT_EVENTS = new Set([
+  "sample_doc_enter",
   "reader_first_seen", "reader_return_7d", "doc_reopen_7d", "doc_upload_attempt", "doc_upload_reject",
   "doc_parse_complete", "sentence_click", "sentence_reclick", "gloss_first_token", "gloss_complete",
   "gloss_read_complete", "gloss_abort", "gloss_fail", "gloss_dismiss_early", "deep_explain_click",
   "deep_explain_blocked", "report_error_click", "gloss_save", "reader_enter", "shelf_book_click",
+]);
+
+const SAMPLE_EVENTS = new Set([
+  "sentence_click", "sentence_reclick", "gloss_complete", "gloss_read_complete",
+  "gloss_dismiss_early", "gloss_save", "deep_explain_click", "deep_explain_blocked",
+  "report_error_click",
 ]);
 
 export function nextAnalyticsBatch(events: readonly AnalyticsEvent[]): AnalyticsEvent[] {
@@ -108,7 +116,9 @@ export function validateAnalyticsEvent(value: unknown, clientOnly = false): valu
   if (typeof record.eventId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.eventId)) return false;
   const schema = fields[record.event];
   const keys = Object.keys(record);
-  if (keys.length !== Object.keys(schema).length + 2) return false;
+  const hasSample = Object.hasOwn(record, "sample");
+  if (hasSample && (!SAMPLE_EVENTS.has(record.event) || record.sample !== true)) return false;
+  if (keys.length !== Object.keys(schema).length + 2 + Number(hasSample)) return false;
   return Object.entries(schema).every(([key, check]) => Object.hasOwn(record, key) && check(record[key]));
 }
 

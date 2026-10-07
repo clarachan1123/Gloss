@@ -190,6 +190,18 @@ describe("gloss-v9 生效版本与存档", () => {
     expect(v11Lines.filter((line) => line !== idiomRule)).toEqual(v9Lines);
     for (const line of v10Additions.filter((line) => line !== idiomRule)) expect(v11Lines).not.toContain(line);
   });
+
+  it("gloss-v12 相比 v9 只在不能做的末尾新增成语白话化一行", () => {
+    const rule = "- 原句里的成语、四字格和文言说法（理论概念和专名除外），不要原样照搬进白话；用今天的口语把它的意思讲出来。";
+    const v9Lines = GLOSS_PROMPT_ARCHIVE["gloss-v9"].split("\n");
+    const v12Lines = GLOSS_PROMPT_ARCHIVE["gloss-v12"].split("\n");
+    const anchor = "- 前文、后文、全书结构只用来帮你弄懂这一句。不要复述它们，也不要把它们的内容讲进来。";
+    const at = v9Lines.indexOf(anchor);
+    expect(at).toBeGreaterThan(0);
+    expect(v12Lines).toEqual([...v9Lines.slice(0, at + 1), rule, ...v9Lines.slice(at + 1)]);
+    expect(GLOSS_PROMPT_VERSION).toBe("gloss-v9");
+    expect(GLOSS_SYSTEM_PROMPT).toBe(GLOSS_PROMPT_ARCHIVE["gloss-v9"]);
+  });
 });
 
 describe.each(ALL_PROMPTS)("功能一提示词 %s 的硬规则", (_version, prompt) => {

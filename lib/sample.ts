@@ -3,13 +3,13 @@ import { segmentParagraphs } from "./segment";
 import type { StoredDocument, ShelfEntry } from "./storage";
 
 export const SAMPLE_DOC_ID = "sample";
-export const SAMPLE_TITLE = "自由与必然";
+export const SAMPLE_TITLE = "善与恶";
 export const SAMPLE_AUTHOR = "瞿秋白";
-export const SAMPLE_SOURCE = "《社会哲学概论》（1924），第一部分第七章";
-export const SAMPLE_URL = "/samples/ziyou-yu-biran.json";
+export const SAMPLE_SOURCE = "《社会哲学概论》（1924），第一部分第五章「永久的真理——善与恶」";
+export const SAMPLE_URL = "/samples/shan-yu-e.json";
 export const SAMPLE_REMOVED_KEY = "gloss:sample:removed";
 export const SAMPLE_BREATHED_KEY = "gloss:sample:breathed";
-export const SAMPLE_SENTENCE_COUNT = 13;
+export const SAMPLE_SENTENCE_COUNT = 12;
 
 export interface SampleContent {
   id: typeof SAMPLE_DOC_ID;

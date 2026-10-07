@@ -492,7 +492,7 @@ gloss/
 ---
 
 ### G-16a · 内置示例书
-**P0** ｜ 依赖 G-13 ｜ 分支 `codex/g16a-sample-book`
+**P0** ｜ 依赖 G-13 ｜ 分支 `codex/g16a-sample-book` ｜ 合并 commit：`b8d5bb4`（快进，2026-10-08）｜ 上线：2026-10-08 ｜ 验收未全绿，暂不移入 Done
 
 **可验证增量**：书架常驻虚拟示例书 → `/read/sample` → 指定难句轻微呼吸 → 点句后用随书白话按阅读器现有节奏播放。G-52 另做首页落地页。
 
@@ -510,11 +510,16 @@ gloss/
 - PRD 3.5 的「`/` 空书架 → 示例书」与当前决定不同：示例书常驻书架；G-52 将在没有读者自己的书时由 `/` 显示落地页。PRD 本卡不改。
 
 **验收（自测与 Clara 亲验分开）**
-- [ ] 无 tooltip，书架在空书架和有自己书时均有明确「示例」书脊；移除、刷新及直达路由亲验。
+- [x] 无 tooltip，书架在空书架和有自己书时均有明确「示例」书脊；移除、刷新及直达路由亲验。
+      —— Claude 代验：2026-10-07（`3a40aad`）空书架、与自有书并排、移除后刷新、直达；2026-10-08 预览站空书架与正式站 4 本自有书时均为「示例 · 善与恶」，书脊及书架内无 title 提示。
 - [ ] 第 6 句呼吸颜色变化且片段同步，点击后和再次进入停止；减少动态效果时停止；撑开视口位移亲验。
-- [ ] 首帧 4 字、后续逐字、无 `/api/gloss` / `/api/structure`；G-40/G-47 补偿亲验。
+      —— 呼吸句已改为第 11 句（下标 10）。已验：Clara 实看确认闪烁已修（`713cf9e`）；Claude 2026-10-08 预览站每 300ms 取色，平滑往返；正式站点击后停止、刷新后不再呼吸；撑开位移为 0（`3a40aad` 代验）。未验：开启减少动态效果后的实际表现（正式站样式中有 `prefers-reduced-motion: reduce` 时关闭动画的规则，未实测）。
+- [x] 首帧 4 字、后续逐字、无 `/api/gloss` / `/api/structure`；G-40/G-47 补偿亲验。
+      —— Claude 代验：2026-10-07（`3a40aad`）首帧 4 字、位移 0；2026-10-08 正式站点击后逐字补全，`/api/*` 请求 0 个。
 - [ ] 术语标记、存储、解释、埋点及旧 outbox 亲验。
+      —— 已验（Claude 代验，2026-10-07，`3a40aad`，旧内容）：术语着色、埋点 `sample: true`、`sample_doc_enter.from`、无 `gloss_first_token`。未验：换成「善与恶」后的「留下」存取与「听不懂」解释。
 - [ ] 原文版权路径与署名由 Clara 最终核实；产品不显示现行译本署名。
+      —— 未做：文硕阁录入本与 1924 年原书的对照。
 
 **实际改动**：`components/shelf/Shelf.tsx`、`components/reader/Reader.tsx`、`components/reader/Sentence.tsx`、`components/reader/GlossPanel.tsx`、`styles/reader.css`、`styles/shelf.css`、`lib/analytics-events.ts`、`components/shelf/Shelf.test.ts`、`components/reader/Reader.test.ts`、`lib/analytics-events.test.ts`、`lib/analytics-local.test.ts`、`app/api/analytics/route.test.ts`、`KANBAN.md`；新建 `public/samples/ziyou-yu-biran.json`、`lib/sample.ts`、`lib/sample.test.ts`。条件项 `lib/analytics-local.ts` 与 `app/read/[docId]/page.tsx` 未改：现有入口标记、动态路由已足够。
 
@@ -530,6 +535,14 @@ gloss/
 - 代验发现：示例书进入时错误派发 `shelf_book_click`，`daysSinceOpenBucket` 恒为 `never`；呼吸颜色的 oklab 亮度仅在 0.248–0.275 间变化。本次 G-16a-2 修复入口事件并把呼吸幅度设为可调，浏览器复验由 Clara 进行。
 
 **G-16a-2 自测（Codex，2026-10-07）**：`npm test`：21 个文件，501 通过、17 跳过；`npx tsc --noEmit` 退出码 0；`npm run build` 成功。未启动服务；上述两项修复的浏览器复验仍待 Clara 进行。
+
+**2026-10-08 合并与上线**
+- Clara 本地验收 `b8d5bb4`：全过。
+- 预览站（Vercel Preview，`b8d5bb4`）Claude 经内置浏览器代验：空书架显示「示例 · 善与恶」；`/read/sample` 3 段 12 句，只有第 11 句（下标 10）呼吸，动画 1.8 秒，该句 `transition: none`；每 300ms 取色，oklab 亮度在约 0.26–0.61 间平滑往返；点第 11 句先出「站在大多数劳动群众的立场上看，无产阶级的」再逐字补全，点后呼吸停止；第 1 句白话为「有人觉得善恶的意义是绝对、永久的真理，其实不是这样。」；全程网络请求 0 个。
+- 快进合并：main 从 `e84294d` 快进到 `b8d5bb4`，2026-10-08 推送。
+- 正式站 withglossline.com Claude 经内置浏览器代验（退出开关已开）：有 4 本自有书时，示例书脊仍为「示例 · 善与恶」；`/read/sample` 12 句，呼吸只在第 11 句；点击后的逐字补全与第 1 句白话同预览站；`/samples/shan-yu-e.json` 返回 200，旧 `/samples/ziyou-yu-biran.json` 返回 404；`/api/*` 请求 0 个，W4 无需扣除。浏览器面板在后台时动画时间轴冻结，正式站未做逐帧取色；与预览站为同一提交。
+- 代验另记：呼吸期间其余 11 句每帧各起一个颜色过渡，起止都是 rgb(33, 33, 33)，画面无变化；不单开卡。
+
 **回滚**：`git revert`
 
 ---
@@ -1981,4 +1994,4 @@ v9 与 v7 的白话平均长度相同（都是 77 字），原始输出里只有
 
 | Issue | 阻塞原因 | 需要谁 |
 |---|---|---|
-| G-16 | **示例文本与版权路径未定** | Clara |
+| G-16a | **示例原文与 1924 年原书的对照未做**（示例内容已定为「善与恶」并上线；本项只挡 G-16a 移入 Done） | Clara |

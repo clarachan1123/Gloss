@@ -1,11 +1,17 @@
 // @vitest-environment happy-dom
 import { act, createElement } from "react";
+import { renderToString } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import * as cache from "@/lib/cache";
+import * as storage from "@/lib/storage";
+import { assembleDocument } from "@/lib/parse/validate";
 import { takeReaderEntrySource } from "@/lib/analytics-local";
 import { SAMPLE_SHELF_ENTRY } from "@/lib/sample";
 import Shelf, { enterFromShelf, relatedTargetLeftSlot } from "./Shelf";
+
+vi.mock("@/components/landing/LandingDemo", () => ({ default: () => createElement("div", { "data-demo-stub": true }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {} }) }));
 
 it("G-16a-2 示例书入口只标记 shelf 来源，自有书照常派发 shelf_book_click", () => {
   const events: unknown[] = [];
@@ -49,6 +55,7 @@ it("G-16a 示例书始终是虚拟条目，移除只写 tombstone 并保留阅�
   localStorage.setItem("gloss:saved:sample", "keep");
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
+  await storage.saveDocument(assembleDocument({ paragraphs: ["测试自有书。"], headings: [], footnotes: [] }, "txt", "自有书.txt"));
   const clearCache = vi.spyOn(cache, "clearGlossCacheForDocument");
   const container = document.createElement("div");
   document.body.append(container);
@@ -78,4 +85,60 @@ it("G-16a 示例书始终是虚拟条目，移除只写 tombstone 并保留阅�
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   }
+});
+
+
+describe("G-52 首页分流", () => {
+  async function renderWithEntries(entries: storage.ShelfEntry[], sampleRemoved = false) {
+    localStorage.clear();
+    if (sampleRemoved) localStorage.setItem("gloss:sample:removed", "1");
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
+    vi.spyOn(storage, "loadShelf").mockReturnValue({ entries, unavailable: false });
+    const initial = renderToString(createElement(Shelf));
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(async () => { root.render(createElement(Shelf)); });
+    return { initial, container, root };
+  }
+
+  it.each([false, true])("无自有书时显示落地页，sample removed=%s", async (removed) => {
+    const { initial, container, root } = await renderWithEntries([], removed);
+    try {
+      expect(initial).toContain("shelf-loading");
+      expect(initial).not.toContain("landing-page");
+      expect(initial).not.toContain("shelf-page");
+      expect(container.querySelector(".landing-page")).not.toBeNull();
+      expect(container.querySelector(".shelf-page")).toBeNull();
+      const button = container.querySelector<HTMLButtonElement>(".landing-secondary");
+      await act(async () => { button!.click(); });
+      expect(container.querySelector(".import-panel")).not.toBeNull();
+    } finally {
+      await act(async () => { root.unmount(); });
+      container.remove();
+      localStorage.clear();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("有一本自有书时只显示原书架，且不记 landing_view", async () => {
+    const ownBook = { ...SAMPLE_SHELF_ENTRY, docId: "own-book" };
+    const { initial, container, root } = await renderWithEntries([ownBook]);
+    try {
+      expect(initial).toContain("shelf-loading");
+      expect(initial).not.toContain("landing-page");
+      expect(container.querySelector(".shelf-page")).not.toBeNull();
+      expect(container.querySelector(".landing-page")).toBeNull();
+      const events = JSON.parse(localStorage.getItem("gloss:analytics:local:v1") ?? "{}").outbox ?? [];
+      expect(events.filter((event: { event: string }) => event.event === "landing_view")).toHaveLength(0);
+    } finally {
+      await act(async () => { root.unmount(); });
+      container.remove();
+      localStorage.clear();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  });
 });

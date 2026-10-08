@@ -199,7 +199,7 @@ export function clearAnalyticsOutbox(providedStorage?: Storage): void {
   commit(storage, state);
 }
 
-export type ReaderEntrySource = "shelf" | "upload" | "direct";
+export type ReaderEntrySource = "shelf" | "upload" | "direct" | "landing";
 
 // In-memory and one-shot: never written to the URL or storage, and gone after a reload.
 let pendingReaderEntry: { docId: string; source: Exclude<ReaderEntrySource, "direct"> } | null = null;

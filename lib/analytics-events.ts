@@ -26,6 +26,8 @@ export const DISMISS_EARLY_MS = 2_000;
 
 const fields: Record<string, Record<string, Check>> = {
   sample_doc_enter: { from: oneOf("shelf", "landing", "direct") },
+  landing_view: {},
+  landing_cta_click: { target: oneOf("sample", "import") },
   reader_first_seen: {},
   reader_return_7d: { dayOffset: (value) => integer(value) && (value as number) >= 1 && (value as number) <= 7 },
   doc_reopen_7d: { dayOffset: (value) => integer(value) && (value as number) >= 1 && (value as number) <= 7 },
@@ -62,7 +64,7 @@ const fields: Record<string, Record<string, Check>> = {
   deep_explain_blocked: { sentenceIndex: index },
   report_error_click: { sentenceIndex: index },
   gloss_save: { sentenceIndex: index, edited: (value) => value === false },
-  reader_enter: { source: oneOf("shelf", "upload", "direct"), positionRestored: bool },
+  reader_enter: { source: oneOf("shelf", "upload", "direct", "landing"), positionRestored: bool },
   shelf_book_click: { entry: oneOf("continue", "cover", "start"), daysSinceOpenBucket: daysSinceOpen },
   ai_call: {
     callKind: oneOf("gloss", "structure", "explain"),
@@ -86,7 +88,7 @@ export type AnalyticsEvent = { event: AnalyticsEventName; eventId: string; [key:
 export type AnalyticsDetail = { event: AnalyticsEventName; [key: string]: unknown };
 
 export const CLIENT_EVENTS = new Set([
-  "sample_doc_enter",
+  "sample_doc_enter", "landing_view", "landing_cta_click",
   "reader_first_seen", "reader_return_7d", "doc_reopen_7d", "doc_upload_attempt", "doc_upload_reject",
   "doc_parse_complete", "sentence_click", "sentence_reclick", "gloss_first_token", "gloss_complete",
   "gloss_read_complete", "gloss_abort", "gloss_fail", "gloss_dismiss_early", "deep_explain_click",

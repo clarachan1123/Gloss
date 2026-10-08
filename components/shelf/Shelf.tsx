@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type FocusEvent, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import Upload from "@/components/Upload";
+import Landing from "@/components/landing/Landing";
 import { emitAnalytics } from "@/lib/analytics-events";
 import { daysSinceOpenBucket, markReaderEntry } from "@/lib/analytics-local";
 import { clearGlossCacheForDocument } from "@/lib/cache";
@@ -57,6 +58,7 @@ function computeLastRead(entry: ShelfEntry): string {
 export default function Shelf() {
   const [status, setStatus] = useState<"loading" | "ready" | "unavailable">("loading");
   const [entries, setEntries] = useState<ShelfEntry[]>([]);
+  const [hasOwnBooks, setHasOwnBooks] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -79,6 +81,7 @@ export default function Shelf() {
 
   const refresh = () => {
     const next = loadShelf();
+    setHasOwnBooks(next.entries.some((entry) => entry.docId !== SAMPLE_DOC_ID));
     const visible = isSampleRemoved() ? next.entries : [...next.entries, SAMPLE_SHELF_ENTRY];
     setEntries(visible);
     setStatus(next.unavailable ? "unavailable" : "ready");
@@ -251,8 +254,11 @@ export default function Shelf() {
     shelfRef.current?.focus();
   }
 
+  const importDialog = showImport && <div className="import-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeImport(); }}><section ref={importPanelRef} className={`import-panel${draggingImport ? " import-panel-dragging" : ""}`} role="dialog" aria-modal="true" aria-labelledby="import-title" tabIndex={-1} onDragOver={importDragOver} onDragLeave={importDragLeave} onDrop={importDrop}><header><h2 id="import-title">导入新书</h2><button type="button" className="import-close" aria-label="关闭导入新书弹窗" onClick={closeImport}>×</button></header><div className="import-drop-hint" aria-hidden="true">松开以上传文件</div><Upload droppedFile={droppedFile} onDroppedFileHandled={() => setDroppedFile(null)} onStorageFull={() => { closeImport(); shelfRef.current?.focus(); }} /><button type="button" className="paste-link" onClick={() => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()}>改用粘贴文本</button></section></div>;
+
   if (status === "loading") return <main className="shelf-loading" aria-label="正在读取书架" />;
   if (status === "unavailable") return <main className="shelf-unavailable" role="alert">当前浏览器禁止本地存储，无法读取书架。</main>;
+  if (!hasOwnBooks) return <><Landing onImport={() => setShowImport(true)} importButtonRef={importRef} />{importDialog}</>;
 
   return (
     <main className="shelf-page" style={{ "--shelf-book": selected ? BOOK_COLORS[Number(selected.colorId.slice(5))] : "transparent" } as CSSProperties}>
@@ -274,7 +280,7 @@ export default function Shelf() {
       {entries.length === 0 && <p className="empty-help">拖入或点击上传 · 支持 .docx .txt .pdf</p>}
       {displayed && <section className="book-detail"><div><h2>{displayed.title}</h2>{displayed.author && <p>{displayed.author}</p>}</div><div className="detail-actions"><Link className="read-button" href={`/read/${displayed.docId}`} onNavigate={() => enterFromShelf(displayed, "start")}>开始读</Link><button type="button" className="remove-book" onClick={() => setConfirmingId(displayed.docId)}>从书架移除</button></div><dl>{savedCount(displayed.docId) > 0 && <div><dt>已存白话</dt><dd>{savedCount(displayed.docId)} 处</dd></div>}{lastReads.get(displayed.docId) && <div><dt>上次读到</dt><dd>{lastReads.get(displayed.docId)}</dd></div>}{displayed.docId !== SAMPLE_DOC_ID && <div><dt>导入日期</dt><dd>{importDate(displayed.addedAt)}</dd></div>}</dl></section>}
       {confirmingId && <section className="remove-confirm" role="dialog" aria-modal="true"><p>确定移除《{entries.find((item) => item.docId === confirmingId)?.title}》吗？{confirmingId === SAMPLE_DOC_ID ? "移除后不再出现在书架上，阅读位置与已存白话会保留。" : "移除后会删除这本书的正文、阅读位置、结构摘要、已存白话、整句理解和自动白话缓存。"}</p><div><button type="button" onClick={() => setConfirmingId(null)}>取消</button><button type="button" onClick={() => { const entry = entries.find((item) => item.docId === confirmingId); if (entry) void remove(entry); }}>确认移除</button></div></section>}
-      {showImport && <div className="import-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeImport(); }}><section ref={importPanelRef} className={`import-panel${draggingImport ? " import-panel-dragging" : ""}`} role="dialog" aria-modal="true" aria-labelledby="import-title" tabIndex={-1} onDragOver={importDragOver} onDragLeave={importDragLeave} onDrop={importDrop}><header><h2 id="import-title">导入新书</h2><button type="button" className="import-close" aria-label="关闭导入新书弹窗" onClick={closeImport}>×</button></header><div className="import-drop-hint" aria-hidden="true">松开以上传文件</div><Upload droppedFile={droppedFile} onDroppedFileHandled={() => setDroppedFile(null)} onStorageFull={() => { closeImport(); shelfRef.current?.focus(); }} /><button type="button" className="paste-link" onClick={() => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()}>改用粘贴文本</button></section></div>}
+      {importDialog}
       </div>
     </main>
   );

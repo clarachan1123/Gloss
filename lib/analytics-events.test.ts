@@ -9,6 +9,8 @@ const valid: Record<string, Record<string, unknown>> = {
   gloss_save: { sentenceIndex: 3, edited: false },
   gloss_dismiss_early: { sentenceIndex: 3, visibleMs: 1_999 },
   reader_enter: { source: "shelf", positionRestored: true },
+  landing_view: {},
+  landing_cta_click: { target: "sample" },
   shelf_book_click: { entry: "cover", daysSinceOpenBucket: "2-7" },
 };
 
@@ -39,6 +41,7 @@ describe("G-15b client event whitelist", () => {
     ["gloss_dismiss_early", { sentenceIndex: 3, visibleMs: 2_000 }],
     ["gloss_dismiss_early", { sentenceIndex: 3, visibleMs: -1 }],
     ["reader_enter", { source: "other", positionRestored: false }],
+    ["landing_cta_click", { target: "other" }],
     ["reader_enter", { source: "direct", positionRestored: 1 }],
     ["shelf_book_click", { entry: "spine", daysSinceOpenBucket: "0" }],
     ["shelf_book_click", { entry: "start", daysSinceOpenBucket: "3" }],
@@ -80,6 +83,7 @@ describe("G-16a sample analytics", () => {
     }
     expect(validateAnalyticsEvent({ event: "sample_doc_enter", eventId, from: "upload" }, true)).toBe(false);
     expect(validateAnalyticsEvent({ event: "reader_enter", eventId, source: "shelf", positionRestored: false, sample: true }, true)).toBe(false);
+    expect(validateAnalyticsEvent({ event: "reader_enter", eventId, source: "landing", positionRestored: false }, true)).toBe(true);
   });
 });
 

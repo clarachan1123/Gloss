@@ -166,3 +166,25 @@ describe("G-15b reader entry marker", () => {
     expect(takeReaderEntrySource("doc-a")).toBe("direct");
   });
 });
+
+
+describe("G-52 landing events", () => {
+  it("queues only whitelisted fields and preserves landing reader source", () => {
+    const store = memoryStore();
+    expect(enqueueAnalytics({ event: "landing_view" }, store)?.event).toBe("landing_view");
+    expect(enqueueAnalytics({ event: "landing_cta_click", target: "import" }, store)?.target).toBe("import");
+    expect(enqueueAnalytics({ event: "landing_cta_click", target: "other" }, store)).toBeNull();
+    expect(enqueueAnalytics({ event: "landing_view", title: "secret" }, store)).toBeNull();
+    markReaderEntry("sample", "landing");
+    expect(takeReaderEntrySource("sample")).toBe("landing");
+    expect(takeReaderEntrySource("sample")).toBe("direct");
+  });
+
+  it("does not queue landing events after optout", () => {
+    const store = memoryStore();
+    store.setItem(ANALYTICS_OPTOUT_KEY, "1");
+    expect(enqueueAnalytics({ event: "landing_view" }, store)).toBeNull();
+    expect(enqueueAnalytics({ event: "landing_cta_click", target: "sample" }, store)).toBeNull();
+    expect(pendingAnalytics(store)).toEqual([]);
+  });
+});

@@ -5,6 +5,7 @@ import AnalyticsCollector from "@/components/AnalyticsCollector";
 import "../styles/tokens.css";
 import "../styles/reader.css";
 import "../styles/shelf.css";
+import "../styles/landing.css";
 
 const cinzel = Cinzel({
   subsets: ["latin"],

@@ -530,11 +530,11 @@ describe("G-15b 阅读器事件", () => {
     expect(of("reader_enter")).toEqual([]);
   });
 
-  it("G-16a 示例句首帧已有 4 字，跳过结构与白话接口并记 sample 来源", async () => {
+  it.each(["shelf", "landing"] as const)("G-16a 示例句首帧已有 4 字，跳过结构与白话接口并记 %s 来源", async (source) => {
     stubEnvironment([]);
     fetchMock.mockImplementation((url: string) => String(url).includes("/samples/shan-yu-e.json")
       ? Promise.resolve(Response.json(sampleContent)) : new Promise<Response>(() => {}));
-    markReaderEntry("sample", "shelf");
+    markReaderEntry("sample", source);
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -553,8 +553,8 @@ describe("G-15b 阅读器事件", () => {
     expect(of("gloss_first_token")).toEqual([]);
     const outbox = JSON.parse(localStorage.getItem("gloss:analytics:local:v1") ?? "{}").outbox ?? [];
     expect(outbox).toEqual(expect.arrayContaining([
-      expect.objectContaining({ event: "reader_enter", source: "shelf" }),
-      expect.objectContaining({ event: "sample_doc_enter", from: "shelf" }),
+      expect.objectContaining({ event: "reader_enter", source }),
+      expect.objectContaining({ event: "sample_doc_enter", from: source }),
     ]));
   });
 

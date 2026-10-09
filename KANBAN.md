@@ -953,6 +953,18 @@ gloss/
   - [x] 改动只涉及上述文件；app/、components/、lib/ 下除 prompts/gloss.ts 与两个测试文件外无改动。
   - [x] npm test、tsc 通过；四个脚本 node --check 通过。
 
+### G-54 · 依赖审计：sharp、source-map-js 升级，mammoth 链登记
+**P1 · W4 前做** ｜ 依赖无 ｜ 分支 `codex/g54-dep-audit`
+- 起因：2026-10-09 `npm audit --omit=dev`（registry.npmjs.org）报 5 个：high 2——sharp 0.35.4（GHSA-wq5f-xc86-pv6w，librsvg，经 next 的可选依赖）、source-map-js 1.2.1（GHSA-68fv-2mgg-jv7q，拒绝服务，经 postcss）；moderate 3——sprintf-js 1.0.3（GHSA-hp3w-g68c-fv3c，经 mammoth → argparse 1.0.10 → sprintf-js），argparse、mammoth 为连带计数。
+- 处理：只改 package-lock.json，sharp 与 26 个 @img/sharp-* 升到 0.35.5（libvips 1.3.4），source-map-js 升到 1.2.2；package.json 不变。
+- 不处理 mammoth 链：sprintf-js 所有已发布版本（≤1.1.3）都在受影响范围，没有修复版；npm 给的修法是把 mammoth 降到 0.3.29，不采用。argparse 只被 mammoth 的命令行入口 bin/mammoth 引用，库代码不引用，Gloss 只调库 API，不可达。登记进「已知风险」。
+- 验收：
+  - [ ] npm audit --omit=dev（registry.npmjs.org）high 0，只剩 argparse、mammoth、sprintf-js 3 个 moderate
+  - [ ] lockfile 版本变化正好 28 个包（sharp、16 个 @img/sharp-*、10 个 @img/sharp-libvips-*、source-map-js）；package.json 无改动
+  - [ ] npm test、tsc、npm run build 通过
+  - [ ] 分支预览站首页、示例书点句正常（Claude 代验）
+  - [ ] 合并后正式站首页、示例书点句正常（Claude 代验）
+
 ---
 
 # 📋 W4 · 不写新功能
@@ -1003,6 +1015,7 @@ gloss/
 | 大陆可达性依赖 `76.223.126.88`，这不是 Vercel 当前推荐的 A 值 | 该 IP 被封或下线时，大陆读者会突然全部打不开，且不会有任何告警 | W4 期间每周由 Clara 用大陆手机流量复测一次可达性；失效时按 G-45 的 Plan B 表处置，不再试别的 IP |
 | 大陆线路用的 `76.223.126.88` 不是 Vercel 推荐的 A 值，Domains 状态与证书续期的关系未经历过一次实际续期 | 若续期因此失败，大陆与境外读者会同时遇到 HTTPS 警告或打不开 | 当前证书有效期至 2026-12-25。2026-12-10 前由 Clara 检查一次证书是否已自动续期；未续期则立即把默认线路改回 `216.198.79.1` 恢复推荐配置，再另行处理大陆可达性 |
 | `next` 16.3.5 有 critical 安全公告 GHSA-vcvr-r3jv-pc5j（next/og ImageResponse 远程代码执行）；`npm audit --omit=dev` 与 `npm audit` 都报这一项。公告受影响范围 `>=16.2.0 <16.3.6`（首个修复版 16.3.6）；G-51 选 16.3.8，因 npm audit 的 fixAvailable 指向它且 16.3.8 另含安全修复 | `next` 是直接生产依赖（当前生产基线 main 的 `package.json` 锁定 `"16.3.8"`，依赖链 gloss → next），随线上部署运行。仓库代码未引用 `next/og`、`ImageResponse`（检索 0 个文件）；未使用该功能时能否被利用未核实 | G-51 已修：升级到 16.3.8 并上线（3aade51，2026-10-03）。来源：G-15b npm audit，2026-10-01 |
+| mammoth 1.12.3 → argparse 1.0.10 → sprintf-js 1.0.3 有 moderate 公告 GHSA-hp3w-g68c-fv3c（格式化精度参数导致拒绝服务） | sprintf-js 没有修复版，npm audit 会一直报 3 个 moderate | argparse 只在 mammoth 的命令行入口使用，Gloss 只调库 API，不可达；升级 mammoth 时重查。来源：G-54，2026-10-09 |
 
 ---
 

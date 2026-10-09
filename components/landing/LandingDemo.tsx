@@ -177,7 +177,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
   return (
     <div className={`landing-demo-stage${targetActive ? " landing-demo-target-active" : ""}`} aria-label="阅读器白话展开演示">
       <div className="landing-demo-canvas" ref={canvasRef} style={{ minHeight: reservedHeight }}>
-        {book && <div className="landing-demo-measure" ref={measureRef} aria-hidden="true"><p data-para={PARAGRAPH_INDEX} className="reader-para">{renderPieces(pieces)}</p></div>}
+        {book && <div className="landing-demo-measure" ref={measureRef} aria-hidden="true"><article className="reader-body landing-demo-body" lang="zh-CN"><p data-para={PARAGRAPH_INDEX} className="reader-para">{renderPieces(pieces)}</p></article></div>}
         {ready && (
           <div className="landing-demo-expanded-measure" ref={expandedMeasureRef} aria-hidden="true">
             <article className="reader-body landing-demo-body" lang="zh-CN">

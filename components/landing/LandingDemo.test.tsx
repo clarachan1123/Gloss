@@ -106,3 +106,20 @@ it("G-52 白话占位覆盖阅读器 busy 态的三行最小高度", () => {
   expect(css).toMatch(/\.landing-demo-stage \.gloss-panel \{ min-height: 0; \}/);
   expect(css).not.toMatch(/landing-demo-panel-measure/);
 });
+
+it("G-52 拆点测量段落继承与可见段落相同的 reader-body 样式", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(sampleContent)));
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  roots.push({ root, host });
+  await act(async () => { root.render(createElement(LandingDemo, { replayIndex: 0 })); });
+  for (let step = 0; step < 4; step++) await act(async () => { await Promise.resolve(); });
+  const paragraph = host.querySelector(".landing-demo-measure p");
+  expect(paragraph).not.toBeNull();
+  const article = paragraph!.closest("article.reader-body.landing-demo-body");
+  expect(article).not.toBeNull();
+  expect(article?.getAttribute("lang")).toBe(host.querySelector(".landing-demo-visible")?.getAttribute("lang"));
+});

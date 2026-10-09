@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   MAX_AFTER,
@@ -143,6 +144,59 @@ describe("buildGlossMessages：稳定的部分在前，服务于前缀缓存", (
 
 /** 生效版本和存档里的历史版本都要守这些规则：对照实验跑的也是真实产品会发出去的提示词 */
 const ALL_PROMPTS = Object.entries({ [GLOSS_PROMPT_VERSION]: GLOSS_SYSTEM_PROMPT, ...GLOSS_PROMPT_ARCHIVE });
+
+describe("gloss-v9 生效版本与存档", () => {
+  it("gloss-v9 生效提示词与 origin/main 逐字相同", () => {
+    const digest = createHash("sha256").update(GLOSS_SYSTEM_PROMPT, "utf8").digest("hex");
+    expect(digest).toBe("2e208ed558dbda99d4b127692d16bc8928d0b40a3d1048d74497c47bb8875057");
+  });
+
+  it("gloss-v10 存档与 5b491fc 生效提示词逐字相同", () => {
+    const digest = createHash("sha256").update(GLOSS_PROMPT_ARCHIVE["gloss-v10"], "utf8").digest("hex");
+    expect(digest).toBe("38b86e88f6f808abd402b12775acfe46a23a54d3c11425d928f97ff8473b9c64");
+  });
+
+  it("gloss-v11 存档与 c551a4c 生效提示词逐字相同", () => {
+    const digest = createHash("sha256").update(GLOSS_PROMPT_ARCHIVE["gloss-v11"], "utf8").digest("hex");
+    expect(digest).toBe("b790a1a04ed5c53c0f51e8eed231e13bf3686e50b40f2c5e5db031ebafb83732");
+  });
+
+  it("gloss-v10 相比 v9 恰好新增五条指定指令", () => {
+    const additions = [
+      "原句省了主语或承接关系时，若目标句及可见前后文足以确定，就在白话里点明谁在做什么、这层关系怎样接上；不能确定就不要补造。",
+      "写完再看白话里新用了哪些‘这、那、这些’等回指；若读者只看白话不能认出所指，且前文能明确指出，就写出所指的名字。",
+      "不承载理论的文言词、成语和固定说法，如果照搬后读者仍难懂，也换成日常说法；不要因它是常见成语就原样留下。",
+      "同一个词在这里可能有不同意思时，结合目标句的搭配和可见前后文确定本句用法；把这个词在本句承担的意思讲出来，不要漏掉。证据不足时保留原句的含混。",
+      "白话从【要讲白的句子】开始；若开头写成了【前文】某句的改写，就删去那一段，只讲目标句。",
+    ];
+    const currentLines = GLOSS_PROMPT_ARCHIVE["gloss-v10"].split("\n");
+    const archiveLines = GLOSS_SYSTEM_PROMPT.split("\n");
+    expect(currentLines.filter((line) => !archiveLines.includes(line))).toEqual(additions);
+    expect(currentLines.filter((line) => !additions.includes(line))).toEqual(archiveLines);
+  });
+
+  it("gloss-v11 相比 v9 恰好新增文言词和成语一行，其余四条不出现", () => {
+    const idiomRule = "不承载理论的文言词、成语和固定说法，如果照搬后读者仍难懂，也换成日常说法；不要因它是常见成语就原样留下。";
+    const v9Lines = GLOSS_SYSTEM_PROMPT.split("\n");
+    const v10Additions = GLOSS_PROMPT_ARCHIVE["gloss-v10"].split("\n").filter((line) => !v9Lines.includes(line));
+    const v11Lines = GLOSS_PROMPT_ARCHIVE["gloss-v11"].split("\n");
+    expect(v10Additions).toHaveLength(5);
+    expect(v11Lines.filter((line) => !v9Lines.includes(line))).toEqual([idiomRule]);
+    expect(v11Lines.filter((line) => line !== idiomRule)).toEqual(v9Lines);
+    for (const line of v10Additions.filter((line) => line !== idiomRule)) expect(v11Lines).not.toContain(line);
+  });
+
+  it("gloss-v12 相比 v9 只在不能做的末尾新增成语白话化一行", () => {
+    const rule = "- 原句里的成语、四字格和文言说法（理论概念和专名除外），不要原样照搬进白话；用今天的口语把它的意思讲出来。";
+    const v9Lines = GLOSS_SYSTEM_PROMPT.split("\n");
+    const v12Lines = GLOSS_PROMPT_ARCHIVE["gloss-v12"].split("\n");
+    const anchor = "- 前文、后文、全书结构只用来帮你弄懂这一句。不要复述它们，也不要把它们的内容讲进来。";
+    const at = v9Lines.indexOf(anchor);
+    expect(at).toBeGreaterThan(0);
+    expect(v12Lines).toEqual([...v9Lines.slice(0, at + 1), rule, ...v9Lines.slice(at + 1)]);
+    expect(GLOSS_PROMPT_VERSION).toBe("gloss-v9");
+  });
+});
 
 describe.each(ALL_PROMPTS)("功能一提示词 %s 的硬规则", (_version, prompt) => {
   it("不含任何长度比例约束（PRD F4：比例规则已废除）", () => {

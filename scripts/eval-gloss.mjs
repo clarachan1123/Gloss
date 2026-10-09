@@ -4,7 +4,7 @@
  * 用法：先 `npm run dev`，再
  *   跑一轮：node scripts/eval-gloss.mjs [base-url] [--items 文件] [--before-field 字段] [--label 名称]
  *                                        [--model deepseek-v4-pro] [--prompt gloss-v3] [--temperature 0.5]
- *                                        [--structure none]
+ *                                        [--structure none | --structure-file UTF-8文本路径]
  *   盲测：  node scripts/eval-gloss.mjs --compare a.json b.json ... [--items 文件] [--before-field 字段]
  *                                        [--judge rank|clear] [--note "写进报告说明的话"]
  * 默认评测集是 test-fixtures/eval20.json。报告写到 test-fixtures/（已被 git 忽略：评测集和模型输出
@@ -12,7 +12,7 @@
  *
  * 纪律：
  * - 每句都带原文里真实的前后文，与生产环境的上下文窗口同一条件。只喂目标句，测的是更弱的条件，结果不算数。
- * - 请求体只由「原句」、指定的前文字段、「后文」和下面的手写结构摘要组成。
+ * - 请求体只由「原句」、指定的前文字段、「后文」和所选结构摘要组成。
  *   「Clara原批注_仅供语气参考_非标准答案」绝不发给接口；它只出现在报告里，而且默认折叠——
  *   先读完模型的输出，再决定要不要看批注，否则就不是独立判断。
  * - 评测一律用多版盲测对照，不退回单版（KANBAN G-06）。
@@ -20,6 +20,7 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 const args = process.argv.slice(2);
 const VALUE_FLAGS = new Set([
@@ -32,6 +33,7 @@ const VALUE_FLAGS = new Set([
   "--before-field",
   "--judge",
   "--structure",
+  "--structure-file",
 ]);
 const flag = (name) => {
   const at = args.indexOf(name);
@@ -71,10 +73,22 @@ const CLARA_FIELD = "Clara原批注_仅供语气参考_非标准答案";
 const STRUCTURE =
   "雅各比《论斯宾诺莎的学说》，18 世纪末德国哲学书信体论辩。核心争论是斯宾诺莎主义是否等于宿命论与无神论，涉及实体、样式、充足理由律等概念。";
 const STRUCTURE_FLAG = flag("--structure");
+const STRUCTURE_FILE_FLAG = flag("--structure-file");
 if (STRUCTURE_FLAG !== null && !["none", "null"].includes(STRUCTURE_FLAG)) {
   throw new Error("--structure 只能是 none/null");
 }
-const REQUEST_STRUCTURE = STRUCTURE_FLAG === null ? STRUCTURE : null;
+if (STRUCTURE_FLAG !== null && STRUCTURE_FILE_FLAG !== null) {
+  throw new Error("--structure 与 --structure-file 不能同时使用");
+}
+if (STRUCTURE_FILE_FLAG !== null && (!STRUCTURE_FILE_FLAG || STRUCTURE_FILE_FLAG.startsWith("--"))) {
+  throw new Error("--structure-file 需要文件路径");
+}
+const STRUCTURE_FILE = STRUCTURE_FILE_FLAG === null ? null : resolve(STRUCTURE_FILE_FLAG);
+const REQUEST_STRUCTURE = STRUCTURE_FILE === null
+  ? (STRUCTURE_FLAG === null ? STRUCTURE : null)
+  : (await readFile(STRUCTURE_FILE, "utf8")).trim();
+if (STRUCTURE_FILE !== null && !REQUEST_STRUCTURE) throw new Error("--structure-file 内容不能为空");
+const STRUCTURE_SOURCE = STRUCTURE_FILE ?? (STRUCTURE_FLAG === null ? "内置雅各比摘要" : "none");
 
 const countChars = (text) => Array.from(text.replace(/\s/g, "")).length;
 
@@ -233,7 +247,7 @@ function renderReport(rows, meta) {
 </style></head><body>
 <h1>功能一评测</h1>
 <div class="summary">${summary}</div>
-<p class="note">结构摘要为手写，不是 /api/structure 的产出：${escapeHtml(STRUCTURE)}</p>
+<p class="note">结构摘要来源：${escapeHtml(meta.structureSource)}；本次请求内容：${escapeHtml(meta.structure ?? "无")}</p>
 ${items}
 </body></html>`;
 }
@@ -282,6 +296,7 @@ async function runEval() {
     items: showPath(ITEMS_FILE),
     date,
     structure: REQUEST_STRUCTURE,
+    structureSource: STRUCTURE_SOURCE,
   };
   // 早先报告的默认参数不写进文件名；改了哪个才标哪个
   const modelTag = first.model && first.model !== "deepseek-flash" ? `-${first.model}` : "";

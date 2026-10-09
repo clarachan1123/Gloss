@@ -322,6 +322,20 @@ describe("/api/gloss 实验参数（模型、提示词版本、温度）只在�
     expect(response.headers.get("X-Gloss-Temperature")).toBe("0.5");
   });
 
+  it("开发环境：X-Gloss-Prompt 可以选中存档 gloss-v10", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const response = await POST(withHeaders({ "X-Gloss-Prompt": "gloss-v10" }));
+    expect(sentBody().messages[0].content).toBe(GLOSS_PROMPT_ARCHIVE["gloss-v10"]);
+    expect(response.headers.get("X-Gloss-Prompt")).toBe("gloss-v10");
+  });
+
+  it("开发环境：X-Gloss-Prompt 可以选中存档 gloss-v11", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const response = await POST(withHeaders({ "X-Gloss-Prompt": "gloss-v11" }));
+    expect(sentBody().messages[0].content).toBe(GLOSS_PROMPT_ARCHIVE["gloss-v11"]);
+    expect(response.headers.get("X-Gloss-Prompt")).toBe("gloss-v11");
+  });
+
   it("开发环境：不合规的值一律忽略，回到默认", async () => {
     vi.stubEnv("NODE_ENV", "development");
     const invalid: Record<string, string>[] = [

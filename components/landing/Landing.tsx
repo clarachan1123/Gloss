@@ -49,13 +49,6 @@ export default function Landing({ onImport, importButtonRef }: {
           <h1>{COPY.title}</h1>
           <p className="landing-subtitle">{COPY.subtitle}</p>
         </header>
-        <section className="landing-demonstration" aria-label="点击句子查看白话的演示">
-          <LandingDemo replayIndex={replayIndex} />
-          <div className="landing-demo-footer">
-            <small>{SAMPLE_SOURCE}</small>
-            <button type="button" onClick={() => setReplayIndex((index) => index + 1)}>{COPY.replayButton}</button>
-          </div>
-        </section>
         <div className="landing-actions">
           <Link href="/read/sample" className="landing-primary" onClick={() => emitAnalytics({ event: "landing_cta_click", target: "sample" })} onNavigate={() => markReaderEntry(SAMPLE_DOC_ID, "landing")}>{COPY.sampleButton}</Link>
           <div className="landing-secondary-group">
@@ -63,6 +56,13 @@ export default function Landing({ onImport, importButtonRef }: {
             <small>{COPY.importNote}</small>
           </div>
         </div>
+        <section className="landing-demonstration" aria-label="点击句子查看白话的演示">
+          <LandingDemo replayIndex={replayIndex} />
+          <div className="landing-demo-footer">
+            <small>{SAMPLE_SOURCE}</small>
+            <button type="button" onClick={() => setReplayIndex((index) => index + 1)}>{COPY.replayButton}</button>
+          </div>
+        </section>
         <p className="landing-supplement">{COPY.supplement}</p>
       </div>
     </main>

@@ -361,6 +361,8 @@ body {
 .reader-body-sample-breathing .sentence-breathe { transition: none; }
 .reader-body-sample-breathing .sentence:not(.sentence-breathe):hover,
 .reader-body-sample-breathing .sentence-breathe:hover { color: var(--hover); }
+.reader-body .sentence.sentence-gloss-hover,
+.reader-body.reader-body-sample-breathing .sentence.sentence-gloss-hover { color: var(--hover); }
 @keyframes sample-sentence-breathe {
   0%, 100% { color: var(--ink); }
   50% { color: color-mix(in srgb, var(--paper-main) var(--sample-breathe-fade), var(--ink)); }

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import sampleContent from "../../public/samples/shan-yu-e.json";
 import LandingDemo from "./LandingDemo";
 
@@ -59,6 +59,14 @@ it("G-52 系统减少动态效果时首个演示状态已完整展开且无指�
 });
 
 it("G-52 点击前原文完整，reveal 时才拆段并保留最终白话高度；重播复原", async () => {
+  // G-57：演示改为进入视口才播放，此处模拟一挂载即可见，以下时序断言沿用 G-52
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(private callback: IntersectionObserverCallback) {}
+    observe(target: Element) {
+      this.callback([{ target, isIntersecting: true, intersectionRatio: 1 } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+    }
+    disconnect() {}
+  });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
@@ -122,4 +130,115 @@ it("G-52 拆点测量段落继承与可见段落相同的 reader-body 样式", a
   const article = paragraph!.closest("article.reader-body.landing-demo-body");
   expect(article).not.toBeNull();
   expect(article?.getAttribute("lang")).toBe(host.querySelector(".landing-demo-visible")?.getAttribute("lang"));
+});
+
+
+describe("G-57 演示进入视口后启动", () => {
+  let notify: IntersectionObserverCallback;
+  let target: Element;
+  let observedOptions: IntersectionObserverInit | undefined;
+  let observer: IntersectionObserver;
+  const disconnect = vi.fn();
+
+  beforeEach(() => {
+    disconnect.mockClear();
+    vi.useFakeTimers();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(sampleContent)));
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+        notify = callback;
+        observedOptions = options;
+        observer = this as unknown as IntersectionObserver;
+      }
+      observe(element: Element) { target = element; }
+      disconnect = disconnect;
+    });
+  });
+
+  async function mount() {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push({ root, host });
+    await act(async () => { root.render(createElement(LandingDemo, { replayIndex: 0 })); });
+    for (let step = 0; step < 6; step++) await act(async () => { await Promise.resolve(); });
+    return { host, root };
+  }
+
+  async function visible(ratio: number, intersecting = true) {
+    await act(async () => {
+      notify([{ target, isIntersecting: intersecting, intersectionRatio: ratio } as IntersectionObserverEntry], observer);
+    });
+  }
+
+  async function advance(ms: number) {
+    await act(async () => { vi.advanceTimersByTime(ms); });
+  }
+
+  it("未报可见、不到 50% 或不相交时不播放", async () => {
+    const { host } = await mount();
+    expect(target).toBe(host.querySelector(".landing-demo-stage"));
+    expect(observedOptions).toEqual({ threshold: 0.5 });
+    await advance(10_000);
+    expect(host.querySelector(".landing-demo-pointer-waiting")).not.toBeNull();
+    await visible(0.49);
+    await advance(10_000);
+    await visible(0.5, false);
+    await advance(10_000);
+    expect(host.querySelector(".landing-demo-visible .gloss-panel")).toBeNull();
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
+  it("可见达到 50% 后按原时序播放", async () => {
+    const { host } = await mount();
+    await visible(0.5);
+    expect(disconnect).toHaveBeenCalledOnce();
+    await advance(999);
+    expect(host.querySelector(".landing-demo-pointer-waiting")).not.toBeNull();
+    await advance(1);
+    expect(host.querySelector(".landing-demo-pointer-moving")).not.toBeNull();
+    await advance(650);
+    expect(host.querySelector(".landing-demo-pointer-clicking")).not.toBeNull();
+    await advance(180);
+    expect(host.querySelector(".landing-demo-visible .gloss-panel")).not.toBeNull();
+  });
+
+  it("只自动启动一次；之后重播无需重新进入视口", async () => {
+    const { host, root } = await mount();
+    await visible(0.8);
+    await advance(1_000);
+    expect(host.querySelector(".landing-demo-pointer-moving")).not.toBeNull();
+    await visible(0);
+    await visible(0.8);
+    expect(host.querySelector(".landing-demo-pointer-moving")).not.toBeNull();
+    await advance(650);
+    expect(host.querySelector(".landing-demo-pointer-clicking")).not.toBeNull();
+    await act(async () => { root.render(createElement(LandingDemo, { replayIndex: 1 })); });
+    expect(host.querySelector(".landing-demo-pointer-waiting")).not.toBeNull();
+    await advance(1_000);
+    expect(host.querySelector(".landing-demo-pointer-moving")).not.toBeNull();
+  });
+
+  it("没有 IntersectionObserver 时立即启动现有计时", async () => {
+    vi.stubGlobal("IntersectionObserver", undefined);
+    const { host } = await mount();
+    await advance(1_000);
+    expect(host.querySelector(".landing-demo-pointer-moving")).not.toBeNull();
+    await advance(650);
+    await advance(180);
+    expect(host.querySelector(".landing-demo-visible .gloss-panel")).not.toBeNull();
+  });
+
+  it("减少动态效果直接终态，无需可见通知", async () => {
+    const construct = vi.fn();
+    vi.stubGlobal("IntersectionObserver", class { constructor() { construct(); } observe() {} disconnect() {} });
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
+    const { host } = await mount();
+    expect(construct).not.toHaveBeenCalled();
+    expect(host.querySelector(".landing-demo-pointer")).toBeNull();
+    expect(host.querySelector(".landing-demo-visible .gloss-panel-text")?.textContent).toBe(sampleContent.glosses[10]);
+  });
 });

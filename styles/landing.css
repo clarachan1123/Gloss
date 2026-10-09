@@ -149,6 +149,11 @@
 }
 .landing-supplement { margin-top: 32px; font-size: 15px; }
 @media (min-width: 600px) {
+  .landing-content { display: grid; grid-template-areas: "header" "demo" "actions" "supplement"; }
+  .landing-header { grid-area: header; }
+  .landing-demonstration { grid-area: demo; }
+  .landing-actions { grid-area: actions; }
+  .landing-supplement { grid-area: supplement; }
   .landing-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 390px) {

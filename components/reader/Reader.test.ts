@@ -2,6 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import * as storage from "@/lib/storage";
+import * as lineSplit from "./lineSplit";
 import * as cache from "@/lib/cache";
 import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
@@ -697,5 +702,144 @@ describe("G-15b 阅读器事件", () => {
     await act(async () => { explain.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(of("deep_explain_click")).toEqual([{ event: "deep_explain_click", sentenceIndex: 1, source: "context_menu" }]);
     expectAccepted(["deep_explain_click"]);
+  });
+});
+
+
+describe("G-57 白话悬停与返回入口", () => {
+  const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+  const mounted: { root: ReturnType<typeof createRoot>; host: HTMLElement }[] = [];
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    Object.defineProperty(document, "fonts", { configurable: true, value: { ready: Promise.resolve() } });
+    vi.spyOn(lineSplit, "measureSplit").mockReturnValue(1);
+    vi.spyOn(cache, "preloadGlossCache").mockResolvedValue(new Map([[0, { text: "测试白话。", hasStructure: false }]]));
+  });
+
+  afterEach(async () => {
+    for (const { root, host } of mounted.splice(0)) {
+      await act(async () => { root.unmount(); });
+      host.remove();
+    }
+    localStorage.clear();
+    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+    else Reflect.deleteProperty(document, "fonts");
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  async function flush() {
+    for (let step = 0; step < 6; step++) await act(async () => { await Promise.resolve(); });
+  }
+
+  async function mount(docId: string) {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    mounted.push({ root, host });
+    await act(async () => { root.render(createElement(Reader, { docId })); });
+    await flush();
+    return host;
+  }
+
+  async function pointer(target: Element, type: string, pointerType = "mouse", relatedTarget: EventTarget | null = null) {
+    await act(async () => {
+      target.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType, relatedTarget }));
+    });
+  }
+
+  it("服务端和判定前的首页链接不可见但保留占位", () => {
+    const html = renderToString(createElement(Reader, { docId: "g57-missing" }));
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    const link = host.querySelector<HTMLElement>(".reader-shelf-back")!;
+    expect(link.textContent).toBe("← 回到首页");
+    expect(link.style.visibility).toBe("hidden");
+    expect(link.style.display).toBe("");
+  });
+
+  it.each([
+    ["空书架", [], false, "← 回到首页"],
+    ["只有示例", [{ docId: "sample" }], false, "← 回到首页"],
+    ["自有书", [{ docId: "own" }], false, "← 回到书架"],
+    ["不可用", [{ docId: "own" }], true, "← 回到首页"],
+  ] as const)("%s 挂载判定后显示正确返回文字", async (_name, entries, unavailable, text) => {
+    vi.spyOn(storage, "loadShelf").mockReturnValue({ entries: entries as unknown as storage.ShelfEntry[], unavailable });
+    const host = await mount("g57-missing");
+    const link = host.querySelector<HTMLElement>(".reader-shelf-back")!;
+    expect(link.textContent).toBe(text);
+    expect(link.style.visibility).toBe("visible");
+  });
+
+  it("书架读取抛错仍显示回到首页", async () => {
+    vi.spyOn(storage, "loadShelf").mockImplementation(() => { throw new Error("storage unavailable"); });
+    const host = await mount("g57-missing");
+    expect(host.querySelector<HTMLElement>(".reader-shelf-back")?.textContent).toBe("← 回到首页");
+    expect(host.querySelector<HTMLElement>(".reader-shelf-back")?.style.visibility).toBe("visible");
+  });
+
+  it.each([
+    [false, "inline"], [false, "bubble"], [true, "inline"], [true, "bubble"],
+  ] as const)("saved=%s、%s 白话只高亮对应全部片段；内部移动不闪，移开和卸载清理", async (saved, shape) => {
+    const docId = `g57-${saved}-${shape}`;
+    const paragraphs = ["甲乙。丙丁。"];
+    localStorage.setItem(`gloss:doc:${docId}`, JSON.stringify({
+      version: 1, docId, paragraphs, headings: [], footnotes: [],
+      meta: { format: "txt", fileName: "测试.txt", charCount: 6 }, savedAt: 1,
+    }));
+    localStorage.setItem("gloss:settings:gloss-shape", shape);
+    if (saved) {
+      await storage.saveSavedGloss(docId, segmentParagraphs(paragraphs).sentences[0], "已保存白话。");
+      localStorage.setItem("gloss:settings:reading-mode", "review");
+    }
+    const host = await mount(docId);
+    if (!saved) {
+      await act(async () => { host.querySelector<HTMLElement>('.sentence[data-index="0"]')!.click(); });
+      await flush();
+    }
+    const body = host.querySelector<HTMLElement>(".reader-body")!;
+    const panel = body.querySelector<HTMLElement>(`.gloss-panel-${shape}`)!;
+    expect(panel).not.toBeNull();
+    expect(panel.classList.contains("gloss-panel-saved")).toBe(saved);
+    const pieces = [...body.querySelectorAll<HTMLElement>('.sentence[data-index="0"]')];
+    expect(pieces).toHaveLength(2);
+    const other = body.querySelector<HTMLElement>('.sentence[data-index="1"]')!;
+    const text = panel.querySelector(".gloss-panel-text")!;
+    const child = text.querySelector("span")!;
+    const expectActive = (active: boolean) => {
+      expect(pieces.every((piece) => piece.classList.contains("sentence-gloss-hover") === active)).toBe(true);
+      expect(other.classList.contains("sentence-gloss-hover")).toBe(false);
+    };
+    await pointer(text, "pointerover", "touch");
+    expectActive(false);
+    await pointer(text, "pointerover", "pen");
+    expectActive(false);
+    await pointer(text, "pointerover");
+    expectActive(true);
+    await pointer(text, "pointerout", "mouse", child);
+    await pointer(child, "pointerover", "mouse", text);
+    expectActive(true);
+    await pointer(child, "pointerout", "mouse", other);
+    expectActive(false);
+    await pointer(text, "pointerover");
+    await pointer(text, "pointerout", "mouse", null);
+    expectActive(false);
+    await pointer(other, "pointerover");
+    expect(panel.classList.contains("sentence-gloss-hover")).toBe(false);
+    await pointer(text, "pointerover");
+    expectActive(true);
+    panel.remove();
+    await flush();
+    expectActive(false);
+  });
+
+  it("新增悬停规则只声明颜色并覆盖示例呼吸态", () => {
+    const css = readFileSync(path.resolve(process.cwd(), "styles/reader.css"), "utf8");
+    const rule = css.match(/\.reader-body \.sentence\.sentence-gloss-hover,\s*\.reader-body\.reader-body-sample-breathing \.sentence\.sentence-gloss-hover\s*\{([^}]+)\}/);
+    expect(rule?.[1].trim()).toBe("color: var(--hover);");
   });
 });

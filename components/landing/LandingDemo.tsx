@@ -31,6 +31,9 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
   const [phase, setPhase] = useState<Phase>("waiting");
   const [pointer, setPointer] = useState<Point>({ x: 0, y: 0 });
   const [hoveredGloss, setHoveredGloss] = useState(false);
+  const [started, setStarted] = useState(false);
+  const startedRef = useRef(false);
+  const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const expandedMeasureRef = useRef<HTMLDivElement>(null);
@@ -89,6 +92,29 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
     return () => observer.disconnect();
   }, [book, pieces, reducedMotion]);
 
+  useEffect(() => {
+    if (!ready || reducedMotion || startedRef.current) return;
+    const start = () => {
+      if (startedRef.current) return;
+      startedRef.current = true;
+      setStarted(true);
+    };
+    if (typeof IntersectionObserver === "undefined") {
+      start();
+      return;
+    }
+    const stage = stageRef.current;
+    if (!stage) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.target === stage && entry.isIntersecting && entry.intersectionRatio >= 0.5)) {
+        start();
+        observer.disconnect();
+      }
+    }, { threshold: 0.5 });
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [ready, reducedMotion]);
+
   const startPoint = useCallback((): Point => ({ x: Math.max(0, (canvasRef.current?.clientWidth ?? 0) - 30), y: 10 }), []);
   const targetPoint = useCallback((): Point => {
     const canvas = canvasRef.current?.getBoundingClientRect();
@@ -107,7 +133,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
   }, [targetPoint]);
 
   useLayoutEffect(() => {
-    if (!ready || reducedMotion) return;
+    if (!ready || reducedMotion || !started) return;
     const timers: number[] = [];
     const after = (milliseconds: number, action: () => void) => timers.push(window.setTimeout(action, milliseconds));
     setHoveredGloss(false);
@@ -122,7 +148,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
       });
     });
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [ready, reducedMotion, replayIndex, splitAt, startPoint, targetPoint]);
+  }, [ready, reducedMotion, started, replayIndex, splitAt, startPoint, targetPoint]);
 
   useEffect(() => {
     if (phase !== "revealing" || !gloss || reducedMotion) return;
@@ -175,7 +201,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
   }, [ready, splitAt, layoutWidth, gloss]);
 
   return (
-    <div className={`landing-demo-stage${targetActive ? " landing-demo-target-active" : ""}`} aria-label="阅读器白话展开演示">
+    <div ref={stageRef} className={`landing-demo-stage${targetActive ? " landing-demo-target-active" : ""}`} aria-label="阅读器白话展开演示">
       <div className="landing-demo-canvas" ref={canvasRef} style={{ minHeight: reservedHeight }}>
         {book && <div className="landing-demo-measure" ref={measureRef} aria-hidden="true"><article className="reader-body landing-demo-body" lang="zh-CN"><p data-para={PARAGRAPH_INDEX} className="reader-para">{renderPieces(pieces)}</p></article></div>}
         {ready && (

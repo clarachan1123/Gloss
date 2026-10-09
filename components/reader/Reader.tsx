@@ -12,6 +12,7 @@ import {
   useState,
   type ElementType,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type Ref,
 } from "react";
 import ContextMenu, { type ContextMenuPoint } from "@/components/reader/ContextMenu";
@@ -42,6 +43,7 @@ import {
   loadExplanations,
   loadReadingPosition,
   loadSavedGlosses,
+  loadShelf,
   loadStructure,
   removeSavedGloss,
   saveSavedGloss,
@@ -221,7 +223,45 @@ export default function Reader({ docId }: { docId: string }) {
   const [reportPendingIndex, setReportPendingIndex] = useState<number | null>(null);
   const [reportFeedback, setReportFeedback] = useState<string | null>(null);
   const [fontsReady, setFontsReady] = useState(false);
+  const [hasOwnBooks, setHasOwnBooks] = useState<boolean | null>(null);
   const bodyRef = useRef<HTMLElement>(null);
+  const hoveredGlossRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    try {
+      const shelf = loadShelf();
+      setHasOwnBooks(!shelf.unavailable && shelf.entries.some((entry) => entry.docId !== SAMPLE_DOC_ID));
+    } catch {
+      setHasOwnBooks(false);
+    }
+  }, []);
+
+  const clearGlossHover = useCallback(() => {
+    hoveredGlossRef.current = null;
+    bodyRef.current?.querySelectorAll(".sentence-gloss-hover").forEach((sentence) => {
+      sentence.classList.remove("sentence-gloss-hover");
+    });
+  }, []);
+
+  function handleGlossPointerOver(event: ReactPointerEvent<HTMLElement>) {
+    if (event.pointerType !== "mouse" || !(event.target instanceof Element)) return;
+    const panel = event.target.closest<HTMLElement>(".gloss-panel[data-sentence-index]");
+    if (!panel || !event.currentTarget.contains(panel) || panel === hoveredGlossRef.current) return;
+    clearGlossHover();
+    const index = Number(panel.dataset.sentenceIndex);
+    if (!Number.isInteger(index) || index < 0) return;
+    hoveredGlossRef.current = panel;
+    event.currentTarget.querySelectorAll(`.sentence[data-index="${index}"]`).forEach((sentence) => {
+      sentence.classList.add("sentence-gloss-hover");
+    });
+  }
+
+  function handleGlossPointerOut(event: ReactPointerEvent<HTMLElement>) {
+    if (event.pointerType !== "mouse") return;
+    const panel = hoveredGlossRef.current;
+    if (panel && event.relatedTarget instanceof Node && panel.contains(event.relatedTarget)) return;
+    clearGlossHover();
+  }
   const panelRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<ReaderContextMenu | null>(null);
   const suppressOutsideClickRef = useRef(false);
@@ -452,6 +492,20 @@ export default function Reader({ docId }: { docId: string }) {
 
   const doc = state.status === "ready" ? state.doc : null;
   const sample = state.status === "ready" ? state.sample : null;
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const observer = new MutationObserver(() => {
+      const panel = hoveredGlossRef.current;
+      if (panel && !body.contains(panel)) clearGlossHover();
+    });
+    observer.observe(body, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      clearGlossHover();
+    };
+  }, [doc, clearGlossHover]);
   const headingsAvailable = state.status === "ready" && state.headingsAvailable;
   const savedGlosses = state.status === "ready" ? state.savedGlosses : EMPTY_SAVED_GLOSSES;
 
@@ -1518,7 +1572,7 @@ export default function Reader({ docId }: { docId: string }) {
     <div className="shell">
       <aside className="col col-left">
         <Link href="/" className="wordmark">Gloss</Link>
-        <Link href="/" className="reader-shelf-back">← 回到书架</Link>
+        <Link href="/" className="reader-shelf-back" style={{ visibility: hasOwnBooks === null ? "hidden" : "visible" }}>{hasOwnBooks ? "← 回到书架" : "← 回到首页"}</Link>
 
         <div className="mode-switch" role="group" aria-label="白话阅读模式">
           <button
@@ -1620,6 +1674,9 @@ export default function Reader({ docId }: { docId: string }) {
             className={`reader-body${measuringSavedLayout ? " reader-body-measuring" : ""}${sample && !sampleBreathed ? " reader-body-sample-breathing" : ""}`}
             lang="zh-CN"
             onClick={handleBodyClick}
+            onPointerOver={handleGlossPointerOver}
+            onPointerOut={handleGlossPointerOut}
+            onPointerLeave={clearGlossHover}
             onContextMenu={handleReaderContextMenu}
           >
             {doc.paragraphs.map((_, paraIndex) => {

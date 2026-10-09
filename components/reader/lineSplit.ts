@@ -5,6 +5,7 @@ interface Piece {
   text: string;
 }
 
+/** 段内切片续排必须取消首段缩进；标题段沿用既有 class 规则。 */
 export function splitFragmentClassName(
   className: string,
   isHeading: boolean,
@@ -20,6 +21,10 @@ export function splitFragmentClassName(
   return classes.join(" ");
 }
 
+/**
+ * 每个插入边界之前的原文，加上最后一个非 null 边界到段尾的续段。
+ * Paragraph 直接使用这个结果，故所有 region 组合都不会丢失段尾原文。
+ */
 export function paragraphOriginalFragments(pieces: Piece[], boundaries: readonly (number | null)[]): Piece[][] {
   const fragments: Piece[][] = [];
   let from = 0;
@@ -32,6 +37,7 @@ export function paragraphOriginalFragments(pieces: Piece[], boundaries: readonly
   return fragments;
 }
 
+/** 取段落显示文本 [from, to) 范围内的片段；跨越边界的句子被切成两片，index 不变 */
 export function slicePieces(pieces: Piece[], from: number, to: number): Piece[] {
   const out: Piece[] = [];
   for (const p of pieces) {
@@ -54,6 +60,11 @@ export function rectOf(node: Text, offset: number): DOMRect | null {
   return range.getClientRects()[0] ?? null;
 }
 
+/**
+ * 拆分点：被点击句最后一个字所在行的「下一行行首」在段落显示文本中的偏移。
+ * 在这里拆开，上半段每一行的字与拆分前完全相同；配合上半段的 text-align-last: justify，
+ * 原句所在各行的每个字位置不变（D13，已逐字实测 0px 偏移）。句子在最后一行结束时返回 null。
+ */
 export function measureSplit(body: HTMLElement, paraIndex: number, index: number): number | null {
   const spans = Array.from(body.querySelectorAll<HTMLElement>(`[data-para="${paraIndex}"] .sentence`));
   const own = spans.filter((s) => s.dataset.index === String(index));

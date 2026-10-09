@@ -2102,8 +2102,6 @@ export function groupRegions(regions: readonly Region[]): ReadonlyMap<number | n
   );
 }
 
-/** 段内切片续排必须取消首段缩进；标题段沿用既有 class 规则。 */
-
 function renderPieces(
   pieces: Piece[],
   markerIndexes: ReadonlySet<number>,
@@ -2138,14 +2136,6 @@ export function shouldRenderSavedMarker(
 ): boolean {
   return markerIndexes.has(piece.index) && piece.start + piece.text.length === pieceEnds.get(piece.index);
 }
-
-/**
- * 每个插入边界之前的原文，加上最后一个非 null 边界到段尾的续段。
- * Paragraph 直接使用这个结果，故所有 region 组合都不会丢失段尾原文。
- */
-
-/** 取段落显示文本 [from, to) 范围内的片段；跨越边界的句子被切成两片，index 不变 */
-
 
 /* ---------------- 几何测量 ---------------- */
 
@@ -2214,12 +2204,6 @@ function charTop(body: HTMLElement, paraIndex: number, offset: number): number |
   }
   return null;
 }
-
-/**
- * 拆分点：被点击句最后一个字所在行的「下一行行首」在段落显示文本中的偏移。
- * 在这里拆开，上半段每一行的字与拆分前完全相同；配合上半段的 text-align-last: justify，
- * 原句所在各行的每个字位置不变（D13，已逐字实测 0px 偏移）。句子在最后一行结束时返回 null。
- */
 
 type CaretPoint = { node: Node; offset: number };
 

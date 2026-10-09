@@ -47,7 +47,8 @@
   overflow: hidden;
 }
 .landing-demo-canvas { position: relative; width: 100%; }
-.landing-demo-measure {
+.landing-demo-measure,
+.landing-demo-expanded-measure {
   position: absolute;
   top: 0;
   left: 0;
@@ -72,8 +73,7 @@
 .landing-demo-target-active .sentence[data-index="10"],
 .landing-demo-target-active .sentence[data-index="10"]:hover { color: var(--hover); }
 .landing-demo-panel-slot { position: relative; display: flow-root; }
-.landing-demo-panel-measure { visibility: hidden; pointer-events: none; }
-.landing-demo-panel-measure .gloss-panel { min-height: calc(3 * 2.05em); }
+.landing-demo-stage .gloss-panel { min-height: 0; }
 .landing-demo-panel-play { position: absolute; inset: 0; }
 .landing-demo-pointer {
   position: absolute;

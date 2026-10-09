@@ -25,11 +25,15 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
   const [reducedMotion, setReducedMotion] = useState<boolean | null>(null);
   const [splitAt, setSplitAt] = useState<number | null>(null);
   const [measured, setMeasured] = useState(false);
+  const [layoutWidth, setLayoutWidth] = useState(0);
+  const [reservedHeight, setReservedHeight] = useState(0);
+  const [panelHeight, setPanelHeight] = useState(0);
   const [phase, setPhase] = useState<Phase>("waiting");
   const [pointer, setPointer] = useState<Point>({ x: 0, y: 0 });
   const [hoveredGloss, setHoveredGloss] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
+  const expandedMeasureRef = useRef<HTMLDivElement>(null);
   const visibleRef = useRef<HTMLElement>(null);
   const playRef = useRef<HTMLDivElement>(null);
 
@@ -74,6 +78,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
       const width = canvas.clientWidth;
       if (width === previousWidth) return;
       previousWidth = width;
+      setLayoutWidth(width);
       setSplitAt(measureSplit(measuring, PARAGRAPH_INDEX, TARGET_INDEX));
       setMeasured(true);
     };
@@ -162,18 +167,37 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
   const fragments = ready ? paragraphOriginalFragments(pieces, [splitAt]) : [];
   const hasTail = splitAt !== null && splitAt < paragraphLength(pieces);
 
+  useLayoutEffect(() => {
+    if (!ready || !expandedMeasureRef.current) return;
+    setReservedHeight(Math.ceil(expandedMeasureRef.current.getBoundingClientRect().height));
+    const panelSlot = expandedMeasureRef.current.querySelector<HTMLElement>(".landing-demo-panel-slot");
+    if (panelSlot) setPanelHeight(Math.ceil(panelSlot.getBoundingClientRect().height));
+  }, [ready, splitAt, layoutWidth, gloss]);
+
   return (
     <div className={`landing-demo-stage${targetActive ? " landing-demo-target-active" : ""}`} aria-label="阅读器白话展开演示">
-      <div className="landing-demo-canvas" ref={canvasRef}>
+      <div className="landing-demo-canvas" ref={canvasRef} style={{ minHeight: reservedHeight }}>
         {book && <div className="landing-demo-measure" ref={measureRef} aria-hidden="true"><p data-para={PARAGRAPH_INDEX} className="reader-para">{renderPieces(pieces)}</p></div>}
         {ready && (
-          <article ref={visibleRef} className="reader-body landing-demo-body" lang="zh-CN">
-            <p data-para={PARAGRAPH_INDEX} className={splitFragmentClassName("reader-para", false, true, hasTail)}>{renderPieces(fragments[0] ?? [])}</p>
-            <div className="landing-demo-panel-slot">
-              <div className="landing-demo-panel-measure" aria-hidden="true"><GlossPanel {...panelProps} view={finalView} /></div>
-              {showPanel && <div className="landing-demo-panel-play" ref={playRef} onMouseEnter={() => setHoveredGloss(true)} onMouseLeave={() => setHoveredGloss(false)}><GlossPanel key={replayIndex} {...panelProps} view={reducedMotion ? finalView : playingView} /></div>}
-            </div>
-            {hasTail && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-para-cont">{renderPieces(fragments[1] ?? [])}</p>}
+          <div className="landing-demo-expanded-measure" ref={expandedMeasureRef} aria-hidden="true">
+            <article className="reader-body landing-demo-body" lang="zh-CN">
+              <p data-para={PARAGRAPH_INDEX} className={splitFragmentClassName("reader-para", false, true, hasTail)}>{renderPieces(fragments[0] ?? [])}</p>
+              <div className="landing-demo-panel-slot"><GlossPanel {...panelProps} view={finalView} /></div>
+              {hasTail && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-para-cont">{renderPieces(fragments[1] ?? [])}</p>}
+            </article>
+          </div>
+        )}
+        {ready && (
+          <article ref={visibleRef} className="reader-body landing-demo-body landing-demo-visible" lang="zh-CN">
+            {showPanel ? (
+              <>
+                <p data-para={PARAGRAPH_INDEX} className={splitFragmentClassName("reader-para", false, true, hasTail)}>{renderPieces(fragments[0] ?? [])}</p>
+                <div className="landing-demo-panel-slot" style={{ height: panelHeight }}>
+                  <div className="landing-demo-panel-play" ref={playRef} onMouseEnter={() => setHoveredGloss(true)} onMouseLeave={() => setHoveredGloss(false)}><GlossPanel key={replayIndex} {...panelProps} view={reducedMotion ? finalView : playingView} /></div>
+                </div>
+                {hasTail && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-para-cont">{renderPieces(fragments[1] ?? [])}</p>}
+              </>
+            ) : <p data-para={PARAGRAPH_INDEX} className="reader-para">{renderPieces(pieces)}</p>}
           </article>
         )}
         {ready && !reducedMotion && <span aria-hidden="true" className={`landing-demo-pointer landing-demo-pointer-${phase}`} style={{ left: pointer.x, top: pointer.y }} />}

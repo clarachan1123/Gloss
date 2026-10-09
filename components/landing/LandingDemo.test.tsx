@@ -183,7 +183,7 @@ describe("G-57 演示进入视口后启动", () => {
     expect(target).toBe(host.querySelector(".landing-demo-stage"));
     expect(observedOptions).toEqual({ threshold: 0.5 });
     await advance(10_000);
-    expect(host.querySelector(".landing-demo-pointer-waiting")).not.toBeNull();
+    expect(host.querySelector(".landing-demo-pointer")).toBeNull();
     await visible(0.49);
     await advance(10_000);
     await visible(0.5, false);
@@ -241,4 +241,37 @@ describe("G-57 演示进入视口后启动", () => {
     expect(host.querySelector(".landing-demo-pointer")).toBeNull();
     expect(host.querySelector(".landing-demo-visible .gloss-panel-text")?.textContent).toBe(sampleContent.glosses[10]);
   });
+
+  it("G-57 可见通知前无指针，首次挂载即位于起点", async () => {
+    const { host } = await mount();
+    const canvas = host.querySelector<HTMLElement>(".landing-demo-canvas")!;
+    Object.defineProperty(canvas, "clientWidth", { configurable: true, value: 320 });
+    expect(host.querySelector(".landing-demo-pointer")).toBeNull();
+    await advance(10_000);
+    expect(host.querySelector(".landing-demo-pointer")).toBeNull();
+    await visible(0.49);
+    expect(host.querySelector(".landing-demo-pointer")).toBeNull();
+    const firstPositions: string[][] = [];
+    const mutations = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof HTMLElement && node.classList.contains("landing-demo-pointer")) {
+            firstPositions.push([node.style.left, node.style.top]);
+          }
+        }
+      }
+    });
+    mutations.observe(canvas, { childList: true });
+    try {
+      await visible(0.5);
+      const pointer = host.querySelector<HTMLElement>(".landing-demo-pointer")!;
+      expect(pointer).not.toBeNull();
+      expect(pointer.classList.contains("landing-demo-pointer-waiting")).toBe(true);
+      expect([pointer.style.left, pointer.style.top]).toEqual(["290px", "10px"]);
+      expect(firstPositions).toEqual([["290px", "10px"]]);
+    } finally {
+      mutations.disconnect();
+    }
+  });
+
 });

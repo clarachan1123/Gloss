@@ -30,6 +30,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
   const [panelHeight, setPanelHeight] = useState(0);
   const [phase, setPhase] = useState<Phase>("waiting");
   const [pointer, setPointer] = useState<Point>({ x: 0, y: 0 });
+  const [pointerReady, setPointerReady] = useState(false);
   const [hoveredGloss, setHoveredGloss] = useState(false);
   const [started, setStarted] = useState(false);
   const startedRef = useRef(false);
@@ -139,6 +140,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
     setHoveredGloss(false);
     setPhase("waiting");
     setPointer(startPoint());
+    setPointerReady(true);
     after(1_000, () => {
       setPhase("moving");
       setPointer(targetPoint());
@@ -226,7 +228,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
             ) : <p data-para={PARAGRAPH_INDEX} className="reader-para">{renderPieces(pieces)}</p>}
           </article>
         )}
-        {ready && !reducedMotion && <span aria-hidden="true" className={`landing-demo-pointer landing-demo-pointer-${phase}`} style={{ left: pointer.x, top: pointer.y }} />}
+        {ready && !reducedMotion && pointerReady && <span aria-hidden="true" className={`landing-demo-pointer landing-demo-pointer-${phase}`} style={{ left: pointer.x, top: pointer.y }} />}
       </div>
     </div>
   );

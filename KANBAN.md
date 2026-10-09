@@ -953,7 +953,7 @@ gloss/
   - [x] 改动只涉及上述文件；app/、components/、lib/ 下除 prompts/gloss.ts 与两个测试文件外无改动。
   - [x] npm test、tsc 通过；四个脚本 node --check 通过。
 
-### G-54 · 依赖审计：sharp、source-map-js 升级，mammoth 链登记 · 已合并 2026-10-09
+### G-54 · 依赖审计：sharp、source-map-js 升级，mammoth 链登记 · 已上线 2026-10-09
 **P1 · W4 前做** ｜ 依赖无 ｜ 分支 `codex/g54-dep-audit`
 - 起因：2026-10-09 `npm audit --omit=dev`（registry.npmjs.org）报 5 个：high 2——sharp 0.35.4（GHSA-wq5f-xc86-pv6w，librsvg，经 next 的可选依赖）、source-map-js 1.2.1（GHSA-68fv-2mgg-jv7q，拒绝服务，经 postcss）；moderate 3——sprintf-js 1.0.3（GHSA-hp3w-g68c-fv3c，经 mammoth → argparse 1.0.10 → sprintf-js），argparse、mammoth 为连带计数。
 - 处理：只改 package-lock.json，sharp 与 26 个 @img/sharp-* 升到 0.35.5（libvips 1.3.4），source-map-js 升到 1.2.2；package.json 不变。
@@ -964,7 +964,7 @@ gloss/
   - [x] lockfile 版本变化正好 28 个包（sharp、16 个 @img/sharp-*、10 个 @img/sharp-libvips-*、source-map-js）；package.json 无改动 —— lockfile SHA-256 与 Claude 用 npm 11.13.0 独立生成的结果一致（C11F01FB…701E）
   - [x] npm test、tsc、npm run build 通过 —— Codex 自测：560 通过、17 跳过、0 失败；tsc 0；build 成功，Next.js 16.3.8
   - [x] 分支预览站首页、示例书点句正常（Claude 代验）—— 2026-10-09 预览站：落地页显示、window.next.version 为 16.3.8；示例书第 4 句白话展开，/api/* 请求 0，控制台无错误
-  - [ ] 合并后正式站首页、示例书点句正常（Claude 代验）
+  - [x] 合并后正式站首页、示例书点句正常（Claude 代验）—— 2026-10-09 正式站（main c341336）：书架正常、window.next.version 为 16.3.8；示例书第 4 句白话展开，/api/* 请求 0；Clara 在 Vercel Deployments 核到 main c341336 为 Ready
 
 ---
 

@@ -236,3 +236,14 @@ describe("术语标记只有颜色", () => {
     expect(rule![1]).toMatch(/(?:^|;)\s*transition:\s*none\s*;/);
   });
 });
+
+describe("G-60b 实心反馈按钮配色", () => {
+  it.each(THEMES)("%s：正常态纸色字对墨色底 >= 4.5", theme => {
+    const c = themeColors(theme);
+    expect(contrast(c["--paper-main"], c["--ink"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+  });
+  it.each(THEMES)("%s：悬停态纸色字对白话色底 >= 4.5", theme => {
+    const c = themeColors(theme);
+    expect(contrast(c["--paper-main"], c["--gloss"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+  });
+});

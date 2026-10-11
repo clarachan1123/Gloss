@@ -2,26 +2,39 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { FEEDBACK_BODY_MAX, FEEDBACK_CONTACT_MAX, feedbackLength } from "@/lib/feedback";
 
 export default function FeedbackButton({ placement = "inline" }: { placement?: "reader" | "shelf" | "inline" }) {
   const [open, setOpen] = useState(false);
   const [copyState, setCopyState] = useState<"ready" | "copied" | "manual">("ready");
+  const [body, setBody] = useState("");
+  const [contact, setContact] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "success" | "error">("idle");
   const buttonRef = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const accountRef = useRef<HTMLSpanElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyRequestRef = useRef(0);
+  const sendingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const requestRef = useRef<AbortController | null>(null);
   const close = useCallback(() => {
     copyRequestRef.current++;
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     setOpen(false);
     setCopyState("ready");
+    setStatus(value => value === "success" ? "idle" : value);
     buttonRef.current?.focus({ preventScroll: true });
   }, []);
 
-  useEffect(() => () => {
-    copyRequestRef.current++;
-    if (timerRef.current !== null) clearTimeout(timerRef.current);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      copyRequestRef.current++;
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      requestRef.current?.abort();
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -40,9 +53,12 @@ export default function FeedbackButton({ placement = "inline" }: { placement?: "
     };
     place();
     cardRef.current?.focus({ preventScroll: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
+    if (cardRef.current) observer?.observe(cardRef.current);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     return () => {
+      observer?.disconnect();
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
@@ -54,7 +70,6 @@ export default function FeedbackButton({ placement = "inline" }: { placement?: "
       const target = event.target as Node | null;
       return target && !buttonRef.current?.contains(target) && !cardRef.current?.contains(target);
     };
-    // Consume the closing gesture before Reader's document listeners see it.
     const pointer = (event: PointerEvent) => {
       if (!outside(event)) return;
       event.preventDefault();
@@ -68,8 +83,9 @@ export default function FeedbackButton({ placement = "inline" }: { placement?: "
     };
     const key = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      event.preventDefault();
       event.stopImmediatePropagation();
+      if (event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
       close();
     };
     window.addEventListener("pointerdown", pointer, true);
@@ -102,15 +118,57 @@ export default function FeedbackButton({ placement = "inline" }: { placement?: "
       setCopyState("manual");
     }
   };
+  const bodyLength = feedbackLength(body);
+  const contactLength = feedbackLength(contact);
+  const invalid = bodyLength === 0 || bodyLength > FEEDBACK_BODY_MAX || contactLength > FEEDBACK_CONTACT_MAX;
+  const send = async () => {
+    if (sendingRef.current || invalid) return;
+    sendingRef.current = true;
+    setStatus("sending");
+    const controller = new AbortController();
+    requestRef.current = controller;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const response = await Promise.race([
+        fetch("/api/feedback", {
+          method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+          body: JSON.stringify({ id: crypto.randomUUID(), body: body.trim(), contact: contact.trim(), source: placement === "inline" ? "landing" : placement }),
+        }),
+        new Promise<never>((_, reject) => {
+          deadline = setTimeout(() => { controller.abort(); reject(new Error("timeout")); }, 15_000);
+        }),
+      ]);
+      if (response.status !== 200) throw new Error("unavailable");
+      if (mountedRef.current) { setBody(""); setContact(""); setStatus("success"); }
+    } catch {
+      if (mountedRef.current) setStatus("error");
+    } finally {
+      clearTimeout(deadline);
+      sendingRef.current = false;
+      requestRef.current = null;
+    }
+  };
 
-  return <span className={"feedback-entry feedback-" + placement} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-    <button ref={buttonRef} type="button" className="feedback-button" aria-expanded={open} aria-haspopup="dialog" onClick={() => open ? close() : setOpen(true)}>提意见</button>
-    {open && createPortal(<div ref={cardRef} className="feedback-card" role="dialog" aria-label="提意见" tabIndex={-1} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onKeyUp={(event) => event.stopPropagation()}>
+  return <span className={"feedback-entry feedback-" + placement} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
+    <button ref={buttonRef} type="button" className="feedback-button" aria-label="体验反馈" aria-expanded={open} aria-haspopup="dialog" onClick={() => {
+      if (open) close();
+      else { setStatus(value => value === "success" ? "idle" : value); setOpen(true); }
+    }}>体验反馈</button>
+    {open && createPortal(<div ref={cardRef} className="feedback-card" role="dialog" aria-label="体验反馈" tabIndex={-1}
+      onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
+      onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
       <p>Gloss 还在测试，很需要你的意见。</p>
-      <p>哪里不好用、哪句白话不对，都可以直接告诉我。</p>
-      <p>微信：<span ref={accountRef}>Claraiing</span> <button type="button" className="feedback-copy" onClick={() => void copy()}>{copyState === "copied" ? "已复制" : "复制微信号"}</button></p>
+      {status === "success" ? <p role="status">已收到，谢谢！</p> : <div className="feedback-form">
+        <textarea aria-label="意见" placeholder="哪里不好用、哪句白话不对，直接写在这里" value={body} onChange={event => setBody(event.target.value)} disabled={status === "sending"} />
+        {bodyLength > FEEDBACK_BODY_MAX && <p role="status">超过 1000 字了，删一些再发</p>}
+        <input type="text" aria-label="联系方式（选填）" placeholder="选填：想让我回复的话，留个微信或邮箱" value={contact} onChange={event => setContact(event.target.value)} disabled={status === "sending"} />
+        {contactLength > FEEDBACK_CONTACT_MAX && <p role="status">联系方式太长了</p>}
+        <button type="button" className="feedback-send" disabled={invalid || status === "sending"} onClick={() => void send()}>{status === "sending" ? "发送中…" : "发送"}</button>
+        {status === "error" && <p role="status">没发出去，可以稍后再试，或加微信 Claraiing</p>}
+      </div>}
+      <p className="feedback-contact">内容只发给开发者，不会公开。想直接聊，非常欢迎加微信：<span ref={accountRef}>Claraiing</span> <button type="button" className="feedback-copy" onClick={() => void copy()}>{copyState === "copied" ? "已复制" : "复制"}</button></p>
       {copyState === "manual" && <p role="status">请手动复制</p>}
-      <p>白话不对的话，也可以在白话上右键，点「翻错了」。</p>
+      <p>💡 白话不对的话，也可以在白话上右键，点「翻错了」。</p>
     </div>, document.body)}
   </span>;
 }

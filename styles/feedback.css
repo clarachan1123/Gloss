@@ -1,14 +1,28 @@
 .feedback-entry { font-family: var(--font-serif-cjk); font-size: 14px; }
-.feedback-button, .feedback-copy { appearance: none; border: 0; padding: 0; background: transparent; color: var(--gloss); font: inherit; font-size: 14px; line-height: 1; white-space: nowrap; cursor: pointer; }
-.feedback-button:hover, .feedback-copy:hover { color: var(--hover); }
-.feedback-button:focus-visible, .feedback-copy:focus-visible { outline: 1px solid var(--ink); outline-offset: 3px; }
+.feedback-button, .feedback-send { appearance: none; border: 0; padding: 6px 10px; background: var(--ink); color: var(--paper-main); font: inherit; font-size: 14px; line-height: 1; white-space: nowrap; cursor: pointer; }
+.feedback-button:hover, .feedback-send:hover:not(:disabled) { background: var(--gloss); color: var(--paper-main); }
+.feedback-button:focus-visible, .feedback-send:focus-visible, .feedback-copy:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.feedback-send:disabled { cursor: default; }
 .feedback-reader { display: block; position: relative; height: 0; }
-.feedback-reader > .feedback-button { position: absolute; right: 0; bottom: 0; }
-.shelf-heading h1 { position: relative; }
-.feedback-shelf { position: absolute; right: 0; top: 50%; transform: translateY(-50%); line-height: 1; }
+.feedback-reader > .feedback-button { position: absolute; right: 0; top: 8px; }
+.feedback-reader + .mode-switch { width: max-content; margin-top: 48px; }
+@media (max-width: 767.98px) { .feedback-reader + .mode-switch { margin-top: 8px; } }
+.shelf-heading h1 { width: fit-content; }
+.feedback-shelf { display: block; position: relative; height: 0; line-height: 1; }
+.feedback-shelf > .feedback-button { position: absolute; right: 0; bottom: 8px; }
 .feedback-card { position: fixed; z-index: 50; box-sizing: border-box; width: min(320px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 16px; border: 1px solid var(--rule); background: var(--paper-main); color: var(--ink); font-family: var(--font-serif-cjk); font-size: 14px; line-height: 1.7; }
 .feedback-card p { margin: 0 0 12px; }
 .feedback-card p:last-child { margin-bottom: 0; }
-.feedback-copy { text-decoration: underline; }
+.feedback-form { display: grid; gap: 12px; margin-bottom: 12px; }
+.feedback-form textarea, .feedback-form input { display: block; box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--rule); background: var(--paper-main); color: var(--ink); font: inherit; }
+.feedback-form textarea { height: 104px; resize: none; }
+.feedback-form input { font-size: 12px; }
+.feedback-form textarea::placeholder, .feedback-form input::placeholder { color: var(--gloss); opacity: 1; }
+.feedback-form p { margin: 0; }
+.feedback-send { justify-self: start; }
+.feedback-copy { appearance: none; border: 0; padding: 0; background: transparent; color: var(--gloss); font: inherit; font-size: 14px; line-height: 1; text-decoration: underline; cursor: pointer; }
+.feedback-copy:hover { color: var(--hover); }
+.feedback-contact { font-size: 12px; }
 .landing-feedback { margin: 12px 0 0; color: var(--gloss); font-size: 14px; line-height: 1.7; }
-.landing-feedback .feedback-entry { margin-left: 8px; }
+.landing-page { position: relative; }
+.landing-feedback .feedback-entry { position: absolute; top: 18px; right: max(20px, calc((100% - 39rem) / 2)); margin: 0; }

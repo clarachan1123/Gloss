@@ -264,7 +264,7 @@ export default function Shelf() {
   return (
     <main className="shelf-page" style={{ "--shelf-book": selected ? BOOK_COLORS[Number(selected.colorId.slice(5))] : "transparent" } as CSSProperties}>
       <div className="shelf-frame">
-      <header className="shelf-heading"><div className="shelf-heading-top"><span className="wordmark">Gloss</span>{entries.length > 0 && <span className="shelf-count">本地书架 {entries.length} 本</span>}</div><h1>我的书架<FeedbackButton placement="shelf" /></h1>{entries.length > 0 && <p>{entries.length} 本书。点开任意一本，接着上次的地方读。</p>}</header>
+      <header className="shelf-heading"><div className="shelf-heading-top"><span className="wordmark">Gloss</span>{entries.length > 0 && <span className="shelf-count">本地书架 {entries.length} 本</span>}</div><h1>我的书架</h1><FeedbackButton placement="shelf" />{entries.length > 0 && <p>{entries.length} 本书。点开任意一本，接着上次的地方读。</p>}</header>
       {recent && <Link className="continue-reading" href={`/read/${recent.docId}`} onNavigate={() => enterFromShelf(recent, "continue")}><span className="continue-cover" style={{ background: BOOK_COLORS[Number(recent.colorId.slice(5))] }} /><span className="continue-copy"><strong>{recent.title}</strong><small>{lastReads.get(recent.docId)}</small></span><span className="continue-action">继续阅读　→</span></Link>}
       <section className={`${entries.length === 0 ? "shelf empty-shelf" : "shelf"}${overflowing ? " shelf-overflowing" : ""}`} ref={shelfRef} tabIndex={-1} aria-label="我的书架" onClick={(event) => { if (event.target === event.currentTarget) setMenuId(null); }}>
         <div className="shelf-track" ref={trackRef}>

@@ -29,6 +29,7 @@ import {
 } from "@/lib/cache";
 import { MAX_AFTER, MAX_BEFORE, MAX_EXPLAIN_CONTEXT_CHARS } from "@/lib/context";
 import { streamExplain, type ExplainInput } from "@/lib/explain-client";
+import { buildStructureInput } from "@/lib/structure-input";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
 import { DISMISS_EARLY_MS, emitAnalytics, glossCharsBucket, sentenceCharsBucket } from "@/lib/analytics-events";
 import { enqueueAnalytics, markAnalyticsOpen, takeReaderEntrySource, type ReaderEntrySource } from "@/lib/analytics-local";
@@ -1237,11 +1238,11 @@ export default function Reader({ docId }: { docId: string }) {
       return;
     }
     const controller = new AbortController();
-    const input = {
+    const input = buildStructureInput({
       title: doc.meta.fileName?.replace(/\.[^.]+$/, "") || null,
       headings: doc.headings.map((h) => h.text.trim()),
       paragraphs: doc.paragraphs,
-    };
+    });
     void fetchStructure(input, controller.signal).then((result) => {
       if (!result || controller.signal.aborted) return;
       structureRef.current = result.structure;

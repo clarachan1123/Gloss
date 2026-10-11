@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CLIENT_EVENTS, glossCharsBucket, sentenceCharsBucket, validateAnalyticsEvent } from "./analytics-events";
+import { CLIENT_EVENTS, parseCharsBucket, sentenceCountBucket, glossCharsBucket, sentenceCharsBucket, validateAnalyticsEvent } from "./analytics-events";
 
 const eventId = "00000000-0000-4000-8000-000000000000";
 const valid: Record<string, Record<string, unknown>> = {
@@ -126,5 +126,25 @@ describe("G-50 length buckets", () => {
     ["gloss_read_complete", { sentenceIndex: 0, visibleMs: 2000, bottomSeen: true, glossCharsBucket: "150" }],
   ])("rejects %s with an unlisted bucket", (event, detail) => {
     expect(validateAnalyticsEvent({ event, eventId, ...detail }, true)).toBe(false);
+  });
+});
+
+
+describe("G-61 import buckets", () => {
+  it.each([[50000,"20001-50000"],[50001,"50001-100000"],[100000,"50001-100000"],[100001,"100001-200000"],[200000,"100001-200000"]] as const)("parseCharsBucket(%i) is %s", (n, bucket) => {
+    expect(parseCharsBucket(n)).toBe(bucket);
+  });
+  it.each([[2000,"501-2000"],[2001,"2001-5000"],[5000,"2001-5000"],[5001,">5000"]] as const)("sentenceCountBucket(%i) is %s", (n, bucket) => {
+    expect(sentenceCountBucket(n)).toBe(bucket);
+  });
+  it("导入事件白名单同时接受新旧分档", () => {
+    for (const parseCharsBucket of ["50001-100000", "100001-200000", ">50000"]) {
+      for (const sentenceCountBucket of ["2001-5000", ">5000", ">2000"]) {
+        const event = { event: "doc_parse_complete", eventId, format: "paste", fileSizeBucket: null,
+          parseCharsBucket, sentenceCountBucket, parseMs: 1, aiSegmented: false, warningCodes: [] };
+        expect(validateAnalyticsEvent(event, true)).toBe(true);
+        expect(validateAnalyticsEvent(event, false)).toBe(true);
+      }
+    }
   });
 });

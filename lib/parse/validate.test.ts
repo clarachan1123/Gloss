@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment happy-dom
+import { describe, expect, it, vi } from "vitest";
 import {
   ParseError,
   assembleDocument,
   checkFile,
+  checkParsed,
   formatPageRanges,
   noticeContent,
   normalizeWhitespace,
@@ -119,5 +121,29 @@ describe("左栏「已跳过」一行（G-25）", () => {
 
   it("字数用千分位", () => {
     expect(skippedSummary({ tableCount: 2, tableChars: 12345 })).toContain("12,345 字");
+  });
+});
+
+
+describe("G-61 A8 boundary", () => {
+  it.each([200_000, 200_001])("粘贴路径 %i 字的 A8 边界", async (length) => {
+    const { plainTextToDocument } = await import("./txt");
+    const doc = plainTextToDocument("甲".repeat(length), "paste", null);
+    if (length === 200_000) expect(() => checkParsed(doc)).not.toThrow();
+    else expect(() => checkParsed(doc)).toThrow(expect.objectContaining({ code: "A8", charCount: length }));
+  });
+  it.each([200_000, 200_001])("docx 解析到校验路径 %i 字的 A8 边界", async (length) => {
+    const mammoth = (await import("mammoth")).default;
+    const spy = vi.spyOn(mammoth, "convertToHtml").mockResolvedValue({ value: `<p>${"甲".repeat(length)}</p>`, messages: [] });
+    try {
+      const { parseDocx } = await import("./docx");
+      const { doc } = await parseDocx(new File([new Uint8Array(1)], "边界.docx"));
+      expect(doc.meta.charCount).toBe(length);
+      if (length === 200_000) expect(() => checkParsed(doc)).not.toThrow();
+      else expect(() => checkParsed(doc)).toThrow(expect.objectContaining({ code: "A8", charCount: length }));
+    } finally { spy.mockRestore(); }
+  });
+  it("A8 文案显示二十万字常量上限", () => {
+    expect(noticeContent("A8", { charCount: 200_001 }).message).toContain("200,000 字上限");
   });
 });

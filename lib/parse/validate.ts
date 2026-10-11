@@ -58,7 +58,7 @@ export interface ParsedDocument {
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 /** PRD 3.8 单文档字数上限（按 countChars 口径） */
-export const MAX_CHARS = 50_000;
+export const MAX_CHARS = 200_000;
 
 /** A9：汉字占非空白字符的比例低于此值时提示「针对中文优化」（不阻断） */
 export const CJK_RATIO_THRESHOLD = 0.3;

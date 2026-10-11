@@ -13,8 +13,8 @@ const oneOf = (...values: string[]): Check => (value) => typeof value === "strin
 const nullable = (check: Check): Check => (value) => value === null || check(value);
 const short = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 80;
 const fileSize = oneOf("0", "1-100KiB", "100KiB-1MiB", "1-5MiB", "5-20MiB", ">20MiB");
-const parseChars = oneOf("0", "1-1000", "1001-5000", "5001-20000", "20001-50000", ">50000");
-const sentenceCount = oneOf("0", "1-20", "21-100", "101-500", "501-2000", ">2000");
+const parseChars = oneOf("0", "1-1000", "1001-5000", "5001-20000", "20001-50000", "50001-100000", "100001-200000", ">50000");
+const sentenceCount = oneOf("0", "1-20", "21-100", "101-500", "501-2000", "2001-5000", ">5000", ">2000");
 const sentenceChars = oneOf("0", "1-40", "41-80", "81-150", ">150");
 const glossChars = oneOf("0", "1-50", "51-100", "101-150", ">150");
 const format = oneOf("pdf", "docx", "txt", "paste", "unsupported");
@@ -150,6 +150,8 @@ export function parseCharsBucket(count: number): string {
   if (count <= 5000) return "1001-5000";
   if (count <= 20000) return "5001-20000";
   if (count <= 50000) return "20001-50000";
+  if (count <= 100000) return "50001-100000";
+  if (count <= 200000) return "100001-200000";
   return ">50000";
 }
 
@@ -175,5 +177,6 @@ export function sentenceCountBucket(count: number): string {
   if (count <= 100) return "21-100";
   if (count <= 500) return "101-500";
   if (count <= 2000) return "501-2000";
-  return ">2000";
+  if (count <= 5000) return "2001-5000";
+  return ">5000";
 }

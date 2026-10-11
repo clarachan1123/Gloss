@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import GlossPanel, { type GlossView } from "@/components/reader/GlossPanel";
-import Sentence from "@/components/reader/Sentence";
-import { measureSplit, paragraphLength, paragraphOriginalFragments, splitFragmentClassName } from "@/components/reader/lineSplit";
+import Sentence, { TailPlaceholder } from "@/components/reader/Sentence";
+import { measureSplit, paragraphLength, paragraphOriginalFragments, splitFragmentClassName, splitParagraphTail } from "@/components/reader/lineSplit";
 import { loadSampleBook, type SampleBook } from "@/lib/sample";
 import { segmentParagraphs } from "@/lib/segment";
 
@@ -12,12 +12,12 @@ const FIRST_INDEX = 8;
 const LAST_INDEX = 11;
 const TARGET_INDEX = 10;
 
-type DemoPiece = { index: number; start: number; text: string };
+type DemoPiece = { index: number; start: number; text: string; placeholder?: boolean };
 type Phase = "waiting" | "moving" | "clicking" | "revealing" | "settled";
 type Point = { x: number; y: number };
 
 function renderPieces(pieces: DemoPiece[]) {
-  return pieces.map((piece) => <Sentence key={`${piece.index}:${piece.start}`} index={piece.index} offset={piece.start} text={piece.text} />);
+  return pieces.map((piece) => piece.placeholder ? <TailPlaceholder key={`placeholder:${piece.index}:${piece.start}`} text={piece.text} /> : <Sentence key={`${piece.index}:${piece.start}`} index={piece.index} offset={piece.start} text={piece.text} />);
 }
 
 export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
@@ -193,6 +193,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
   const showPanel = reducedMotion || phase === "revealing" || phase === "settled";
   const targetActive = hoveredGloss || (!reducedMotion && phase === "settled");
   const fragments = ready ? paragraphOriginalFragments(pieces, [splitAt]) : [];
+  const { head, tail } = splitParagraphTail(pieces, fragments[0] ?? [], [TARGET_INDEX], splitAt);
   const hasTail = splitAt !== null && splitAt < paragraphLength(pieces);
 
   useLayoutEffect(() => {
@@ -209,8 +210,9 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
         {ready && (
           <div className="landing-demo-expanded-measure" ref={expandedMeasureRef} aria-hidden="true">
             <article className="reader-body landing-demo-body" lang="zh-CN">
-              <p data-para={PARAGRAPH_INDEX} className={splitFragmentClassName("reader-para", false, true, hasTail)}>{renderPieces(fragments[0] ?? [])}</p>
+              <p data-para={PARAGRAPH_INDEX} className={splitFragmentClassName("reader-para", false, true, hasTail)}>{renderPieces(head)}</p>
               <div className="landing-demo-panel-slot"><GlossPanel {...panelProps} view={finalView} /></div>
+              {tail.length > 0 && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-tail-line">{renderPieces(tail)}</p>}
               {hasTail && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-para-cont">{renderPieces(fragments[1] ?? [])}</p>}
             </article>
           </div>
@@ -219,11 +221,12 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
           <article ref={visibleRef} className="reader-body landing-demo-body landing-demo-visible" lang="zh-CN">
             {showPanel ? (
               <>
-                <p data-para={PARAGRAPH_INDEX} className={splitFragmentClassName("reader-para", false, true, hasTail)}>{renderPieces(fragments[0] ?? [])}</p>
+                <p data-para={PARAGRAPH_INDEX} className={splitFragmentClassName("reader-para", false, true, hasTail)}>{renderPieces(head)}</p>
                 <div className="landing-demo-panel-slot" style={{ height: panelHeight }}>
                   <div className="landing-demo-panel-play" ref={playRef} onMouseEnter={() => setHoveredGloss(true)} onMouseLeave={() => setHoveredGloss(false)}><GlossPanel key={replayIndex} {...panelProps} view={reducedMotion ? finalView : playingView} /></div>
                 </div>
-                {hasTail && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-para-cont">{renderPieces(fragments[1] ?? [])}</p>}
+                {tail.length > 0 && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-tail-line">{renderPieces(tail)}</p>}
+              {hasTail && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-para-cont">{renderPieces(fragments[1] ?? [])}</p>}
               </>
             ) : <p data-para={PARAGRAPH_INDEX} className="reader-para">{renderPieces(pieces)}</p>}
           </article>

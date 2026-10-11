@@ -1,3 +1,8 @@
+/** 仅保留原字符的排版，不进入句子查询、交互、选择或辅助技术。 */
+export function TailPlaceholder({ text }: { text: string }) {
+  return <span className="reader-tail-placeholder" aria-hidden="true" inert>{text}</span>;
+}
+
 export interface SentenceProps {
   /** 全文顺序号（lib/segment.ts 的 index），阅读位置与点击都靠它定位 */
   index: number;

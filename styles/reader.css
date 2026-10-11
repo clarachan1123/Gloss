@@ -6,6 +6,10 @@ body {
   margin: 0;
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   background: var(--paper-main);
   color: var(--ink);
@@ -625,4 +629,19 @@ body {
 
 .reader-back {
   color: var(--ink);
+}
+
+/* G-59：保留原行尾排版，交互与几何测量只认真实 .sentence。 */
+.reader-tail-placeholder {
+  visibility: hidden;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.reader-tail-line {
+  margin: 0;
+  text-indent: 0;
+  text-align: left;
+  text-align-last: left;
+  white-space: nowrap;
 }

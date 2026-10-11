@@ -56,9 +56,9 @@ import {
   type StoredDocument,
 } from "@/lib/storage";
 import GlossPanel, { IDLE_EXPLAIN_VIEW, LOADING_VIEW, type ExplainView, type GlossView } from "./GlossPanel";
-import { measureSplit, paragraphLength, paragraphOriginalFragments, rectOf, splitFragmentClassName } from "./lineSplit";
+import { measureSplit, paragraphLength, paragraphOriginalFragments, rectOf, splitFragmentClassName, splitParagraphTail } from "./lineSplit";
 export { paragraphOriginalFragments, splitFragmentClassName } from "./lineSplit";
-import Sentence from "./Sentence";
+import Sentence, { TailPlaceholder } from "./Sentence";
 
 /** 滚动停下多久后保存阅读位置 */
 const SAVE_DELAY_MS = 300;
@@ -89,6 +89,7 @@ interface Piece {
   index: number;
   start: number;
   text: string;
+  placeholder?: boolean;
 }
 
 /**
@@ -754,7 +755,7 @@ export default function Reader({ docId }: { docId: string }) {
       const measure = layoutMeasureKey(body);
       // 撑开 / 收起已经自己锚定过视口（见下方事务），这里不再二次校正
       if (key === current.layout) return;
-      if (measure !== current.measure && savedGlosses.size > 0) {
+      if (measure !== current.measure && (savedGlosses.size > 0 || expansion !== null)) {
         // 测量提交不消费本事务；量完、常驻区与 transient 都插回后才由事务 effect 锚定。
         pendingMeasureTransactionRef.current = { anchor: anchorAtViewportTop(body), animateOpen: false };
         setSavedRegions(null);
@@ -778,7 +779,7 @@ export default function Reader({ docId }: { docId: string }) {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [doc, docId, isSample, savedGlosses, savedRegions, sentences.length]);
+  }, [doc, docId, expansion, isSample, savedGlosses, savedRegions, sentences.length]);
 
   /* ---------------- 撑开 / 收起 ---------------- */
 
@@ -923,7 +924,7 @@ export default function Reader({ docId }: { docId: string }) {
     const anchor = anchorAtClick(target, clientX, clientY);
     // 同段已有常驻区时，先在同一同步链里回到未拆分真实 DOM，再量保存区和新临时区。
     const paragraphHasSaved = [...(savedRegions ?? []).keys()].some((savedIndex) => sentences[savedIndex]?.paraIndex === sentence.paraIndex);
-    if (paragraphHasSaved) {
+    if (paragraphHasSaved || expansion?.paraIndex === sentence.paraIndex) {
       pendingOpenRef.current = { index, anchor, animateOpen: !prefersReducedMotion() };
       setMeasuringParaIndex(sentence.paraIndex);
       return;
@@ -1116,7 +1117,7 @@ export default function Reader({ docId }: { docId: string }) {
     const body = bodyRef.current;
     const activeIndexForDismiss = expansion?.index ?? activeSavedIndex;
     if (activeIndexForDismiss === null || !body) return;
-    const source = [...body.querySelectorAll<HTMLElement>(`[data-index="${activeIndexForDismiss}"]`)];
+    const source = [...body.querySelectorAll<HTMLElement>(`.sentence[data-index="${activeIndexForDismiss}"]`)];
     const panel = body.querySelector<HTMLElement>(`.gloss-panel[data-sentence-index="${activeIndexForDismiss}"]`);
     if (source.length === 0 || !panel) return;
 
@@ -2057,7 +2058,7 @@ export function takeCodePointsFromEnd(text: string, limit: number): string {
  * 单个段落。用 memo 包住：撑开 / 收起时只有 splitAt 变化的一两段重新渲染。
  * 否则每次点击都会让全文上千个句子组件重新比对，在 5 万字的书上足以卡掉动画的第一帧。
  */
-const Paragraph = memo(function Paragraph({
+export const Paragraph = memo(function Paragraph({
   paraIndex,
   heading,
   pieces,
@@ -2097,7 +2098,10 @@ const Paragraph = memo(function Paragraph({
     <Fragment>
       {boundaries.map((boundary, groupIndex) => {
         const end = boundary ?? Infinity;
-        const part = fragments[groupIndex] ?? NO_PIECES;
+        const group = groups.get(boundary)!;
+        const { head: part, tail } = splitParagraphTail(
+          pieces, fragments[groupIndex] ?? NO_PIECES, group.map((region) => region.index), boundary,
+        );
         const hasTail = end !== Infinity && end < paragraphLength(pieces);
         const isFirst = groupIndex === 0;
         return (
@@ -2111,7 +2115,7 @@ const Paragraph = memo(function Paragraph({
                 {renderPieces(part, markerIndexes, pieceEnds, onExpandSaved, breatheSentenceIndex)}
               </Tag>
             )}
-            {groups.get(boundary)!.map((region) => (
+            {group.map((region) => (
                 <GlossPanel
                   key={region.saved ? `saved:${region.index}` : glossKey}
                   ref={region.saved ? undefined : panelRef}
@@ -2132,6 +2136,11 @@ const Paragraph = memo(function Paragraph({
                   onExplainBlocked={onExplainBlocked}
                 />
               ))}
+            {tail.length > 0 && (
+              <Tag data-para={paraIndex} className={`${className} reader-tail-line`}>
+                {renderPieces(tail, markerIndexes, pieceEnds, onExpandSaved, breatheSentenceIndex)}
+              </Tag>
+            )}
           </Fragment>
         );
       })}
@@ -2166,7 +2175,9 @@ function renderPieces(
   onExpandSaved: (index: number) => void,
   breatheSentenceIndex: number | null,
 ) {
-  return pieces.map((p) => (
+  return pieces.map((p) => p.placeholder ? (
+    <TailPlaceholder key={`placeholder:${p.index}:${p.start}`} text={p.text} />
+  ) : (
     <Fragment key={`${p.index}:${p.start}`}>
       <Sentence index={p.index} offset={p.start} text={p.text} breathe={p.index === breatheSentenceIndex} />
       {shouldRenderSavedMarker(p, markerIndexes, pieceEnds) && (
@@ -2203,7 +2214,7 @@ function firstLineTop(el: HTMLElement): number {
 }
 
 function sentenceTop(body: HTMLElement, index: number): number {
-  const el = body.querySelector<HTMLElement>(`[data-index="${index}"]`);
+  const el = body.querySelector<HTMLElement>(`.sentence[data-index="${index}"]`);
   return el ? firstLineTop(el) : 0;
 }
 
@@ -2219,7 +2230,7 @@ function layoutMeasureKey(body: HTMLElement): string {
 
 /** 把指定句子的首行滚到视口顶端；第 0 句回到页面顶部 */
 function scrollToSentence(body: HTMLElement, index: number): void {
-  const target = index > 0 ? body.querySelector<HTMLElement>(`[data-index="${index}"]`) : null;
+  const target = index > 0 ? body.querySelector<HTMLElement>(`.sentence[data-index="${index}"]`) : null;
   const top = target ? firstLineTop(target) + window.scrollY : 0;
   if (Math.abs(top - window.scrollY) > 1) window.scrollTo({ top, behavior: "instant" });
 }
@@ -2230,7 +2241,7 @@ function scrollToSentence(body: HTMLElement, index: number): void {
  * 那样每次刷新都会往回退一句。句首位置随文档顺序单调不减，用二分查找。
  */
 function topSentenceIndex(body: HTMLElement): number {
-  const spans = body.querySelectorAll<HTMLElement>("[data-index]");
+  const spans = body.querySelectorAll<HTMLElement>(".sentence[data-index]");
   let lo = 0;
   let hi = spans.length - 1;
   let found = -1;
@@ -2365,7 +2376,7 @@ function elementsBelow(panel: HTMLElement, shift: number, extraBottom: number): 
 }
 
 function visibilityAdjustment(body: HTMLElement, index: number, panel: HTMLElement): number {
-  const first = body.querySelector<HTMLElement>(`[data-index="${index}"]`);
+  const first = body.querySelector<HTMLElement>(`.sentence[data-index="${index}"]`);
   if (!first) return 0;
   const top = firstLineTop(first);
   const bottom = panel.getBoundingClientRect().bottom;

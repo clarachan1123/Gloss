@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import * as storage from "@/lib/storage";
 import * as lineSplit from "./lineSplit";
+import { slicePieces, splitParagraphTail } from "./lineSplit";
 import * as cache from "@/lib/cache";
 import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
@@ -14,7 +15,7 @@ import { loadSavedGlosses, saveExplanation } from "@/lib/storage";
 import { validateAnalyticsEvent } from "@/lib/analytics-events";
 import { markReaderEntry } from "@/lib/analytics-local";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import Reader, { allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+import Reader, { Paragraph, allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
 import { skippedSummary } from "@/lib/parse/validate";
 import type { StoredDocument } from "@/lib/storage";
 import sampleContent from "@/public/samples/shan-yu-e.json";
@@ -841,5 +842,67 @@ describe("G-57 白话悬停与返回入口", () => {
     const css = readFileSync(path.resolve(process.cwd(), "styles/reader.css"), "utf8");
     const rule = css.match(/\.reader-body \.sentence\.sentence-gloss-hover,\s*\.reader-body\.reader-body-sample-breathing \.sentence\.sentence-gloss-hover\s*\{([^}]+)\}/);
     expect(rule?.[1].trim()).toBe("color: var(--hover);");
+  });
+});
+
+
+describe("G-59 行尾占位与尾行", () => {
+  const pieces = [
+    { index: 0, start: 0, text: "甲。”   " },
+    { index: 1, start: 6, text: "乙丙。" },
+    { index: 2, start: 9, text: "丁戊。" },
+  ];
+  const region = (index: number, splitAt: number | null, saved = false): Region => ({
+    index, splitAt, saved, presentation: "inline", actionVisible: false,
+    view: { status: "done", text: "白话", failure: null, instant: true }, explainView: IDLE_EXPLAIN_VIEW,
+  });
+  function render(input: typeof pieces, regions: Region[]) {
+    const host = document.createElement("div");
+    host.innerHTML = renderToString(createElement(Paragraph, {
+      paraIndex: 0, heading: undefined, pieces: input, regions, savedMarkers: [1], panelRef: null,
+      onRetry: () => {}, onBeforeReveal: () => null, onAfterReveal: () => {},
+      onSave: async () => "saved" as const, onExpandSaved: () => {},
+      onExplain: () => {}, onExplainRetry: () => {}, onExplainBlocked: () => {},
+      sentences: [], breatheSentenceIndex: 1,
+    }));
+    return host;
+  }
+  it("句末保留收尾标点、尾空白归尾巴，切片偏移不变", () => {
+    const result = splitParagraphTail(pieces, slicePieces(pieces, 0, 8), [0], 8);
+    expect(result.tail).toEqual([{ index: 0, start: 3, text: "   " }, { index: 1, start: 6, text: "乙丙" }]);
+    expect(result.head.filter((p) => !p.placeholder).map((p) => p.text).join("")).toBe("甲。”");
+  });
+  it("透明占位不带句子标识、呼吸、悬停或白标记", () => {
+    const host = render(pieces, [region(0, 8)]);
+    const placeholder = host.querySelector<HTMLElement>(".reader-tail-placeholder")!;
+    expect(placeholder.getAttribute("aria-hidden")).toBe("true");
+    expect(placeholder.hasAttribute("inert")).toBe(true);
+    expect(host.querySelectorAll('.reader-tail-placeholder.sentence, .reader-tail-placeholder[data-index], .reader-tail-placeholder[data-offset], .reader-tail-placeholder .saved-marker, .reader-tail-placeholder.sentence-breathe, .reader-tail-placeholder.sentence-gloss-hover')).toHaveLength(0);
+  });
+  it("尾行在面板后、续段前；可见片段恰为完整原文", () => {
+    const host = render(pieces, [region(0, 8)]);
+    const line = host.querySelector<HTMLElement>(".reader-tail-line")!;
+    expect(line.previousElementSibling?.classList.contains("gloss-panel")).toBe(true);
+    expect(line.nextElementSibling?.classList.contains("reader-para-cont")).toBe(true);
+    expect(line.querySelector('.sentence[data-index="1"][data-offset="6"]')?.textContent).toBe("乙丙");
+    expect([...host.querySelectorAll(".sentence")].map((p) => p.textContent).join("")).toBe(pieces.map((p) => p.text).join(""));
+  });
+  it("同拆点保存与临时区取最后一句末，只渲染一次尾行", () => {
+    const host = render(pieces, [region(1, 11, true), region(0, 11)]);
+    expect(host.querySelectorAll(".reader-tail-line")).toHaveLength(1);
+    expect(host.querySelector(".reader-tail-line")?.textContent).toBe("丁戊");
+    expect(host.querySelector(".reader-tail-line")?.previousElementSibling?.getAttribute("data-sentence-index")).toBe("1");
+    expect(host.querySelector('p .sentence[data-index="1"]')?.textContent).toBe("乙丙。");
+  });
+  it("末行 null 隐藏剩余文字，面板后尾行，无续段且不强加 justify", () => {
+    const host = render(pieces, [region(1, null)]);
+    expect(host.firstElementChild?.className).toBe("reader-para");
+    expect(host.querySelector(".reader-tail-line")?.textContent).toBe("丁戊。");
+    expect(host.querySelector(".reader-tail-line")?.nextElementSibling).toBeNull();
+    expect(host.querySelector(".reader-para-cont")).toBeNull();
+  });
+  it("零长度或仅空白尾巴不渲染尾行", () => {
+    expect(render(pieces, [region(1, 9)]).querySelector(".reader-tail-line")).toBeNull();
+    expect(render([{ index: 0, start: 0, text: "甲。  " }], [region(0, null)]).querySelector(".reader-tail-line")).toBeNull();
   });
 });

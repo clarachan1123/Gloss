@@ -3,6 +3,7 @@ interface Piece {
   index: number;
   start: number;
   text: string;
+  placeholder?: boolean;
 }
 
 /** 段内切片续排必须取消首段缩进；标题段沿用既有 class 规则。 */
@@ -91,3 +92,25 @@ export function measureSplit(body: HTMLElement, paraIndex: number, index: number
   return null;
 }
 
+
+/** G-59：物理拆点不变，隐藏组内最后一句之后的原行尾，另作尾行显示。
+ * pieces 是未拆分的显示文本；part 是本次插入区前的物理片段。
+ * 无效边界（例如测试替身落在句中）不移动目标句本身。
+ */
+export function splitParagraphTail(
+  pieces: Piece[], part: Piece[], indexes: readonly number[], splitAt: number | null,
+): { head: Piece[]; tail: Piece[] } {
+  const index = Math.max(...indexes);
+  const sentence = pieces.find((piece) => piece.index === index);
+  if (!sentence) return { head: part, tail: [] };
+  const start = sentence.start + sentence.text.trimEnd().length;
+  const end = splitAt ?? paragraphLength(pieces);
+  const tail = slicePieces(pieces, start, end);
+  if (!tail.some((piece) => piece.text.trim() !== "")) return { head: part, tail: [] };
+  const head = part.flatMap((piece) => {
+    const visible = slicePieces([piece], 0, start);
+    const hidden = slicePieces([piece], start, end).map((fragment) => ({ ...fragment, placeholder: true }));
+    return [...visible, ...hidden];
+  });
+  return { head, tail };
+}

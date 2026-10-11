@@ -1,0 +1,14 @@
+.feedback-entry { font-family: var(--font-serif-cjk); font-size: 14px; }
+.feedback-button, .feedback-copy { appearance: none; border: 0; padding: 0; background: transparent; color: var(--gloss); font: inherit; font-size: 14px; line-height: 1; white-space: nowrap; cursor: pointer; }
+.feedback-button:hover, .feedback-copy:hover { color: var(--hover); }
+.feedback-button:focus-visible, .feedback-copy:focus-visible { outline: 1px solid var(--ink); outline-offset: 3px; }
+.feedback-reader { display: block; position: relative; height: 0; }
+.feedback-reader > .feedback-button { position: absolute; right: 0; bottom: 0; }
+.shelf-heading h1 { position: relative; }
+.feedback-shelf { position: absolute; right: 0; top: 50%; transform: translateY(-50%); line-height: 1; }
+.feedback-card { position: fixed; z-index: 50; box-sizing: border-box; width: min(320px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 16px; border: 1px solid var(--rule); background: var(--paper-main); color: var(--ink); font-family: var(--font-serif-cjk); font-size: 14px; line-height: 1.7; }
+.feedback-card p { margin: 0 0 12px; }
+.feedback-card p:last-child { margin-bottom: 0; }
+.feedback-copy { text-decoration: underline; }
+.landing-feedback { margin: 12px 0 0; color: var(--gloss); font-size: 14px; line-height: 1.7; }
+.landing-feedback .feedback-entry { margin-left: 8px; }

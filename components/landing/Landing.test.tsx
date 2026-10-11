@@ -44,7 +44,7 @@ it("G-57 按钮及小字在 DOM 中位于演示之前，窄屏自然顺排，宽
     const demo = host.querySelector(".landing-demonstration")!;
     expect(actions.compareDocumentPosition(demo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(actions.querySelector(".landing-secondary-group small")?.textContent).toBe("支持 docx、txt、文字版 PDF，也可以直接粘贴。");
-    expect([...host.querySelectorAll("a, button")].map((element) => element.textContent)).toEqual(["读一段示例", "导入自己的书", "再看一遍"]);
+    expect([...host.querySelectorAll("a, button")].map((element) => element.textContent)).toEqual(["读一段示例", "导入自己的书", "再看一遍", "提意见"]);
     const { readFileSync } = await import("node:fs");
     const path = await import("node:path");
     const css = readFileSync(path.resolve(process.cwd(), "styles/landing.css"), "utf8");

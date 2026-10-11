@@ -6,6 +6,7 @@ import "../styles/tokens.css";
 import "../styles/reader.css";
 import "../styles/shelf.css";
 import "../styles/landing.css";
+import "../styles/feedback.css";
 
 const cinzel = Cinzel({
   subsets: ["latin"],

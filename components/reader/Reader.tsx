@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import FeedbackButton from "@/components/feedback/FeedbackButton";
 import {
   Fragment,
   memo,
@@ -1143,7 +1144,7 @@ export default function Reader({ docId }: { docId: string }) {
     const onDocumentClick = (event: MouseEvent) => {
       if (hasTextSelection()) return;
       const target = event.target as Element | null;
-      if (target?.closest?.(".sentence, .gloss-panel")) return;
+      if (target?.closest?.(".sentence, .gloss-panel, .feedback-card, .feedback-button")) return;
       dismiss();
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1619,6 +1620,7 @@ export default function Reader({ docId }: { docId: string }) {
       <aside className="col col-left">
         <Link href="/" className="wordmark">Gloss</Link>
         <Link href="/" className="reader-shelf-back" style={{ visibility: hasOwnBooks === null ? "hidden" : "visible" }}>{hasOwnBooks ? "← 回到书架" : "← 回到首页"}</Link>
+        <FeedbackButton placement="reader" />
 
         <div className="mode-switch" role="group" aria-label="白话阅读模式">
           <button

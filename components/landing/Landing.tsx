@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import FeedbackButton from "@/components/feedback/FeedbackButton";
 import { useEffect, useState, type RefObject } from "react";
 import { emitAnalytics } from "@/lib/analytics-events";
 import { enqueueAnalytics, markReaderEntry } from "@/lib/analytics-local";
@@ -64,6 +65,7 @@ export default function Landing({ onImport, importButtonRef }: {
           </div>
         </section>
         <p className="landing-supplement">{COPY.supplement}</p>
+        <p className="landing-feedback">测试版，很需要你的意见。<FeedbackButton /></p>
       </div>
     </main>
   );

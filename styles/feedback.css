@@ -2,7 +2,7 @@
 .feedback-button, .feedback-send { appearance: none; border: 0; padding: 6px 10px; background: var(--ink); color: var(--paper-main); font: inherit; font-size: 14px; line-height: 1; white-space: nowrap; cursor: pointer; }
 .feedback-button:hover, .feedback-send:hover:not(:disabled) { background: var(--gloss); color: var(--paper-main); }
 .feedback-button:focus-visible, .feedback-send:focus-visible, .feedback-copy:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-.feedback-send:disabled { cursor: default; }
+.feedback-send:disabled { cursor: default; opacity: 0.45; }
 .feedback-reader { display: block; position: relative; height: 0; }
 .feedback-reader > .feedback-button { position: absolute; right: 0; top: 8px; }
 .feedback-reader + .mode-switch { width: max-content; margin-top: 48px; }

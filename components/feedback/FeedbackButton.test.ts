@@ -208,3 +208,12 @@ it("15秒无响应显示失败并保留草稿，不自动重试", async () => {
   expect(dialog()!.textContent).toContain("没发出去，可以稍后再试，或加微信 Claraiing");
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+
+it("发送按钮禁用样式包含 opacity: 0.45", async () => {
+  const { readFileSync } = await import("node:fs");
+  const path = await import("node:path");
+  const css = readFileSync(path.resolve(process.cwd(), "styles/feedback.css"), "utf8");
+  const rule = /\.feedback-send:disabled\s*\{([^}]*)\}/.exec(css);
+  expect(rule).not.toBeNull();
+  expect(rule![1]).toMatch(/(?:^|;)\s*opacity:\s*0\.45\s*;/);
+});

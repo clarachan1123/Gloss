@@ -227,6 +227,7 @@ export default function Reader({ docId }: { docId: string }) {
   const [hasOwnBooks, setHasOwnBooks] = useState<boolean | null>(null);
   const bodyRef = useRef<HTMLElement>(null);
   const hoveredGlossRef = useRef<HTMLElement | null>(null);
+  const hoveredSentenceRef = useRef<number | null>(null);
 
   useEffect(() => {
     try {
@@ -263,6 +264,48 @@ export default function Reader({ docId }: { docId: string }) {
     if (panel && event.relatedTarget instanceof Node && panel.contains(event.relatedTarget)) return;
     clearGlossHover();
   }
+  const clearSentenceHover = useCallback(() => {
+    hoveredSentenceRef.current = null;
+    bodyRef.current?.querySelectorAll(".sentence.sentence-hover").forEach((sentence) => {
+      sentence.classList.remove("sentence-hover");
+    });
+  }, []);
+
+  const syncSentenceHover = useCallback(() => {
+    const body = bodyRef.current;
+    const index = hoveredSentenceRef.current;
+    if (!body || index === null) return;
+    body.querySelectorAll<HTMLElement>(".sentence.sentence-hover").forEach((sentence) => {
+      if (sentence.dataset.index !== String(index)) sentence.classList.remove("sentence-hover");
+    });
+    body.querySelectorAll(`.sentence[data-index="${index}"]`).forEach((sentence) => {
+      sentence.classList.add("sentence-hover");
+    });
+  }, []);
+
+  function handleSentencePointerOver(event: ReactPointerEvent<HTMLElement>) {
+    if (event.pointerType !== "mouse" || !(event.target instanceof Element)) return;
+    const target = event.target.closest<HTMLElement>(".sentence[data-index]");
+    if (!target || !event.currentTarget.contains(target)) return;
+    const index = Number(target.dataset.index);
+    if (!Number.isInteger(index) || index < 0) return;
+    if (hoveredSentenceRef.current !== index) clearSentenceHover();
+    hoveredSentenceRef.current = index;
+    syncSentenceHover();
+  }
+
+  function handleSentencePointerOut(event: ReactPointerEvent<HTMLElement>) {
+    if (event.pointerType !== "mouse") return;
+    const next = event.relatedTarget instanceof Element
+      ? event.relatedTarget.closest<HTMLElement>(".sentence[data-index]") : null;
+    if (next && event.currentTarget.contains(next) && next.dataset.index === String(hoveredSentenceRef.current)) return;
+    clearSentenceHover();
+  }
+
+  // React may replace sentence fragments while the mouse stays over the same sentence.
+  useLayoutEffect(() => { syncSentenceHover(); });
+  useLayoutEffect(() => () => clearSentenceHover(), [docId, clearSentenceHover]);
+
   const panelRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<ReaderContextMenu | null>(null);
   const suppressOutsideClickRef = useRef(false);
@@ -500,13 +543,15 @@ export default function Reader({ docId }: { docId: string }) {
     const observer = new MutationObserver(() => {
       const panel = hoveredGlossRef.current;
       if (panel && !body.contains(panel)) clearGlossHover();
+      syncSentenceHover();
     });
     observer.observe(body, { childList: true, subtree: true });
     return () => {
       observer.disconnect();
       clearGlossHover();
+      clearSentenceHover();
     };
-  }, [doc, clearGlossHover]);
+  }, [doc, docId, clearGlossHover, clearSentenceHover, syncSentenceHover]);
   const headingsAvailable = state.status === "ready" && state.headingsAvailable;
   const savedGlosses = state.status === "ready" ? state.savedGlosses : EMPTY_SAVED_GLOSSES;
 
@@ -1675,9 +1720,13 @@ export default function Reader({ docId }: { docId: string }) {
             className={`reader-body${measuringSavedLayout ? " reader-body-measuring" : ""}${sample && !sampleBreathed ? " reader-body-sample-breathing" : ""}`}
             lang="zh-CN"
             onClick={handleBodyClick}
-            onPointerOver={handleGlossPointerOver}
-            onPointerOut={handleGlossPointerOut}
-            onPointerLeave={clearGlossHover}
+            onPointerOver={(event) => { handleGlossPointerOver(event); handleSentencePointerOver(event); }}
+            onPointerOut={(event) => { handleGlossPointerOut(event); handleSentencePointerOut(event); }}
+            onPointerLeave={(event) => {
+              if (event.pointerType !== "mouse") return;
+              clearGlossHover();
+              clearSentenceHover();
+            }}
             onContextMenu={handleReaderContextMenu}
           >
             {doc.paragraphs.map((_, paraIndex) => {

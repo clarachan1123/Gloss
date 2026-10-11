@@ -838,6 +838,87 @@ describe("G-57 白话悬停与返回入口", () => {
     expectActive(false);
   });
 
+  async function mountSentenceHoverDocument(docId: string) {
+    vi.mocked(lineSplit.measureSplit).mockReturnValue(4);
+    localStorage.setItem(`gloss:doc:${docId}`, JSON.stringify({
+      version: 1, docId, paragraphs: ["甲乙。丙丁。"], headings: [], footnotes: [],
+      meta: { format: "txt", fileName: "悬停测试.txt", charCount: 6 }, savedAt: 1,
+    }));
+    return mount(docId);
+  }
+
+  it("G-59 任一片段悬停使整句变色，同句移动不闪，移出清除，占位不参与", async () => {
+    const host = await mountSentenceHoverDocument("g59-sentence-hover");
+    await act(async () => { host.querySelector<HTMLElement>('.sentence[data-index="0"]')!.click(); });
+    await flush();
+    const pieces = [...host.querySelectorAll<HTMLElement>('.sentence[data-index="1"]')];
+    expect(pieces).toHaveLength(2);
+    const expectHover = (active: boolean) => expect(pieces.every(p => p.classList.contains("sentence-hover") === active)).toBe(true);
+    await pointer(pieces[0], "pointerover");
+    expectHover(true);
+    await pointer(pieces[0], "pointerout", "mouse", pieces[1]);
+    expectHover(true);
+    await pointer(pieces[1], "pointerover", "mouse", pieces[0]);
+    expectHover(true);
+    expect(host.querySelectorAll(".reader-tail-placeholder.sentence-hover")).toHaveLength(0);
+    await pointer(pieces[1], "pointerout", "mouse", host.querySelector('.sentence[data-index="0"]'));
+    expectHover(false);
+    await pointer(host.querySelector(".reader-tail-placeholder")!, "pointerover");
+    expectHover(false);
+    expect(host.querySelectorAll(".reader-tail-placeholder.sentence-hover")).toHaveLength(0);
+  });
+
+  it("G-59 touch 与 pen 不触发句子整句悬停", async () => {
+    const host = await mountSentenceHoverDocument("g59-touch-hover");
+    const sentence = host.querySelector('.sentence[data-index="1"]')!;
+    await pointer(sentence, "pointerover", "touch");
+    expect(host.querySelectorAll(".sentence-hover")).toHaveLength(0);
+    await pointer(sentence, "pointerover", "pen");
+    expect(host.querySelectorAll(".sentence-hover")).toHaveLength(0);
+  });
+
+  it("G-59 撑开和收起后新片段保持整句悬停，换书与卸载清理", async () => {
+    const host = await mountSentenceHoverDocument("g59-repartition-hover");
+    await pointer(host.querySelector('.sentence[data-index="1"]')!, "pointerover");
+    await act(async () => { host.querySelector<HTMLElement>('.sentence[data-index="0"]')!.click(); });
+    await flush();
+    let pieces = [...host.querySelectorAll('.sentence[data-index="1"]')];
+    expect(pieces).toHaveLength(2);
+    expect(pieces.every(p => p.classList.contains("sentence-hover"))).toBe(true);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await new Promise(resolve => setTimeout(resolve, 250));
+    });
+    await flush();
+    pieces = [...host.querySelectorAll('.sentence[data-index="1"]')];
+    expect(pieces).toHaveLength(1);
+    expect(pieces[0].classList.contains("sentence-hover")).toBe(true);
+    localStorage.setItem("gloss:doc:g59-hover-next-book", JSON.stringify({
+      version: 1, docId: "g59-hover-next-book", paragraphs: ["新书原文。"], headings: [], footnotes: [],
+      meta: { format: "txt", fileName: "另一本.txt", charCount: 5 }, savedAt: 1,
+    }));
+    const record = mounted.find(record => record.host === host)!;
+    await act(async () => { record.root.render(createElement(Reader, { docId: "g59-hover-next-book" })); });
+    await flush();
+    expect(host.querySelectorAll(".sentence-hover")).toHaveLength(0);
+    await pointer(host.querySelector(".sentence")!, "pointerover");
+    expect(host.querySelectorAll(".sentence-hover")).toHaveLength(1);
+    await act(async () => { record.root.unmount(); });
+    mounted.splice(mounted.indexOf(record), 1);
+    host.remove();
+    expect(document.querySelectorAll(".sentence-hover")).toHaveLength(0);
+  });
+
+  it("G-59 sentence-hover 只声明颜色并保留呼吸态优先级，没有正文单片段 hover", () => {
+    const css = readFileSync(path.resolve(process.cwd(), "styles/reader.css"), "utf8");
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]+)\}/g)].filter(rule => rule[1].includes("sentence-hover"));
+    expect(rules).toHaveLength(2);
+    expect(rules.every(rule => rule[2].trim() === "color: var(--hover);")).toBe(true);
+    expect(css).not.toMatch(/\.sentence(?:-breathe)?:hover/);
+    expect(css).toContain(".reader-body-sample-breathing .sentence:not(.sentence-breathe).sentence-hover");
+    expect(css).toContain(".reader-body-sample-breathing .sentence-breathe.sentence-hover");
+  });
+
   it("新增悬停规则只声明颜色并覆盖示例呼吸态", () => {
     const css = readFileSync(path.resolve(process.cwd(), "styles/reader.css"), "utf8");
     const rule = css.match(/\.reader-body \.sentence\.sentence-gloss-hover,\s*\.reader-body\.reader-body-sample-breathing \.sentence\.sentence-gloss-hover\s*\{([^}]+)\}/);

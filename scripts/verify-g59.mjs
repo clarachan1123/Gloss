@@ -93,7 +93,12 @@ async function assertSinglePage(browserCdp, testTargetId, label) {
 
 // Each width and each landing run gets a fresh profile; all coordinates are page coordinates.
 const WIDTHS = [375, 506, 768, 1024, 1280];
+const HOVER_DIAGNOSTIC = process.argv.includes("--diagnose-hover");
+const DIAGNOSTIC_TAIL = process.argv.includes("--diagnose-tail");
+const DIAGNOSTIC_BREATH_STOPPED = process.argv.includes("--diagnose-breath-stopped");
+const HOVER_PROBE_ONLY = process.argv.includes("--probe-hover-375") || HOVER_DIAGNOSTIC;
 const browserSource = `
+${DIAGNOSTIC_BREATH_STOPPED ? `localStorage.setItem("gloss:sample:breathed", "1");` : ""}
 window.__g59 = {events: [], hidden: document.hidden, landingBefore: null};
 addEventListener('gloss:analytics', e => window.__g59.events.push(e.detail));
 addEventListener('visibilitychange', () => { if(document.hidden) window.__g59.hidden = true; });
@@ -118,7 +123,7 @@ window.__g59.snapshot = function(selector) {
     }
   }
   return {chars, panels:[...scope.querySelectorAll('.gloss-panel')].map(p=>({index:Number(p.dataset.sentenceIndex),bottom:p.getBoundingClientRect().bottom+scrollY})),
-    placeholders:[...scope.querySelectorAll('.reader-tail-placeholder')].map(p=>({text:p.textContent,valid:p.getAttribute('aria-hidden')==='true'&&p.hasAttribute('inert')&&!p.matches('.sentence,[data-index],[data-offset],.sentence-breathe,.sentence-gloss-hover')}))};
+    placeholders:[...scope.querySelectorAll('.reader-tail-placeholder')].map(p=>({text:p.textContent,valid:p.getAttribute('aria-hidden')==='true'&&p.hasAttribute('inert')&&!p.matches('.sentence,[data-index],[data-offset],.sentence-breathe,.sentence-gloss-hover,.sentence-hover')}))};
 };
 (function watchLanding(){
   const scope=document.querySelector('.landing-demo-visible');
@@ -180,6 +185,105 @@ async function clickSentence(cdp,index,selector='.reader-body .sentence'){
   await cdp.evaluate(`(()=>{const s=document.querySelector(${JSON.stringify(selector)}+'[data-index="${index}"]');if(!s)throw new Error('Missing sentence');s.scrollIntoView({block:'center',behavior:'instant'});s.click();})()`,false,'click:sentence');
   await waitForValue(()=>cdp.evaluate(`!!document.querySelector('.reader-body .gloss-panel[data-sentence-index="${index}"][data-state="done"]')`,false,'wait:complete'),'complete gloss');await settled(cdp);
 }
+// Move the real mouse over each source and tail fragment; check color and all page coordinates.
+async function checkSentenceHover(cdp, width, index) {
+  const targets = await cdp.evaluate(`(()=>{
+    const body=document.querySelector('.reader-body');
+    const upper=[...body.querySelectorAll('.sentence[data-index="${index}"]')].filter(span=>!span.closest('.reader-tail-line'));
+    const tail=[...body.querySelectorAll('.reader-tail-line .sentence')];
+    return [...upper,...tail].filter(span=>span.textContent.trim()).map(span=>({index:Number(span.dataset.index),offset:Number(span.dataset.offset),kind:span.closest('.reader-tail-line')?'tail':'upper'}));
+  })()`,false,'hover:targets');
+  if(!targets.some(target=>target.kind==='upper') || !targets.some(target=>target.kind==='tail'))fail('hover',width,index,'fragment',null,null,'missing source or tail hover target');
+  let maxX=0,maxY=0;
+  for(const target of HOVER_DIAGNOSTIC ? targets.filter(target=>target.kind===(DIAGNOSTIC_TAIL?"tail":"upper")).slice(0,1) : targets){
+    const point=await cdp.evaluate(`(()=>{
+      const span=document.querySelector('.reader-body .sentence[data-index="${target.index}"][data-offset="${target.offset}"]');
+      if(!span)throw new Error('Missing hover fragment');
+      span.scrollIntoView({block:'center',behavior:'instant'});
+      const node=span.firstChild;
+      for(let offset=0;offset<node.length;offset++){
+        if(!node.data[offset].trim())continue;
+        const range=document.createRange();range.setStart(node,offset);range.setEnd(node,offset+1);
+        const rect=range.getBoundingClientRect();
+        if(rect.width>0&&rect.top>=0&&rect.bottom<=innerHeight)return{x:rect.left+rect.width/2,y:rect.top+rect.height/2};
+      }
+      throw new Error('No visible hover character');
+    })()`,false,'hover:point');
+    await settled(cdp);
+    const before=await snap(cdp);
+    const restingColors=DIAGNOSTIC_BREATH_STOPPED?await cdp.evaluate(`([...document.querySelectorAll('.reader-body .sentence[data-index="${target.index}"]')].map(span=>getComputedStyle(span).color))`,false,'hover:resting-colors'):null;
+    if(HOVER_DIAGNOSTIC)await cdp.evaluate(`(()=>{
+      const span=document.querySelector('.reader-body .sentence[data-index="${target.index}"][data-offset="${target.offset}"]');
+      const fragments=[...document.querySelectorAll('.reader-body .sentence[data-index="${target.index}"]')];
+      const records={classChanges:0,frames:0,differentFrames:0,afterEntryDifferentFrames:0,enteredHover:false,differentColors:[],transitions:[]};
+      const observer=new MutationObserver(changes=>{records.classChanges+=changes.length;});
+      for(const fragment of fragments)observer.observe(fragment,{attributes:true,attributeFilter:['class']});
+      window.__g59.hoverDiagnostic=new Promise(resolve=>{
+        span.addEventListener('pointerover',()=>{
+          const started=performance.now();
+          const running=()=>span.getAnimations().filter(animation=>animation instanceof CSSTransition&&animation.transitionProperty==='color'&&animation.playState==='running');
+          const sampleTransitions=()=>records.transitions.push({elapsedMs:Math.round(performance.now()-started),startTimes:running().map(animation=>animation.startTime)});
+          sampleTransitions();const interval=setInterval(sampleTransitions,100);
+          function frame(){
+            if(performance.now()-started>=1500){
+              clearInterval(interval);sampleTransitions();records.classChanges+=observer.takeRecords().length;observer.disconnect();
+              records.durationMs=performance.now()-started;resolve(records);return;
+            }
+            const color=getComputedStyle(span).color;records.frames++;
+            if(color==='rgb(31, 78, 117)')records.enteredHover=true;
+            if(color!=='rgb(31, 78, 117)'){records.differentFrames++;if(records.enteredHover)records.afterEntryDifferentFrames++;if(!records.differentColors.includes(color)&&records.differentColors.length<5)records.differentColors.push(color);}
+            requestAnimationFrame(frame);
+          }
+          requestAnimationFrame(frame);
+        },{once:true,capture:true});
+      });
+    })()`,false,'diagnostic:hover-install');
+    await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x,y:point.y},'hover:real-mouse');
+    if(HOVER_DIAGNOSTIC){
+      const diagnostic=await cdp.evaluate('window.__g59.hoverDiagnostic',true,'diagnostic:hover-1500ms');
+      console.log(JSON.stringify({diagnostic:'hover',condition:DIAGNOSTIC_BREATH_STOPPED?'breathing stopped':'normal breathing',width,index,hoveredIndex:target.index,kind:target.kind,...diagnostic}));
+      return {checks:1,maxX:0,maxY:0};
+    }
+    const colors=await cdp.evaluate(`new Promise(resolve=>{
+      const started=performance.now();let finished=false,consecutive=0,stableAt=null,entered=false,deviations=0;
+      const fragments=()=>[...document.querySelectorAll('.reader-body .sentence[data-index="${target.index}"]')].filter(span=>getComputedStyle(span).visibility==='visible');
+      const probe=document.createElement('span');probe.style.color='var(--hover)';probe.style.position='absolute';probe.style.pointerEvents='none';document.body.append(probe);
+      const expected=getComputedStyle(probe).color;probe.remove();
+      const timer=setTimeout(()=>finish(true),1500);
+      function finish(timedOut){
+        if(finished)return;finished=true;clearTimeout(timer);
+        resolve({expected,timedOut,deviations,consecutive,waitMs:performance.now()-started,fragments:fragments().map(span=>({color:getComputedStyle(span).color,active:span.classList.contains('sentence-hover')})),placeholderHover:document.querySelectorAll('.reader-tail-placeholder.sentence-hover').length});
+      }
+      function check(){
+        if(finished)return;
+        const spans=fragments(),matches=spans.length>0&&spans.every(span=>getComputedStyle(span).color===expected);
+        if(matches){entered=true;consecutive++;if(consecutive===10)stableAt=performance.now();}
+        else{if(entered){deviations++;finish(false);return;}consecutive=0;}
+        if(stableAt!==null&&performance.now()-stableAt>=500){finish(false);return;}
+        requestAnimationFrame(check);
+      }
+      requestAnimationFrame(check);
+    })`,true,'hover:stable-color');
+    if(colors.timedOut||colors.deviations)fail('hover-stability',width,index,String(target.index),null,null,JSON.stringify(colors));
+    if(!colors.fragments.length || colors.fragments.some(fragment=>fragment.color!==colors.expected||!fragment.active)||colors.placeholderHover)fail('hover-color',width,index,String(target.index),null,null,JSON.stringify(colors));
+    const after=await snap(cdp), byKey=new Map(after.chars.map(char=>[char.key,char]));
+    for(const char of before.chars){
+      const next=byKey.get(char.key);if(!next)fail('hover-layout',width,index,char.char,null,null,'character disappeared');
+      const dx=next.x-char.x,dy=next.y-char.y;maxX=Math.max(maxX,Math.abs(dx));maxY=Math.max(maxY,Math.abs(dy));
+      if(Math.abs(dx)>=0.5||Math.abs(dy)>=0.5)fail('hover-layout',width,index,char.char,dx,dy,char.key);
+    }
+    console.log(JSON.stringify({width,index,hover:target.kind,hoveredIndex:target.index,fragmentCount:colors.fragments.length,color:colors.expected,maxAbsDeltaX:maxX,maxAbsDeltaY:maxY}));
+    if(restingColors){
+      await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0},'hover:leave-stopped');await settled(cdp);
+      const restored=await cdp.evaluate(`([...document.querySelectorAll('.reader-body .sentence[data-index="${target.index}"]')].map(span=>getComputedStyle(span).color))`,false,'hover:restored-colors');
+      if(JSON.stringify(restored)!==JSON.stringify(restingColors))fail('hover-restored-color',width,index,String(target.index),null,null,JSON.stringify({restingColors,restored}));
+    }
+  }
+  await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0},'hover:leave');
+  await settled(cdp);
+  if(await cdp.evaluate("document.querySelectorAll('.reader-body .sentence-hover').length",false,'hover:cleared'))fail('hover-clear',width,index,'sentence-hover',null,null,'hover not cleared');
+  return {checks:targets.length,maxX,maxY};
+}
 async function clickButton(cdp,scope,label){
   await cdp.evaluate(`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(scope)}+' button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw new Error('Missing enabled button '+${JSON.stringify(label)});b.click();})()`,false,'click:button:'+label);await settled(cdp);
 }
@@ -190,14 +294,31 @@ async function gutterMetrics(cdp) {
 async function runReader(cdp,width){
   await navigate(cdp,ORIGIN+'/read/sample');
   await readyReader(cdp);
-  let totalX=0,totalY=0,noTail=0;
+  if(HOVER_DIAGNOSTIC && !DIAGNOSTIC_BREATH_STOPPED){
+    const breathing=await cdp.evaluate(`new Promise(resolve=>{
+      const span=document.querySelector('.sentence-breathe');
+      const body=document.querySelector('.reader-body');
+      const animation=body.getAnimations().find(animation=>animation.animationName==='sample-sentence-breathe');
+      if(!span||!animation)throw new Error('Missing sample breathing animation');
+      animation.currentTime=0;
+      const colors=[];let count=0;
+      const timer=setInterval(()=>{colors.push(getComputedStyle(span).color);if(++count===10){clearInterval(timer);resolve({colors,nonBreathing:[...body.querySelectorAll('.sentence:not(.sentence-breathe)')].map(span=>({index:span.dataset.index,color:getComputedStyle(span).color})),animationName:animation.animationName,keyframes:animation.effect.getKeyframes()});}},300);
+    })`,true,'diagnostic:breathing-colors');
+    console.log(JSON.stringify({diagnostic:'breathing',...breathing}));
+  }
+  let totalX=0,totalY=0,noTail=0,hoverChecks=0,hoverMaxX=0,hoverMaxY=0;
   const baselines=[];
-  for(let index=0;index<12;index++){
+  for(let index=0;index<(HOVER_PROBE_ONLY?1:12);index++){
     const before=await snap(cdp);baselines.push(before);
     const gutterBefore=width===1024&&index===0 ? await gutterMetrics(cdp) : null;
     await clickSentence(cdp,index);
     if(gutterBefore) console.log(JSON.stringify({diagnostic:'gutter',width,index,before:gutterBefore,after:await gutterMetrics(cdp)}));
     const result=compare(before,await snap(cdp),index,width);
+    if(!result.noTail){
+      const hover=await checkSentenceHover(cdp,width,index);
+      hoverChecks+=hover.checks;hoverMaxX=Math.max(hoverMaxX,hover.maxX);hoverMaxY=Math.max(hoverMaxY,hover.maxY);
+      if(HOVER_PROBE_ONLY)return;
+    }
     await cdp.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))",false,'collapse:escape');await settled(cdp);
     if(await cdp.evaluate("!!document.querySelector('.gloss-panel')",false,'collapse:check'))throw new Error('Panel still mounted after collapse');
     const closed=compare(before,await snap(cdp),index,width,'closed');
@@ -242,7 +363,7 @@ async function runReader(cdp,width){
   await waitForValue(()=>cdp.evaluate(`!!document.querySelector('.gloss-panel[data-sentence-index="${tailIndex}"][data-state="done"]')`,false,'tail:complete'),'tail gloss');await settled(cdp);
   const events=await cdp.evaluate('window.__g59.events',false,'tail:events');
   if(!events.some(e=>e.event==='sentence_click'&&e.sentenceIndex===tailIndex))fail('analytics',width,tailIndex,'tail first character',null,null,'sentence_click index mismatch');
-  console.log(JSON.stringify({width,maxAbsDeltaX:totalX,maxAbsDeltaY:totalY,noTailCount:noTail,savedRefresh:true,review:true,bubble:true,sameSplitPair:pair,selection:tailText.trim()?'passed':'无尾巴',tailClickIndex:tailIndex}));
+  console.log(JSON.stringify({width,maxAbsDeltaX:totalX,maxAbsDeltaY:totalY,noTailCount:noTail,hoverChecks,hoverMaxAbsDeltaX:hoverMaxX,hoverMaxAbsDeltaY:hoverMaxY,savedRefresh:true,review:true,bubble:true,sameSplitPair:pair,selection:tailText.trim()?'passed':'无尾巴',tailClickIndex:tailIndex}));
 }
 async function runLanding(cdp,width){
   await navigate(cdp,ORIGIN+'/');
@@ -296,7 +417,12 @@ async function runBrowser(width,landing){
     await rm(resolved,{recursive:true,force:true}).catch(error=>console.warn('Profile cleanup: '+error.code));
   }
 }
-for(const width of WIDTHS)await runBrowser(width,false);
-for(const width of WIDTHS)await runBrowser(width,true);
-console.log('Ctrl+F 未验证（待 Claude 在预览站人工核）');
-console.log('G-59 layout checks passed');
+if(HOVER_PROBE_ONLY){
+  await runBrowser(375,false);
+  console.log('G-59 hover probe passed');
+}else{
+  for(const width of WIDTHS)await runBrowser(width,false);
+  for(const width of WIDTHS)await runBrowser(width,true);
+  console.log('Ctrl+F 未验证（待 Claude 在预览站人工核）');
+  console.log('G-59 layout checks passed');
+}

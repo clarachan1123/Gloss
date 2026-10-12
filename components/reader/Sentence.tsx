@@ -12,15 +12,17 @@ export interface SentenceProps {
   text: string;
   /** 只标记随书指定的引导句；真正的动画开关在共同祖先上。 */
   breathe?: boolean;
+  /** 收起状态下已留下且未展开的句子；每个真实片段都标记。 */
+  savedCollapsed?: boolean;
 }
 
 /**
  * 单个句子（或被行尾拆分切开的句子片段）。
- * D13：点击前后不改任何 class / style。hover 变色由 CSS 负责，撑开状态由 GlossPanel 承担。
+ * hover 变色由 CSS 负责；留下状态的下划线只作装饰，不改变字符排版。
  */
-export default function Sentence({ index, offset, text, breathe = false }: SentenceProps) {
+export default function Sentence({ index, offset, text, breathe = false, savedCollapsed = false }: SentenceProps) {
   return (
-    <span className={breathe ? "sentence sentence-breathe" : "sentence"} data-index={index} data-offset={offset}>
+    <span className={`sentence${breathe ? " sentence-breathe" : ""}${savedCollapsed ? " sentence-saved-collapsed" : ""}`} data-index={index} data-offset={offset}>
       {text}
     </span>
   );

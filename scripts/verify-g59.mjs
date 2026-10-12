@@ -329,7 +329,7 @@ async function runReader(cdp,width){
   await clickSentence(cdp,10);await clickButton(cdp,'.gloss-panel[data-sentence-index="10"]','留下');
   await reload(cdp);await clickSentence(cdp,10);
   compare(baselines[10],await snap(cdp),10,width);
-  await clickButton(cdp,'.mode-switch','复习态');compare(baselines[10],await snap(cdp),10,width);
+  await clickButton(cdp,'.mode-switch','收起');await clickButton(cdp,'.mode-switch','显示');compare(baselines[10],await snap(cdp),10,width);
   await clickButton(cdp,'[aria-label="白话显示形态"]','气泡');compare(baselines[10],await snap(cdp),10,width);
   const b=boundary(baselines[10],10);
   const tailText=baselines[10].chars.filter(c=>c.para===b.para&&c.offset>=b.end&&c.offset<(b.split??b.paraEnd)).map(c=>c.char).join('');
@@ -347,7 +347,7 @@ async function runReader(cdp,width){
   }
   if(!pair)throw new Error('No same-split pair at width '+width);
   await clickSentence(cdp,pair[0]);await clickButton(cdp,`.gloss-panel[data-sentence-index="${pair[0]}"]`,'留下');
-  await clickButton(cdp,'.mode-switch','复习态');await clickSentence(cdp,pair[1]);
+  await clickButton(cdp,'.mode-switch','收起');await clickButton(cdp,'.mode-switch','显示');await clickSentence(cdp,pair[1]);
   const mixed=await snap(cdp);compare(original,mixed,pair[1],width);
   const group=boundary(original,pair[1]);
   const lineCount=await cdp.evaluate(`document.querySelectorAll('[data-para="${group.para}"].reader-tail-line').length`,false,'group:tail-line-count');

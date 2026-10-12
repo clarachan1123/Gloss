@@ -33,8 +33,8 @@ export default function ActionRow({
     setPending(true);
     const result = await onToggle();
     setPending(false);
-    if (result === "E1") setNotice("存储已满，当前白话仍可继续阅读。");
-    if (result === "E2") setNotice("当前模式下无法保存，白话仍可继续阅读。");
+    if (result === "E1") setNotice("存储已满，没能留下这句白话，仍可继续阅读。");
+    if (result === "E2") setNotice("这次没能留下这句白话，仍可继续阅读。");
   }
 
   return (
@@ -48,7 +48,7 @@ export default function ActionRow({
         }}
         disabled={disabled || pending}
       >
-        {saved ? "已留下" : "留下"}
+        {saved ? "取消留下" : "留下"}
       </button>
       <button
         type="button"

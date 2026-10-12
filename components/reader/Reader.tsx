@@ -191,9 +191,10 @@ export function readGlossShape(): GlossShape {
 
 export function readReadingMode(): ReadingMode {
   try {
-    return globalThis.localStorage?.getItem(READING_MODE_KEY) === "review" ? "review" : "reading";
+    const value = globalThis.localStorage?.getItem(READING_MODE_KEY);
+    return value === "reading" || value === "review" ? value : "review";
   } catch {
-    return "reading";
+    return "review";
   }
 }
 
@@ -220,7 +221,7 @@ export default function Reader({ docId }: { docId: string }) {
   const [activeSavedIndex, setActiveSavedIndex] = useState<number | null>(null);
   const [expandedSavedIndex, setExpandedSavedIndex] = useState<number | null>(null);
   const [glossShape, setGlossShape] = useState<GlossShape>("inline");
-  const [readingMode, setReadingMode] = useState<ReadingMode>("reading");
+  const [readingMode, setReadingMode] = useState<ReadingMode>("review");
   const [contextMenu, setContextMenu] = useState<ReaderContextMenu | null>(null);
   const [reportedIndexes, setReportedIndexes] = useState<ReadonlySet<number>>(() => new Set());
   const [reportPendingIndex, setReportPendingIndex] = useState<number | null>(null);
@@ -1586,15 +1587,12 @@ export default function Reader({ docId }: { docId: string }) {
     try {
       globalThis.localStorage?.setItem(READING_MODE_KEY, next);
     } catch {
-      // 设置写入失败不妨碍本次阅读；下次仍回退默认阅读模式。
+      // 设置写入失败不妨碍本次阅读；下次仍回退默认显示模式。
     }
     setActiveSavedIndex(null);
     setExpandedSavedIndex(null);
     setReadingMode(next);
   }, [readingMode]);
-  const expandSavedFromMarker = useCallback((index: number) => {
-    expandSaved(index);
-  }, []);
   const jumpToSaved = useCallback((index: number) => {
     const body = bodyRef.current;
     if (!body) return;
@@ -1623,23 +1621,18 @@ export default function Reader({ docId }: { docId: string }) {
         <Link href="/" className="reader-shelf-back" style={{ visibility: hasOwnBooks === null ? "hidden" : "visible" }}>{hasOwnBooks ? "← 回到书架" : "← 回到首页"}</Link>
         <FeedbackButton placement="reader" />
 
-        <div className="mode-switch" role="group" aria-label="白话阅读模式">
-          <button
-            type="button"
-            className="mode-option"
-            aria-pressed={readingMode === "reading"}
-            onClick={() => changeReadingMode("reading")}
-          >
-            阅读态
-          </button>
-          <button
-            type="button"
-            className="mode-option"
-            aria-pressed={readingMode === "review"}
-            onClick={() => changeReadingMode("review")}
-          >
-            复习态
-          </button>
+        <div className="mode-switch" role="group" aria-label="留下的白话显示设置">
+          <span className="mode-label">留下的白话</span>
+          <div className="mode-options">
+            <button type="button" className="mode-option" aria-pressed={readingMode === "review"}
+              onClick={() => changeReadingMode("review")}>
+              显示
+            </button>
+            <button type="button" className="mode-option" aria-pressed={readingMode === "reading"}
+              onClick={() => changeReadingMode("reading")}>
+              收起
+            </button>
+          </div>
         </div>
 
         {doc && (
@@ -1678,10 +1671,10 @@ export default function Reader({ docId }: { docId: string }) {
 
         <section className="side-section" aria-labelledby="saved-title">
           <h2 id="saved-title" className="side-title">
-            本文沉淀
+            留下的白话
           </h2>
           {savedGlosses.size === 0 ? (
-            <p className="side-empty">还没有保存的白话</p>
+            <p className="side-empty">点白话下面的「留下」，这句白话就固定下来，不会再变，并收在这里。</p>
           ) : (
             <ol className="saved-list">
               {[...savedGlosses.entries()].sort(([a], [b]) => a - b).map(([index, saved]) => (
@@ -1749,7 +1742,6 @@ export default function Reader({ docId }: { docId: string }) {
                   onBeforeReveal={capturePanelGrowth}
                   onAfterReveal={restorePanelGrowth}
                   onSave={toggleSavedGlossFor}
-                  onExpandSaved={expandSavedFromMarker}
                   onExplain={explainFromActionRow}
                   onExplainRetry={retryExplainFor}
                   onExplainBlocked={recordExplainBlocked}
@@ -1982,7 +1974,6 @@ interface ParagraphProps {
   onBeforeReveal: (index: number) => CharAnchor | null;
   onAfterReveal: (anchor: CharAnchor | null) => void;
   onSave: (index: number) => Promise<"saved" | "removed" | StorageErrorCode>;
-  onExpandSaved: (index: number) => void;
   onExplain: (index: number) => void;
   onExplainRetry: (index: number) => void;
   onExplainBlocked: (index: number) => void;
@@ -2122,7 +2113,6 @@ export const Paragraph = memo(function Paragraph({
   onBeforeReveal,
   onAfterReveal,
   onSave,
-  onExpandSaved,
   onExplain,
   onExplainRetry,
   onExplainBlocked,
@@ -2132,12 +2122,11 @@ export const Paragraph = memo(function Paragraph({
   const Tag: ElementType = heading ? HEADING_TAGS[Math.min(Math.max(heading.level, 1), 6) - 1] : "p";
   const className = heading ? "reader-heading" : "reader-para";
   const markerIndexes = new Set(savedMarkers);
-  const pieceEnds = new Map(pieces.map((piece) => [piece.index, piece.start + piece.text.length]));
 
   if (regions.length === 0) {
     return (
       <Tag id={`para-${paraIndex}`} data-para={paraIndex} className={className}>
-        {renderPieces(pieces, markerIndexes, pieceEnds, onExpandSaved, breatheSentenceIndex)}
+        {renderPieces(pieces, markerIndexes, breatheSentenceIndex)}
       </Tag>
     );
   }
@@ -2164,7 +2153,7 @@ export const Paragraph = memo(function Paragraph({
                 data-para={paraIndex}
                 className={splitFragmentClassName(className, heading !== undefined, isFirst, hasTail)}
               >
-                {renderPieces(part, markerIndexes, pieceEnds, onExpandSaved, breatheSentenceIndex)}
+                {renderPieces(part, markerIndexes, breatheSentenceIndex)}
               </Tag>
             )}
             {group.map((region) => (
@@ -2190,7 +2179,7 @@ export const Paragraph = memo(function Paragraph({
               ))}
             {tail.length > 0 && (
               <Tag data-para={paraIndex} className={`${className} reader-tail-line`}>
-                {renderPieces(tail, markerIndexes, pieceEnds, onExpandSaved, breatheSentenceIndex)}
+                {renderPieces(tail, markerIndexes, breatheSentenceIndex)}
               </Tag>
             )}
           </Fragment>
@@ -2198,7 +2187,7 @@ export const Paragraph = memo(function Paragraph({
       })}
       {hasTrailingFragment && (
         <Tag data-para={paraIndex} className="reader-para reader-para-cont">
-          {renderPieces(fragments[boundaries.length]!, markerIndexes, pieceEnds, onExpandSaved, breatheSentenceIndex)}
+          {renderPieces(fragments[boundaries.length]!, markerIndexes, breatheSentenceIndex)}
         </Tag>
       )}
     </Fragment>
@@ -2223,38 +2212,14 @@ export function groupRegions(regions: readonly Region[]): ReadonlyMap<number | n
 function renderPieces(
   pieces: Piece[],
   markerIndexes: ReadonlySet<number>,
-  pieceEnds: ReadonlyMap<number, number>,
-  onExpandSaved: (index: number) => void,
   breatheSentenceIndex: number | null,
 ) {
   return pieces.map((p) => p.placeholder ? (
     <TailPlaceholder key={`placeholder:${p.index}:${p.start}`} text={p.text} />
   ) : (
-    <Fragment key={`${p.index}:${p.start}`}>
-      <Sentence index={p.index} offset={p.start} text={p.text} breathe={p.index === breatheSentenceIndex} />
-      {shouldRenderSavedMarker(p, markerIndexes, pieceEnds) && (
-        <button
-          type="button"
-          className="saved-marker"
-          aria-label="展开这句的白话"
-          onClick={(event) => {
-            event.stopPropagation();
-            onExpandSaved(p.index);
-          }}
-        >
-          白
-        </button>
-      )}
-    </Fragment>
+    <Sentence key={`${p.index}:${p.start}`} index={p.index} offset={p.start} text={p.text}
+      breathe={p.index === breatheSentenceIndex} savedCollapsed={markerIndexes.has(p.index)} />
   ));
-}
-
-export function shouldRenderSavedMarker(
-  piece: Piece,
-  markerIndexes: ReadonlySet<number>,
-  pieceEnds: ReadonlyMap<number, number>,
-): boolean {
-  return markerIndexes.has(piece.index) && piece.start + piece.text.length === pieceEnds.get(piece.index);
 }
 
 /* ---------------- 几何测量 ---------------- */

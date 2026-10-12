@@ -15,7 +15,7 @@ import { loadSavedGlosses, saveExplanation } from "@/lib/storage";
 import { validateAnalyticsEvent } from "@/lib/analytics-events";
 import { markReaderEntry } from "@/lib/analytics-local";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import Reader, { Paragraph, allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderSavedMarker, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+import Reader, { Paragraph, allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
 import { skippedSummary } from "@/lib/parse/validate";
 import type { StoredDocument } from "@/lib/storage";
 import sampleContent from "@/public/samples/shan-yu-e.json";
@@ -249,16 +249,21 @@ describe("G-10c 阅读与复习模式", () => {
     vi.unstubAllGlobals();
   });
 
-  it.each([null, "reading", "other", "READING"])('模式值 %j 读取为 reading', (value) => {
+  it.each([null, "other", "READING"])('模式值 %j 读取为 review', (value) => {
     vi.stubGlobal("localStorage", { getItem: () => value });
+    expect(readReadingMode()).toBe("review");
+  });
+
+  it("已存 reading 沿用 reading", () => {
+    vi.stubGlobal("localStorage", { getItem: () => "reading" });
     expect(readReadingMode()).toBe("reading");
   });
 
-  it("读取 review，读取异常时回退 reading", () => {
+  it("读取 review，读取异常时回退 review", () => {
     vi.stubGlobal("localStorage", { getItem: () => "review" });
     expect(readReadingMode()).toBe("review");
     vi.stubGlobal("localStorage", { getItem: () => { throw new Error("blocked"); } });
-    expect(readReadingMode()).toBe("reading");
+    expect(readReadingMode()).toBe("review");
   });
 
   it("阅读模式只把未展开保存项变成微标记，复习模式没有微标记", () => {
@@ -284,11 +289,22 @@ describe("G-10c 阅读与复习模式", () => {
     expect(selectVisibleSavedRegions(regions, "review", null)).toBe(regions);
   });
 
-  it("句子被撑开边界切片时，微标记只跟在最后一个片段后", () => {
-    const markers = new Set([3]);
-    const ends = new Map([[3, 8]]);
-    expect(shouldRenderSavedMarker({ index: 3, start: 0, text: "前半" }, markers, ends)).toBe(false);
-    expect(shouldRenderSavedMarker({ index: 3, start: 2, text: "后半部分文字" }, markers, ends)).toBe(true);
+  it("句子全部可见片段都有下划线，透明占位没有旧按钮", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToString(createElement(Paragraph, {
+      paraIndex: 0, heading: undefined,
+      pieces: [{ index: 3, start: 0, text: "前半后半。" }], savedMarkers: [3],
+      regions: [{ index: 0, splitAt: 2, view: { status: "done", text: "白话", failure: null, instant: true },
+        saved: false, presentation: "inline", actionVisible: false, explainView: IDLE_EXPLAIN_VIEW }],
+      panelRef: null, onRetry: () => {}, onBeforeReveal: () => null, onAfterReveal: () => {},
+      onSave: async () => "saved" as const, onExplain: () => {}, onExplainRetry: () => {},
+      onExplainBlocked: () => {}, sentences: [], breatheSentenceIndex: null,
+    }));
+    const fragments = host.querySelectorAll('.sentence[data-index="3"]');
+    expect(fragments.length).toBeGreaterThan(1);
+    expect([...fragments].every((fragment) => fragment.classList.contains("sentence-saved-collapsed"))).toBe(true);
+    expect(host.querySelectorAll(".reader-tail-placeholder.sentence-saved-collapsed")).toHaveLength(0);
+    expect(host.querySelectorAll(".saved-marker")).toHaveLength(0);
   });
 });
 
@@ -660,7 +676,7 @@ describe("G-15b 阅读器事件", () => {
 
     await click(container, ".action-row-save", 2_000);
     expect(of("gloss_save")).toEqual([{ event: "gloss_save", sentenceIndex: 0, edited: false }]);
-    expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("已留下");
+    expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("取消留下");
     await click(container, ".action-row-save", 3_000);
     expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("留下");
     expect(of("gloss_save")).toHaveLength(1);
@@ -942,7 +958,7 @@ describe("G-59 行尾占位与尾行", () => {
     host.innerHTML = renderToString(createElement(Paragraph, {
       paraIndex: 0, heading: undefined, pieces: input, regions, savedMarkers: [1], panelRef: null,
       onRetry: () => {}, onBeforeReveal: () => null, onAfterReveal: () => {},
-      onSave: async () => "saved" as const, onExpandSaved: () => {},
+      onSave: async () => "saved" as const,
       onExplain: () => {}, onExplainRetry: () => {}, onExplainBlocked: () => {},
       sentences: [], breatheSentenceIndex: 1,
     }));
@@ -958,7 +974,7 @@ describe("G-59 行尾占位与尾行", () => {
     const placeholder = host.querySelector<HTMLElement>(".reader-tail-placeholder")!;
     expect(placeholder.getAttribute("aria-hidden")).toBe("true");
     expect(placeholder.hasAttribute("inert")).toBe(true);
-    expect(host.querySelectorAll('.reader-tail-placeholder.sentence, .reader-tail-placeholder[data-index], .reader-tail-placeholder[data-offset], .reader-tail-placeholder .saved-marker, .reader-tail-placeholder.sentence-breathe, .reader-tail-placeholder.sentence-gloss-hover')).toHaveLength(0);
+    expect(host.querySelectorAll('.reader-tail-placeholder.sentence, .reader-tail-placeholder[data-index], .reader-tail-placeholder[data-offset], .reader-tail-placeholder.sentence-saved-collapsed, .reader-tail-placeholder.sentence-breathe, .reader-tail-placeholder.sentence-gloss-hover')).toHaveLength(0);
   });
   it("尾行在面板后、续段前；可见片段恰为完整原文", () => {
     const host = render(pieces, [region(0, 8)]);

@@ -18,7 +18,7 @@ body {
 
 /*
  * 中栏 ≤750px；两侧栏宽度为默认值，待视觉稿校准。
- * 侧栏最小宽度：左 184px 恰好容纳「阅读态 / 复习态」单行，右 140px 容纳设置项；
+ * 侧栏最小宽度：左 184px 容纳说明文字及其下一行的「显示 / 收起」，右 140px 容纳设置项；
  * 这样 1024px 视口（PRD 主场景下限）下中栏仍有约 700px，放得下 39em 的正文。
  */
 .shell {
@@ -88,11 +88,18 @@ body {
 
 .mode-switch {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
   margin-top: 24px;
 }
+.mode-label { font-size: 13px; color: var(--gloss); white-space: nowrap; }
+.mode-options { display: flex; gap: 6px; }
+@media (max-width: 767.98px) {
+  .mode-switch { flex-direction: row; }
+}
 
-/* 「复习态」等标签必须单行显示 */
+/* 「显示 / 收起」按钮保持单行显示 */
 .mode-option {
   appearance: none;
   padding: 2px 10px;
@@ -379,18 +386,12 @@ body {
   .reader-body-sample-breathing { animation: none; }
 }
 
-.saved-marker {
-  appearance: none;
-  display: inline;
-  margin: 0 0.15em;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--saved-inline);
-  font: inherit;
-  font-size: 14px;
-  line-height: inherit;
-  cursor: pointer;
+.sentence-saved-collapsed {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.38em;
+  text-decoration-color: color-mix(in srgb, var(--hover) 55%, var(--paper-main));
 }
 
 /* 白话统一 14px；临时撑开区不加框、不加底色，仅一条左竖线。 */

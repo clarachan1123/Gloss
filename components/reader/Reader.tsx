@@ -218,7 +218,12 @@ export default function Reader({ docId }: { docId: string }) {
   const measurementRef = useRef(measurement);
   measurementRef.current = measurement;
   const [activeSavedIndex, setActiveSavedIndex] = useState<number | null>(null);
-  const [expandedSavedIndex, setExpandedSavedIndex] = useState<number | null>(null);
+  const [expandedSavedIndexes, setExpandedSavedIndexes] = useState<ReadonlySet<number>>(() => new Set());
+  const expandedSavedIndexesRef = useRef(expandedSavedIndexes);
+  function updateExpandedSavedIndexes(next: ReadonlySet<number>) {
+    expandedSavedIndexesRef.current = next;
+    setExpandedSavedIndexes(next);
+  }
   const [glossShape, setGlossShape] = useState<GlossShape>("inline");
   const [readingMode, setReadingMode] = useState<ReadingMode>("review");
   const [contextMenu, setContextMenu] = useState<ReaderContextMenu | null>(null);
@@ -502,7 +507,7 @@ export default function Reader({ docId }: { docId: string }) {
     setRetryCounts(new Map());
     setRecentIndex(null);
     setActiveSavedIndex(null);
-    setExpandedSavedIndex(null);
+    updateExpandedSavedIndexes(new Set());
     setFontsReady(false);
     setReadingMode(readReadingMode());
     const finish = (doc: StoredDocument | null, sample: SampleContent | null) => {
@@ -635,14 +640,14 @@ export default function Reader({ docId }: { docId: string }) {
     [doc],
   );
 
-  function visibleIndexes(next = expansionsRef.current, mode = readingMode, expanded = expandedSavedIndex) {
+  function visibleIndexes(next = expansionsRef.current, mode = readingMode, expanded = expandedSavedIndexesRef.current) {
     return [...new Set([
       ...next.keys(),
-      ...[...savedGlossesRef.current.keys()].filter((index) => mode === "review" || expanded === index),
+      ...[...savedGlossesRef.current.keys()].filter((index) => mode === "review" || expanded.has(index)),
     ])].sort((a, b) => a - b);
   }
   function stageLayouts(paras: ReadonlySet<number>, from: number | ReadonlyMap<number, number>,
-    next = expansionsRef.current, mode = readingMode, expanded = expandedSavedIndex) {
+    next = expansionsRef.current, mode = readingMode, expanded = expandedSavedIndexesRef.current) {
     for (const attempt of readAttemptRef.current.values()) attempt.clock.stop(performance.now());
     const cutoff = (index: number) => typeof from === "number" ? from : from.get(sentences[index]?.paraIndex) ?? 0;
     const queue = visibleIndexes(next, mode, expanded).filter((index) =>
@@ -700,8 +705,8 @@ export default function Reader({ docId }: { docId: string }) {
   }, [doc, explainViews, glossShape, savedGlosses, savedRegions, sentences]);
 
   const visibleSavedRegionsByParagraph = useMemo(() => {
-    return selectVisibleSavedRegions(savedRegionsByParagraph, readingMode, expandedSavedIndex);
-  }, [expandedSavedIndex, readingMode, savedRegionsByParagraph]);
+    return selectVisibleSavedRegions(savedRegionsByParagraph, readingMode, expandedSavedIndexes);
+  }, [expandedSavedIndexes, readingMode, savedRegionsByParagraph]);
 
   const savedMarkersByParagraph = useMemo(() => {
     const next = buildSavedMarkersByParagraph(
@@ -710,11 +715,11 @@ export default function Reader({ docId }: { docId: string }) {
       sentences,
       savedGlosses,
       readingMode,
-      expandedSavedIndex,
+      expandedSavedIndexes,
     );
     savedMarkerArraysRef.current = next;
     return next;
-  }, [doc, expandedSavedIndex, readingMode, savedGlosses, sentences]);
+  }, [doc, expandedSavedIndexes, readingMode, savedGlosses, sentences]);
 
   const regionsByParagraph = useMemo(() => {
     const groups = visibleSavedRegionsByParagraph.slice();
@@ -863,18 +868,17 @@ export default function Reader({ docId }: { docId: string }) {
     }
   }
   function commit(next: Expansion | null, options: { anchor?: CharAnchor | null; animateOpen?: boolean } = {}) {
-    const current = expansionsRef.current;
-    const removed = [...current.keys()].filter((index) => !next || sentences[index]?.paraIndex !== next.paraIndex);
-    removeAttempts(removed, true);
-    const values = new Map(current);
-    removed.forEach((index) => values.delete(index));
+    const removed = [...new Set([...expansionsRef.current.keys(), ...expandedSavedIndexesRef.current])]
+      .filter((index) => !next || sentences[index]?.paraIndex !== next.paraIndex);
+    setTransaction({ anchor: options.anchor ?? (bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null),
+      animateOpen: options.animateOpen ?? false, operationIndex: next?.index });
+    collapseIndexes(removed, true, options.anchor);
+    const values = new Map(expansionsRef.current);
     if (next) values.set(next.index, next);
     else values.clear();
     const paras = new Set(removed.map((index) => sentences[index].paraIndex));
     const cutoffs = new Map([...paras].map((para) => [para, 0]));
     if (next) { paras.add(next.paraIndex); cutoffs.set(next.paraIndex, next.index + 1); }
-    setTransaction({ anchor: options.anchor ?? (bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null),
-      animateOpen: options.animateOpen ?? false, operationIndex: next?.index });
     expansionsRef.current = values;
     setExpansions(values);
     setRecentIndex(next?.index ?? null);
@@ -883,12 +887,9 @@ export default function Reader({ docId }: { docId: string }) {
     if (next) setSavedRegions((currentLayouts) => new Map(currentLayouts).set(next.index, { index: next.index, splitAt: next.splitAt }));
   }
   function keepParagraph(paraIndex: number) {
-    const removed = [...expansionsRef.current.keys()].filter((index) => sentences[index]?.paraIndex !== paraIndex);
-    removeAttempts(removed, true);
-    const next = new Map(expansionsRef.current);
-    removed.forEach((index) => next.delete(index));
-    expansionsRef.current = next;
-    setExpansions(next);
+    const removed = [...new Set([...expansionsRef.current.keys(), ...expandedSavedIndexesRef.current])]
+      .filter((index) => sentences[index]?.paraIndex !== paraIndex);
+    collapseIndexes(removed, true);
     return new Set(removed.map((index) => sentences[index].paraIndex));
   }
   function commitSaved(index: number | null, options: { anchor?: CharAnchor | null } = {}) {
@@ -900,6 +901,8 @@ export default function Reader({ docId }: { docId: string }) {
       if (expansionsRef.current.has(index)) {
         const next = new Map(expansionsRef.current);
         next.delete(index);
+        readAttemptRef.current.get(index)?.clock.stop(performance.now());
+        readAttemptRef.current.delete(index);
         expansionsRef.current = next;
         setExpansions(next);
       }
@@ -909,16 +912,16 @@ export default function Reader({ docId }: { docId: string }) {
   }
   function expandSaved(index: number, options: { anchor?: CharAnchor | null; showActions?: boolean } = {}) {
     closeContextMenu();
+    setTransaction({ anchor: options.anchor ?? (bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null),
+      animateOpen: false, operationIndex: index });
     const paras = keepParagraph(sentences[index].paraIndex);
     const cutoffs = new Map([...paras].map((para) => [para, 0]));
     paras.add(sentences[index].paraIndex);
     cutoffs.set(sentences[index].paraIndex, index);
-    setTransaction({ anchor: options.anchor ?? (bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null),
-      animateOpen: false, operationIndex: index });
     setRecentIndex(index);
-    setExpandedSavedIndex(index);
+    updateExpandedSavedIndexes(new Set(expandedSavedIndexesRef.current).add(index));
     setActiveSavedIndex(options.showActions ? index : null);
-    stageLayouts(paras, cutoffs, expansionsRef.current, readingMode, index);
+    stageLayouts(paras, cutoffs, expansionsRef.current, readingMode, expandedSavedIndexesRef.current);
   }
 
   function closeContextMenu() {
@@ -938,7 +941,7 @@ export default function Reader({ docId }: { docId: string }) {
 
     const transientVisible = expansions.has(index);
     const savedVisible = savedRegions?.has(index) === true &&
-      (readingMode === "review" || expandedSavedIndex === index || activeSavedIndex === index);
+      (readingMode === "review" || expandedSavedIndexes.has(index) || activeSavedIndex === index);
     if (!transientVisible && !savedVisible) return;
 
     event.preventDefault();
@@ -996,6 +999,9 @@ export default function Reader({ docId }: { docId: string }) {
   }
 
   function collapseIndexes(indexes: readonly number[], early: boolean, anchor?: CharAnchor | null, animate = false) {
+    const transient = indexes.filter((index) => expansionsRef.current.has(index));
+    const saved = readingMode === "reading" ? indexes.filter((index) => expandedSavedIndexesRef.current.has(index)) : [];
+    indexes = [...new Set([...transient, ...saved])];
     if (!indexes.length) return;
     closeContextMenu();
     const closing = animate ? indexes.flatMap((index) => {
@@ -1004,7 +1010,11 @@ export default function Reader({ docId }: { docId: string }) {
       return panel && rect && rect.top >= 0 && rect.top < window.innerHeight
         ? [{ index, height: panelShift(panel) }] : [];
     }) : [];
-    removeAttempts(indexes, early);
+    removeAttempts(transient, early);
+    const expanded = new Set(expandedSavedIndexesRef.current);
+    saved.forEach((index) => expanded.delete(index));
+    updateExpandedSavedIndexes(expanded);
+    if (activeSavedIndex !== null && saved.includes(activeSavedIndex)) setActiveSavedIndex(null);
     const next = new Map(expansionsRef.current);
     indexes.forEach((index) => next.delete(index));
     expansionsRef.current = next;
@@ -1012,7 +1022,7 @@ export default function Reader({ docId }: { docId: string }) {
     const paras = new Set(indexes.map((index) => sentences[index].paraIndex));
     setTransaction({ anchor: anchor ?? (bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null),
       animateOpen: false, adjustVisibility: false, closing });
-    stageLayouts(paras, Math.min(...indexes), next);
+    stageLayouts(paras, Math.min(...indexes), next, readingMode, expanded);
   }
 
   function handleBodyClick(event: ReactMouseEvent<HTMLElement>) {
@@ -1036,8 +1046,9 @@ export default function Reader({ docId }: { docId: string }) {
 
     if (savedGlosses.has(index)) {
       const anchor = anchorAtClick(target, event.clientX, event.clientY);
-      if (readingMode === "reading" && expandedSavedIndex !== index) {
-        expandSaved(index, { anchor, showActions: true });
+      if (readingMode === "reading") {
+        if (expandedSavedIndexes.has(index)) collapseIndexes([index], true, anchor, true);
+        else expandSaved(index, { anchor, showActions: true });
       } else {
         commitSaved(activeSavedIndex === index ? null : index, { anchor });
       }
@@ -1128,13 +1139,13 @@ export default function Reader({ docId }: { docId: string }) {
     if (adjustment !== 0) {
       window.scrollBy({ top: adjustment, behavior: prefersReducedMotion() ? "instant" : "smooth" });
     }
-  }, [activeSavedIndex, expandedSavedIndex, explainViews, expansions, glosses, glossShape, measurement, readingMode, savedRegions]);
+  }, [activeSavedIndex, expandedSavedIndexes, explainViews, expansions, glosses, glossShape, measurement, readingMode, savedRegions]);
 
-  // Esc / 空白一次收全部临时白话，常驻白话保留。
+  // Esc / 空白批量收临时白话与收起模式的已留下展开，显示模式常驻保留。
   useEffect(() => {
-    if (measurement || !bodyRef.current || (!expansions.size && activeSavedIndex === null)) return;
+    if (measurement || !bodyRef.current || (!expansions.size && !expandedSavedIndexes.size && activeSavedIndex === null)) return;
     const dismiss = () => {
-      collapseIndexes([...expansionsRef.current.keys()], true);
+      collapseIndexes([...expansionsRef.current.keys(), ...expandedSavedIndexesRef.current], true);
       setActiveSavedIndex(null);
     };
     const onDocumentClick = (event: MouseEvent) => {
@@ -1150,8 +1161,9 @@ export default function Reader({ docId }: { docId: string }) {
   });
   useLayoutEffect(() => {
     const body = bodyRef.current;
-    if (!body || measurement || savedRegions === null || !fontsReady || !expansions.size) return;
-    const paraIndex = expansions.values().next().value!.paraIndex;
+    if (!body || measurement || savedRegions === null || !fontsReady || (!expansions.size && !expandedSavedIndexes.size)) return;
+    const index = expansions.keys().next().value ?? expandedSavedIndexes.values().next().value!;
+    const paraIndex = sentences[index].paraIndex;
     const blocks = [...body.querySelectorAll<HTMLElement>('[data-reader-block][data-para="' + paraIndex + '"]')];
     const panels = [...body.querySelectorAll<HTMLElement>(".gloss-panel")].filter((panel) =>
       sentences[Number(panel.dataset.sentenceIndex)]?.paraIndex === paraIndex);
@@ -1162,12 +1174,12 @@ export default function Reader({ docId }: { docId: string }) {
       for (const entry of entries) if (visibility.has(entry.target)) visibility.set(entry.target, entry.isIntersecting);
       if (allObservedTargetsOutside(visibility.values())) {
         dismissed = true;
-        collapseIndexes([...expansionsRef.current.keys()].filter((index) => sentences[index]?.paraIndex === paraIndex), false);
+        collapseIndexes([...expansionsRef.current.keys(), ...expandedSavedIndexesRef.current].filter((index) => sentences[index]?.paraIndex === paraIndex), false);
       }
     });
     for (const node of visibility.keys()) observer.observe(node);
     return () => { disconnected = true; observer.disconnect(); };
-  }, [docId, expandedSavedIndex, expansions, fontsReady, measurement, readingMode, savedRegions, sentences]);
+  }, [docId, expandedSavedIndexes, expansions, fontsReady, measurement, readingMode, savedRegions, sentences]);
   useEffect(() => () => { cancelPendingCollapse(); clearAnimation(); }, []);
 
   const capturePanelGrowth = useCallback((index: number): CharAnchor | null => {
@@ -1231,9 +1243,9 @@ export default function Reader({ docId }: { docId: string }) {
   useEffect(() => {
     if (!contextMenu || expansions.has(contextMenu.index)) return;
     const savedVisible = savedRegions?.has(contextMenu.index) === true &&
-      (readingMode === "review" || expandedSavedIndex === contextMenu.index || activeSavedIndex === contextMenu.index);
+      (readingMode === "review" || expandedSavedIndexes.has(contextMenu.index) || activeSavedIndex === contextMenu.index);
     if (!savedVisible) closeContextMenu();
-  }, [activeSavedIndex, contextMenu, expandedSavedIndex, expansions, readingMode, savedRegions]);
+  }, [activeSavedIndex, contextMenu, expandedSavedIndexes, expansions, readingMode, savedRegions]);
 
   useEffect(() => {
     if (measurement || savedRegions === null || !fontsReady || isSample) return;
@@ -1512,7 +1524,9 @@ export default function Reader({ docId }: { docId: string }) {
           layouts.delete(index);
           return layouts;
         });
-        setExpandedSavedIndex((current) => current === index ? null : current);
+        const expanded = new Set(expandedSavedIndexesRef.current);
+        expanded.delete(index);
+        updateExpandedSavedIndexes(expanded);
         saveActionsRef.current.commit(
           { index, paraIndex: sentence.paraIndex, splitAt: region?.splitAt ?? null },
           { anchor, animateOpen: false },
@@ -1530,7 +1544,7 @@ export default function Reader({ docId }: { docId: string }) {
         return { ...current, savedGlosses: next };
       });
       setSavedRegions((current) => new Map(current).set(index, { index, splitAt: savedRegions?.get(index)?.splitAt ?? expansion.splitAt }));
-      if (readingMode === "reading") setExpandedSavedIndex(index);
+      if (readingMode === "reading") updateExpandedSavedIndexes(new Set(expandedSavedIndexesRef.current).add(index));
       saveActionsRef.current.commitSaved(index, { anchor });
       return "saved";
     } catch (err) {
@@ -1562,21 +1576,20 @@ export default function Reader({ docId }: { docId: string }) {
       // 设置写入失败不妨碍本次阅读；下次仍回退默认显示模式。
     }
     setActiveSavedIndex(null);
-    setExpandedSavedIndex(null);
+    updateExpandedSavedIndexes(new Set());
     setReadingMode(next);
-    stageLayouts(new Set(sentences.map((sentence) => sentence.paraIndex)), 0, expansionsRef.current, next, null);
+    stageLayouts(new Set(sentences.map((sentence) => sentence.paraIndex)), 0, expansionsRef.current, next, new Set());
   }, [readingMode]);
   const jumpToSaved = useCallback((index: number) => {
     const body = bodyRef.current;
     if (!body) return;
-    const needsExpand = readingMode === "reading" && expandedSavedIndex !== index;
+    const needsExpand = readingMode === "reading" && !expandedSavedIndexes.has(index);
     if (needsExpand || activeSavedIndex !== null) {
       pendingSavedJumpRef.current = index;
       transactionRef.current = { anchor: null, animateOpen: false };
       setActiveSavedIndex(null);
       if (needsExpand) {
-        collapseIndexes([...expansionsRef.current.keys()], true);
-        setExpandedSavedIndex(index);
+        expandSaved(index);
       }
       return;
     }
@@ -1584,7 +1597,7 @@ export default function Reader({ docId }: { docId: string }) {
       block: "center",
       behavior: prefersReducedMotion() ? "instant" : "smooth",
     });
-  }, [activeSavedIndex, expandedSavedIndex, readingMode]);
+  }, [activeSavedIndex, expandedSavedIndexes, readingMode]);
 
 
   return (
@@ -1848,13 +1861,13 @@ export function buildSavedMarkersByParagraph(
   sentences: readonly SentenceData[],
   savedGlosses: ReadonlyMap<number, SavedGloss>,
   readingMode: ReadingMode,
-  expandedSavedIndex: number | null,
+  expandedSavedIndexes: ReadonlySet<number>,
 ): readonly (readonly number[])[] {
   const candidates: number[][] = Array.from({ length: paragraphCount }, () => []);
   if (readingMode === "reading") {
     for (const [index] of savedGlosses) {
       const sentence = sentences[index];
-      if (sentence && index !== expandedSavedIndex) candidates[sentence.paraIndex]?.push(index);
+      if (sentence && !expandedSavedIndexes.has(index)) candidates[sentence.paraIndex]?.push(index);
     }
   }
   return candidates.map((indexes, paraIndex) => {
@@ -1868,11 +1881,11 @@ export function buildSavedMarkersByParagraph(
 export function selectVisibleSavedRegions(
   regionsByParagraph: readonly (readonly Region[])[],
   readingMode: ReadingMode,
-  expandedSavedIndex: number | null,
+  expandedSavedIndexes: ReadonlySet<number>,
 ): readonly (readonly Region[])[] {
   if (readingMode === "review") return regionsByParagraph;
   return regionsByParagraph.map((regions) => {
-    const visible = regions.filter((region) => region.index === expandedSavedIndex);
+    const visible = regions.filter((region) => expandedSavedIndexes.has(region.index));
     return visible.length === 0 ? NO_REGIONS : visible;
   });
 }

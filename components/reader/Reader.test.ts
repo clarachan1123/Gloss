@@ -264,8 +264,8 @@ describe("G-10c 阅读与复习模式", () => {
     const entry = { paraIndex: 0, start: 0, sourceHash: "x", text: "白话", savedAt: 0, kind: "saved" as const };
     const saved = new Map([[0, entry], [1, { ...entry, paraIndex: 1 }]]);
 
-    expect(buildSavedMarkersByParagraph([], 2, sentences, saved, "reading", 0)).toEqual([[], [1]]);
-    expect(buildSavedMarkersByParagraph([], 2, sentences, saved, "review", null)).toEqual([[], []]);
+    expect(buildSavedMarkersByParagraph([], 2, sentences, saved, "reading", new Set([0]))).toEqual([[], [1]]);
+    expect(buildSavedMarkersByParagraph([], 2, sentences, saved, "review", new Set())).toEqual([[], []]);
   });
 
   it("阅读模式只显示当前展开 Region；复习模式复用全部 Region", () => {
@@ -275,8 +275,8 @@ describe("G-10c 阅读与复习模式", () => {
       [{ index: 1, splitAt: null, view, saved: true, presentation: "inline" as const, actionVisible: false, explainView: IDLE_EXPLAIN_VIEW }],
     ];
 
-    expect(selectVisibleSavedRegions(regions, "reading", 1).map((items) => items.map((item) => item.index))).toEqual([[], [1]]);
-    expect(selectVisibleSavedRegions(regions, "review", null)).toBe(regions);
+    expect(selectVisibleSavedRegions(regions, "reading", new Set([1])).map((items) => items.map((item) => item.index))).toEqual([[], [1]]);
+    expect(selectVisibleSavedRegions(regions, "review", new Set())).toBe(regions);
   });
 
   it("句子全部可见片段都有下划线，透明占位没有旧按钮", () => {
@@ -1011,11 +1011,12 @@ describe("G-63 同段多开、并发与整段收起", () => {
   const panels = () => [...container.querySelectorAll(".gloss-panel")].map((panel) => Number(panel.getAttribute("data-sentence-index"))).sort((a, b) => a - b);
   const original = () => [...container.querySelectorAll('[data-para="0"] .sentence')].map((span) => span.textContent).join("");
   async function flush() { for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); }); }
-  async function mount(cached = false, saved = false) {
+  async function mount(cached = false, saved = false, reading = false) {
+    if (reading) localStorage.setItem("gloss:settings:reading-mode", "reading");
     vi.spyOn(cache, "preloadGlossCache").mockResolvedValue(cached
       ? new Map(indexes.map((sentence) => [sentence.index, { text: "白话。", hasStructure: false }])) : new Map());
     vi.spyOn(storage, "loadSavedGlosses").mockResolvedValue(saved
-      ? new Map([[0, { paraIndex: 0, start: 0, sourceHash: "test", text: "留下的白话。", savedAt: 1, kind: "saved" as const }]]) : new Map());
+      ? new Map((reading ? [0, 1, 3] : [0]).map((index) => [index, { paraIndex: indexes[index].paraIndex, start: indexes[index].start, sourceHash: "test", text: "留下的白话。", savedAt: 1, kind: "saved" as const }])) : new Map());
     localStorage.setItem("gloss:doc:g63", JSON.stringify({ version: 1, docId: "g63", paragraphs,
       headings: [], footnotes: [], meta: { format: "txt", fileName: "g63.txt", charCount: 10 }, savedAt: 1 }));
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
@@ -1119,5 +1120,54 @@ describe("G-63 同段多开、并发与整段收起", () => {
     await act(async () => { stale.onText("迟到的白话"); stale.resolve({ status: "done", text: "迟到的白话" }); });
     await flush();
     expect(container.textContent).not.toContain("迟到的白话"); expect(save).not.toHaveBeenCalled(); expect(panels()).toEqual([1]);
+  });
+  function expectSavedClosed(index: number) {
+    expect(container.querySelector('.gloss-panel-saved[data-sentence-index="' + index + '"]')).toBeNull();
+    expect([...container.querySelectorAll('.sentence[data-index="' + index + '"]')].every((span) =>
+      span.classList.contains("sentence-saved-collapsed"))).toBe(true);
+  }
+  function expectNoSavedReadEvents() {
+    expect(events.filter((detail) => [0, 1, 3].includes(detail.sentenceIndex ?? -1) &&
+      ["sentence_click", "sentence_reclick", "gloss_dismiss_early", "gloss_abort", "gloss_complete", "gloss_read_complete"].includes(detail.event))).toEqual([]);
+  }
+  it("G-65 同段已留下 A、B 与普通 C 共存，再点 A 只收 A，不写存储或计读完", async () => {
+    await mount(true, true, true);
+    const writes = vi.spyOn(Storage.prototype, "setItem");
+    await click(0); await click(1); await click(2); expect(panels()).toEqual([0, 1, 2]);
+    await click(0); expect(panels()).toEqual([1, 2]); expectSavedClosed(0);
+    now += 5000; await act(async () => { window.dispatchEvent(new Event("scroll")); });
+    expectNoSavedReadEvents(); expect(writes).not.toHaveBeenCalled();
+  });
+  it.each([3, 4])("G-65 跨段点句 %s 收原段全部展开", async (index) => {
+    await mount(true, true, true); await click(0); await click(1); await click(2); await click(index);
+    expect(panels()).toEqual([index]); expectSavedClosed(0); expectSavedClosed(1); expectNoSavedReadEvents();
+  });
+  it.each(["escape", "blank"] as const)("G-65 %s 收只有已留下展开及混合展开", async (kind) => {
+    await mount(true, true, true);
+    const writes = vi.spyOn(Storage.prototype, "setItem");
+    for (const mixed of [false, true]) {
+      await click(0); await click(1); if (mixed) await click(2);
+      await act(async () => { container.querySelector<HTMLElement>('.gloss-panel-saved[data-sentence-index="1"]')!.click(); });
+      await flush(); await dismiss(kind);
+      expect(panels()).toEqual([]); expectSavedClosed(0); expectSavedClosed(1);
+    }
+    expectNoSavedReadEvents(); expect(writes).not.toHaveBeenCalled();
+  });
+  it.each([false, true])("G-65 Observer 仅已留下或混合=%s，全部 false 才收", async (mixed) => {
+    await mount(true, true, true);
+    const writes = vi.spyOn(Storage.prototype, "setItem");
+    await click(0); await click(1); if (mixed) await click(2);
+    const expected = mixed ? [0, 1, 2] : [0, 1], count = observers.at(-1)!.targets.length;
+    expect(count).toBe(container.querySelectorAll('[data-reader-block][data-para="0"]').length + expected.length);
+    await observe(Array.from({ length: count }, (_, index) => index === count - 1 ? null : false)); expect(panels()).toEqual(expected);
+    await observe(Array.from({ length: count }, (_, index) => index === count - 1 ? true : false)); expect(panels()).toEqual(expected);
+    await observe(Array(count).fill(false)); expect(panels()).toEqual([]);
+    expectSavedClosed(0); expectSavedClosed(1); expectNoSavedReadEvents(); expect(writes).not.toHaveBeenCalled();
+  });
+  it("G-65 显示模式空白、Esc、离屏保留全部常驻白话", async () => {
+    await mount(true, true);
+    await dismiss("blank"); await dismiss("escape"); expect(panels()).toEqual([0]);
+    await click(1); await observe(Array(observers.at(-1)!.targets.length).fill(false));
+    expect(panels()).toEqual([0]);
   });
 });

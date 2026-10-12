@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -317,6 +317,182 @@ async function checks(cdp,width) {
   await click(cdp,10,'first',metrics,expected,true);
   console.log(JSON.stringify({width,maxAbsDeltaXY:metrics.max,autoCollapseMaxAbsDeltaXY:metrics.g,firstRAFMaxMs:metrics.rAF,g6:metrics.g6}));
 }
+const g65Diagnostic = process.env.G65_DIAG === '1';
+const g65DiagnosticRecords = [];
+async function diagnostic65(cdp,label) {
+  if(!g65Diagnostic)return;
+  const state=await evalFn(cdp,()=>{
+    const locations=new Map();
+    for(const span of document.querySelectorAll('.reader-body .sentence')) {
+      const para=Number(span.closest('[data-para]')?.dataset.para),index=Number(span.dataset.index),start=Number(span.dataset.offset);
+      const previous=locations.get(index);if(!previous||start<previous.start)locations.set(index,{index,para,start});
+    }
+    const entries=JSON.parse(localStorage.getItem('gloss:saved:sample')??'{"entries":[]}').entries;
+    return {savedIndexes:entries.map(entry=>[...locations.values()].find(s=>s.para===entry.paraIndex&&s.start===entry.start)?.index??null),
+      measuring:document.querySelector('.reader-body')?.getAttribute('data-measuring'),
+      sentence7:[...document.querySelectorAll('.sentence[data-index="7"]')].map(span=>({className:span.className,block:span.closest('[data-reader-block]')?.className??null,continuation:!!span.closest('.reader-para-cont'),placeholder:!!span.closest('.reader-tail-placeholder')})),
+      panels:[...document.querySelectorAll('.gloss-panel')].map(panel=>Number(panel.dataset.sentenceIndex)),
+      mode:document.querySelector('.mode-option[aria-pressed="true"]')?.textContent.trim()};
+  });
+  g65DiagnosticRecords.push({label,...state});
+  await writeFile(new URL('../tmp-g65-diag.json',import.meta.url),JSON.stringify(g65DiagnosticRecords,null,2));
+}
+async function stable65(cdp) {
+  await cdp.evaluate('window.__g65Stable={y:scrollY,since:performance.now()}');
+  await waitForValue(()=>cdp.evaluate("(() => {const now=performance.now(),state=window.__g65Stable;if(document.querySelector('.reader-body')?.dataset.measuring!=='false'||scrollY!==state.y){state.y=scrollY;state.since=now;return false;}return now-state.since>=500;})()"),'G-65 measurement and scroll stable for 500ms');
+}
+async function saved65(cdp,index) {
+  return evalFn(cdp,index=>{
+    const spans=[...document.querySelectorAll('.reader-body .sentence[data-index="'+index+'"]')];
+    if(!spans.length)throw Error('G-65 missing saved source '+index);
+    const paraIndex=Number(spans[0].closest('[data-para]').dataset.para),start=Math.min(...spans.map(span=>Number(span.dataset.offset)));
+    return JSON.parse(localStorage.getItem('gloss:saved:sample')??'{"entries":[]}').entries.some(entry=>entry.paraIndex===paraIndex&&entry.start===start);
+  },index);
+}
+async function checks65(cdp,width) {
+  await cdp.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+  await cdp.call('Page.reload');await ready(cdp);await closeAll(cdp);
+  await evalFn(cdp,()=>[...document.querySelectorAll('.mode-option')].find(b=>b.textContent.trim()==='显示').click());await settle(cdp);
+  for(const index of [1,5,7]) {
+    const saved=await saved65(cdp,index);
+    if(!saved) {
+      await evalFn(cdp,index=>{const span=document.querySelector('.sentence[data-index="'+index+'"]');span.scrollIntoView({block:'center',behavior:'instant'});const r=span.getBoundingClientRect();span.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:r.left+1,clientY:r.top+1}));},index);
+      await settle(cdp);
+      await waitForValue(()=>evalFn(cdp,index=>{const button=document.querySelector('.gloss-panel[data-sentence-index="'+index+'"] .action-row-save');return button&&!button.disabled;},index),'G-65 save button ready '+index);
+      await evalFn(cdp,index=>document.querySelector('.gloss-panel[data-sentence-index="'+index+'"] .action-row-save').click(),index);
+      await waitForValue(()=>saved65(cdp,index),'G-65 saved storage contains '+index);
+      await settle(cdp);
+    }
+    await stable65(cdp);assert(await saved65(cdp,index),'G-65 preparation did not save '+index);
+  }
+  await evalFn(cdp,()=>[...document.querySelectorAll('.mode-option')].find(b=>b.textContent.trim()==='收起').click());await settle(cdp);
+  await evalFn(cdp,()=>{
+    window.__g65={events:[],hidden:document.hidden};
+    addEventListener('gloss:analytics',event=>window.__g65.events.push(event.detail));
+    addEventListener('visibilitychange',()=>{if(document.hidden)window.__g65.hidden=true;});
+    for(const place of ['before','after']) {
+      const pad=document.createElement('div');pad.dataset.g65Padding=place;pad.style.height='1000px';
+      const body=document.querySelector('.reader-body');if(place==='before')body.before(pad);else body.after(pad);
+    }
+  });
+  const stored=await evalFn(cdp,()=>Object.fromEntries(Object.keys(localStorage).filter(key=>key.startsWith('gloss:')).sort().map(key=>[key,localStorage.getItem(key)])));
+  assert(stored['gloss:saved:sample'],'G-65 missing saved storage');
+  const metrics={width,steps:{a:0,b:0,c:0,d:0,e:0,f:0,g:0},firstRAFMaxMs:0};
+  async function panels(expected,label) {
+    await stable65(cdp);
+    try {
+    const actual=await evalFn(cdp,()=>[...document.querySelectorAll('.gloss-panel')].map(p=>Number(p.dataset.sentenceIndex)).sort((a,b)=>a-b));
+    assert(JSON.stringify(actual)===JSON.stringify(expected),'G-65 '+label+' panels '+JSON.stringify(actual));
+    await evalFn(cdp,expected=>{
+      if(document.hidden||window.__g65.hidden)throw Error('G-65 page hidden');
+      for(const index of [1,5,7].filter(index=>!expected.includes(index))) {
+        const spans=[...document.querySelectorAll('.sentence[data-index="'+index+'"]')];
+        if(!spans.length||!spans.every(span=>span.classList.contains('sentence-saved-collapsed')&&getComputedStyle(span).textDecorationStyle==='dotted'))
+          throw Error('G-65 missing dotted underline '+index);
+      }
+    },expected);
+    }catch(error){await diagnostic65(cdp,'failure '+label);throw error;}
+  }
+  async function operation(step,kind,index,expected) {
+    if(kind==='click') {
+      await evalFn(cdp,(index,snapshotText)=>{
+        const selected=eval('('+snapshotText+')')().find(c=>c.index===index&&c.char.trim());
+        if(!selected)throw Error('G-65 missing click glyph');
+        window.scrollTo({top:scrollY+selected.y-innerHeight*0.4,behavior:'instant'});
+      },index,snapshot.toString());
+      await cdp.evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))',true);
+    }
+    if(step==='a')await diagnostic65(cdp,'a before '+index);
+    const result=await evalFn(cdp,async(kind,index,snapshotText)=>{
+      const snap=eval('('+snapshotText+')');
+      const before=snap(),selected=kind==='click'?before.find(c=>c.index===index&&c.char.trim()):before.find(c=>c.y>=0&&c.bottom<=innerHeight&&c.char.trim());
+      if(!selected)throw Error('G-65 missing reference');
+      const start=performance.now();
+      if(kind==='click') {
+        const span=[...document.querySelectorAll('.reader-body [data-para="'+selected.para+'"] .sentence')].find(s=>Number(s.dataset.offset)<=selected.offset&&Number(s.dataset.offset)+s.textContent.length>selected.offset);
+        const range=document.createRange(),offset=selected.offset-Number(span.dataset.offset);
+        range.setStart(span.firstChild,offset);range.setEnd(span.firstChild,offset+selected.char.length);
+        const r=range.getBoundingClientRect();
+        span.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2}));
+      }else if(kind==='blank')document.querySelector('.reader-body').click();
+      else document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+      const first=await new Promise(resolve=>requestAnimationFrame(()=>resolve({after:snap(),elapsed:performance.now()-start})));
+      await new Promise(resolve=>setTimeout(resolve,Math.max(0,1200-(performance.now()-start))));
+      return {selected,first,later:snap()};
+    },kind,index,snapshot.toString());
+    await stable65(cdp);
+    metrics.firstRAFMaxMs=Math.max(metrics.firstRAFMaxMs,result.first.elapsed);
+    assert(result.first.elapsed<=100,'G-65 first rAF exceeded 100ms');
+    metrics.steps[step]=Math.max(metrics.steps[step],delta([result.selected],result.first.after,'G-65 '+step+' first rAF'),delta([result.selected],result.later,'G-65 '+step+' 1.2s'));
+    if(step==='a')await diagnostic65(cdp,'a after '+index);
+    await panels(expected,step);
+  }
+  await operation('a','click',5,[5]);await operation('a','click',7,[5,7]);await operation('a','click',9,[5,7,9]);
+  await operation('b','click',5,[7,9]);
+  await operation('c','click',1,[1]);
+  await operation('d','click',5,[5]);await operation('d','blank',null,[]);
+  await operation('e','click',5,[5]);await operation('e','escape',null,[]);
+  await operation('f','click',5,[5]);
+  await evalFn(cdp,()=>{
+    const body=document.querySelector('.reader-body');
+    for(let n=0;n<30;n++) {
+      const p=document.createElement('p');p.dataset.para=String(1000+n);p.className='reader-para';
+      const span=document.createElement('span');span.className='sentence';span.dataset.index=String(1000+n);span.dataset.offset='0';span.textContent='下方验证参照文字。';p.append(span);body.append(p);
+    }
+    const count=[...document.querySelectorAll('.reader-body [data-para]')].filter(p=>Number(p.dataset.para)>=1000).length;
+    if(count!==30)throw Error('G-65 reference injection count '+count);
+  });
+  const auto=await evalFn(cdp,async(snapshotText)=>{
+    const references=()=>[...document.querySelectorAll('.reader-body [data-para]')].filter(p=>Number(p.dataset.para)>=1000);
+    const bounds=()=>{const refs=references(),rect=p=>{const r=p?.getBoundingClientRect();return r?{top:r.top,bottom:r.bottom}:null;};
+      const tail=[...document.querySelectorAll('[data-reader-block][data-para="2"]')].at(-1);
+      return {referenceCount:refs.length,first:rect(refs[0]),last:rect(refs.at(-1)),scrollY,innerHeight,scrollHeight:document.documentElement.scrollHeight,thirdParagraphLastBottom:tail?.getBoundingClientRect().bottom??null,panelBottoms:[...document.querySelectorAll('.gloss-panel')].map(p=>({index:Number(p.dataset.sentenceIndex),bottom:p.getBoundingClientRect().bottom}))};};
+    const before=bounds(),targets=[...document.querySelectorAll('[data-reader-block][data-para="2"]'),...document.querySelectorAll('.gloss-panel')];
+    window.scrollBy({top:Math.max(...targets.map(t=>t.getBoundingClientRect().bottom))+20,behavior:'instant'});
+    const after=bounds(),snap=eval('('+snapshotText+')'),anchor=snap().find(c=>c.para>=1000&&c.y>=0&&c.bottom<=innerHeight);
+    if(after.referenceCount!==30||!anchor)return {diagnostic:{before,after},error:after.referenceCount!==30?'G-65 reference scroll count '+after.referenceCount:'G-65 missing auto-collapse reference'};
+    const start=performance.now(),first=await new Promise(resolve=>requestAnimationFrame(()=>resolve({after:snap(),elapsed:performance.now()-start})));
+    await new Promise(resolve=>setTimeout(resolve,Math.max(0,1200-(performance.now()-start))));
+    return {anchor,first,later:snap()};
+  },snapshot.toString());
+  if(auto.error){await writeFile(new URL('../tmp-g65-diag.json',import.meta.url),JSON.stringify(auto.diagnostic,null,2));throw Error(auto.error);}
+  await stable65(cdp);
+  for(const after of [auto.first.after,auto.later]) {
+    const changed=after.find(c=>c.key===auto.anchor.key&&c.char===auto.anchor.char);assert(changed,'G-65 missing auto glyph');
+    const moved=Math.max(Math.abs(changed.x-auto.anchor.x),Math.abs(changed.y-auto.anchor.y));
+    assert(moved<1,'G-65 auto-collapse drift '+moved);metrics.steps.f=Math.max(metrics.steps.f,moved);
+  }
+  assert(auto.first.elapsed<=100,'G-65 auto first rAF exceeded 100ms');
+  metrics.firstRAFMaxMs=Math.max(metrics.firstRAFMaxMs,auto.first.elapsed);await panels([],'f');
+  const after=await evalFn(cdp,()=>Object.fromEntries(Object.keys(localStorage).filter(key=>key.startsWith('gloss:')).sort().map(key=>[key,localStorage.getItem(key)])));
+  assert(after['gloss:saved:sample']===stored['gloss:saved:sample'],'G-65 saved storage changed');
+  metrics.changedGlossKeys=[...new Set([...Object.keys(stored),...Object.keys(after)])].filter(key=>stored[key]!==after[key]).sort();
+  await evalFn(cdp,()=>[...document.querySelectorAll('.mode-option')].find(b=>b.textContent.trim()==='显示').click());await settle(cdp);
+  await stable65(cdp);
+  const permanent=await evalFn(cdp,()=>[...document.querySelectorAll('.gloss-panel-saved')].map(p=>Number(p.dataset.sentenceIndex)).sort((a,b)=>a-b));
+  assert(JSON.stringify(permanent)===JSON.stringify([1,5,7]),'G-65 permanent saved panels');
+  // 常驻模式没有收起下划线，单独检查面板与字符锚定。
+  for(const kind of ['blank','escape']) {
+    const result=await evalFn(cdp,async(kind,snapshotText)=>{
+      const snap=eval('('+snapshotText+')'),anchor=snap().find(c=>c.y>=0&&c.bottom<=innerHeight&&c.char.trim());
+      if(!anchor)throw Error('G-65 missing permanent reference');
+      const start=performance.now();
+      if(kind==='blank')document.querySelector('.reader-body').click();else document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+      const first=await new Promise(resolve=>requestAnimationFrame(()=>resolve({after:snap(),elapsed:performance.now()-start})));
+      await new Promise(resolve=>setTimeout(resolve,Math.max(0,1200-(performance.now()-start))));
+      return {anchor,first,later:snap(),panels:[...document.querySelectorAll('.gloss-panel')].map(p=>Number(p.dataset.sentenceIndex)).sort((a,b)=>a-b)};
+    },kind,snapshot.toString());
+    await stable65(cdp);
+    assert(JSON.stringify(result.panels)===JSON.stringify([1,5,7]),'G-65 permanent dismiss');
+    metrics.steps.g=Math.max(metrics.steps.g,delta([result.anchor],result.first.after,'G-65 g first'),delta([result.anchor],result.later,'G-65 g 1.2s'));
+    assert(result.first.elapsed<=100,'G-65 permanent first rAF exceeded 100ms');
+    metrics.firstRAFMaxMs=Math.max(metrics.firstRAFMaxMs,result.first.elapsed);
+  }
+  const events=await evalFn(cdp,()=>window.__g65.events);
+  assert(!events.some(event=>[1,5,7].includes(event.sentenceIndex)&&['sentence_click','sentence_reclick','gloss_dismiss_early','gloss_abort','gloss_complete','gloss_read_complete'].includes(event.event)),'G-65 saved read events');
+  assert(!await cdp.evaluate('document.hidden||window.__g65.hidden'),'G-65 page hidden');
+  console.log(JSON.stringify({g65:true,...metrics,savedStorageUnchanged:true,savedReadEvents:0}));
+}
 async function run(width) {
   const profile=await mkdtemp(join(tmpdir(),'gloss-g63-')),port=await freePort();browserStartedAt=performance.now();
   const edge=spawn(CHROME,['--headless=new','--disable-gpu','--no-sandbox','--remote-debugging-port='+port,'--remote-allow-origins=*','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check','--disable-sync','about:blank'],{stdio:['ignore','ignore','pipe'],windowsHide:true});
@@ -328,7 +504,7 @@ async function run(width) {
     await cdp.call('Page.enable');await cdp.call('Runtime.enable');await cdp.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
     await cdp.call('Page.addScriptToEvaluateOnNewDocument',{source:'('+pageSetup.toString()+')();'});
     await assertSinglePage(browser,target.id,'start:single-page');await navigate(cdp,ORIGIN+'/read/sample');await ready(cdp);
-    await checks(cdp,width);await assertSinglePage(browser,target.id,'finish:single-page');
+    await checks(cdp,width);await checks65(cdp,width);await assertSinglePage(browser,target.id,'finish:single-page');
   }finally{
     cdp?.close();browser?.close();edge.kill();
     if(edge.exitCode===null)await Promise.race([new Promise(done=>edge.once('exit',done)),sleep(5000)]);
@@ -336,5 +512,5 @@ async function run(width) {
     await rm(resolved,{recursive:true,force:true}).catch(error=>console.warn('Profile cleanup: '+error.code));
   }
 }
-for(const width of [375,506,768,1024,1280])await run(width);
+for(const width of (g65Diagnostic?[375]:[375,506,768,1024,1280]))await run(width);
 console.log('G-63 checks passed');

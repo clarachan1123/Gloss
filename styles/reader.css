@@ -305,10 +305,6 @@ body {
   overflow-anchor: none;
 }
 
-/* G-10b：只在 layout effect 量未拆分真实 DOM 的那个提交内隐藏正文，绝不绘制纯原文中间帧。 */
-.reader-body-measuring {
-  visibility: hidden;
-}
 
 /*
  * 所有非标题段统一段首缩进；原文的段首全角空格在渲染时已去掉。
@@ -332,7 +328,7 @@ body {
   text-align-last: justify;
 }
 
-/* 行尾拆分的下半段：从原来的下一行行首接着排，不再缩进 */
+/* G-63：从上一句句末连续续排，无首行缩进。 */
 .reader-para-cont {
   text-indent: 0;
 }
@@ -642,11 +638,4 @@ body {
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
-}
-.reader-tail-line {
-  margin: 0;
-  text-indent: 0;
-  text-align: left;
-  text-align-last: left;
-  white-space: nowrap;
 }

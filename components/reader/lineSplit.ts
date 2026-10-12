@@ -67,7 +67,11 @@ export function rectOf(node: Text, offset: number): DOMRect | null {
  * 原句所在各行的每个字位置不变（D13，已逐字实测 0px 偏移）。句子在最后一行结束时返回 null。
  */
 export function measureSplit(body: HTMLElement, paraIndex: number, index: number): number | null {
-  const spans = Array.from(body.querySelectorAll<HTMLElement>(`[data-para="${paraIndex}"] .sentence`));
+  const ownInParagraph = Array.from(body.querySelectorAll<HTMLElement>('[data-para="' + paraIndex + '"] .sentence'))
+    .filter((span) => span.dataset.index === String(index));
+  const block = ownInParagraph.at(-1)?.closest<HTMLElement>("[data-reader-block]");
+  const spans = Array.from((block ?? body).querySelectorAll<HTMLElement>(
+    block ? ".sentence" : '[data-para="' + paraIndex + '"] .sentence'));
   const own = spans.filter((s) => s.dataset.index === String(index));
   const last = own[own.length - 1];
   const lastNode = last?.firstChild;
@@ -89,11 +93,11 @@ export function measureSplit(body: HTMLElement, paraIndex: number, index: number
       if (rect && rect.top > threshold) return Number(spans[i].dataset.offset) + c;
     }
   }
-  return null;
+  return block?.dataset.blockContinues === "true" ? Number(block.dataset.blockEnd) : null;
 }
 
 
-/** G-59：物理拆点不变，隐藏组内最后一句之后的原行尾，另作尾行显示。
+/** G-59：物理拆点不变，隐藏组内最后一句之后的原行尾，尾巴与其后真实文字由调用方连续续排。
  * pieces 是未拆分的显示文本；part 是本次插入区前的物理片段。
  * 无效边界（例如测试替身落在句中）不移动目标句本身。
  */

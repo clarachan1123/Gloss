@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import GlossPanel, { type GlossView } from "@/components/reader/GlossPanel";
 import Sentence, { TailPlaceholder } from "@/components/reader/Sentence";
-import { measureSplit, paragraphLength, paragraphOriginalFragments, splitFragmentClassName, splitParagraphTail } from "@/components/reader/lineSplit";
+import { measureSplit, paragraphLength, paragraphOriginalFragments, splitFragmentClassName, splitParagraphTail, slicePieces } from "@/components/reader/lineSplit";
 import { loadSampleBook, type SampleBook } from "@/lib/sample";
 import { segmentParagraphs } from "@/lib/segment";
 
@@ -193,8 +193,10 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
   const showPanel = reducedMotion || phase === "revealing" || phase === "settled";
   const targetActive = hoveredGloss || (!reducedMotion && phase === "settled");
   const fragments = ready ? paragraphOriginalFragments(pieces, [splitAt]) : [];
-  const { head, tail } = splitParagraphTail(pieces, fragments[0] ?? [], [TARGET_INDEX], splitAt);
+  const { head } = splitParagraphTail(pieces, fragments[0] ?? [], [TARGET_INDEX], splitAt);
   const hasTail = splitAt !== null && splitAt < paragraphLength(pieces);
+  const target = pieces.find((piece) => piece.index === TARGET_INDEX);
+  const continuation = slicePieces(pieces, target ? target.start + target.text.trimEnd().length : Infinity, Infinity);
 
   useLayoutEffect(() => {
     if (!ready || !expandedMeasureRef.current) return;
@@ -212,8 +214,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
             <article className="reader-body landing-demo-body" lang="zh-CN">
               <p data-para={PARAGRAPH_INDEX} className={splitFragmentClassName("reader-para", false, true, hasTail)}>{renderPieces(head)}</p>
               <div className="landing-demo-panel-slot"><GlossPanel {...panelProps} view={finalView} /></div>
-              {tail.length > 0 && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-tail-line">{renderPieces(tail)}</p>}
-              {hasTail && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-para-cont">{renderPieces(fragments[1] ?? [])}</p>}
+              {continuation.length > 0 && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-para-cont">{renderPieces(continuation)}</p>}
             </article>
           </div>
         )}
@@ -225,8 +226,7 @@ export default function LandingDemo({ replayIndex }: { replayIndex: number }) {
                 <div className="landing-demo-panel-slot" style={{ height: panelHeight }}>
                   <div className="landing-demo-panel-play" ref={playRef} onMouseEnter={() => setHoveredGloss(true)} onMouseLeave={() => setHoveredGloss(false)}><GlossPanel key={replayIndex} {...panelProps} view={reducedMotion ? finalView : playingView} /></div>
                 </div>
-                {tail.length > 0 && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-tail-line">{renderPieces(tail)}</p>}
-              {hasTail && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-para-cont">{renderPieces(fragments[1] ?? [])}</p>}
+                {continuation.length > 0 && <p data-para={PARAGRAPH_INDEX} className="reader-para reader-para-cont">{renderPieces(continuation)}</p>}
               </>
             ) : <p data-para={PARAGRAPH_INDEX} className="reader-para">{renderPieces(pieces)}</p>}
           </article>

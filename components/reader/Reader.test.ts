@@ -8,6 +8,7 @@ import path from "node:path";
 import * as storage from "@/lib/storage";
 import * as lineSplit from "./lineSplit";
 import { slicePieces, splitParagraphTail } from "./lineSplit";
+import * as glossClient from "@/lib/gloss-client";
 import * as cache from "@/lib/cache";
 import { lookupPreloadedGloss, type MemoryGloss } from "@/lib/cache";
 import { segmentParagraphs } from "@/lib/segment";
@@ -15,7 +16,7 @@ import { loadSavedGlosses, saveExplanation } from "@/lib/storage";
 import { validateAnalyticsEvent } from "@/lib/analytics-events";
 import { markReaderEntry } from "@/lib/analytics-local";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import Reader, { Paragraph, allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, shouldRenderTransient, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+import Reader, { Paragraph, allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
 import { skippedSummary } from "@/lib/parse/validate";
 import type { StoredDocument } from "@/lib/storage";
 import sampleContent from "@/public/samples/shan-yu-e.json";
@@ -87,7 +88,7 @@ it("G-15a 已保存白话在 savedRegions 尚未测量时不发事件，普通�
       await act(async () => { root.render(createElement(Reader, { docId })); });
       await act(async () => { await Promise.resolve(); });
       if (saved) {
-        expect(container.querySelector(".reader-body-measuring")).not.toBeNull();
+        expect(container.querySelector(".reader-body")?.getAttribute("data-measuring")).toBe("true");
         expect(container.querySelector(".saved-link")?.textContent).toBe("已保存白话。");
       }
       events.length = 0;
@@ -142,23 +143,23 @@ describe("G-10a 取消保存", () => {
 describe("G-10b 同段多常驻区", () => {
   const view = { status: "done" as const, text: "白话", failure: null, instant: true };
 
-  it("同一拆分点的两句保持独立并按句序排列", () => {
+  it("同物理拆点也按句序独立排版", () => {
     const regions: Region[] = [
       { index: 8, splitAt: 42, view, saved: true, presentation: "inline", actionVisible: false, explainView: IDLE_EXPLAIN_VIEW },
       { index: 3, splitAt: 42, view, saved: true, presentation: "inline", actionVisible: false, explainView: IDLE_EXPLAIN_VIEW },
     ];
     const groups = groupRegions(regions);
-    expect([...groups.keys()]).toEqual([42]);
-    expect(groups.get(42)?.map((region) => region.index)).toEqual([3, 8]);
-    expect(groups.get(42)).toHaveLength(2);
+    expect([...groups.keys()]).toEqual([3, 8]);
+    expect([...groups.values()].flat().map((region) => region.index)).toEqual([3, 8]);
+    expect(groups.get(3)).toHaveLength(1);
   });
 
-  it("不同拆分点按原文顺序，段尾 null 最后插入", () => {
+  it("按句序插入，不以 null 或物理边界合组", () => {
     const regions: Region[] = [
       { index: 4, splitAt: null, view, saved: true, presentation: "bubble", actionVisible: false, explainView: IDLE_EXPLAIN_VIEW },
       { index: 2, splitAt: 17, view, saved: true, presentation: "inline", actionVisible: false, explainView: IDLE_EXPLAIN_VIEW },
     ];
-    expect([...groupRegions(regions).keys()]).toEqual([17, null]);
+    expect([...groupRegions(regions).keys()]).toEqual([2, 4]);
   });
 });
 
@@ -230,17 +231,6 @@ describe("G-10b 保存区 props 结构共享", () => {
     expect(afterSave[2]).toBe(first[2]);
     expect(afterRemove[1]).toBe(afterSave[1]);
     expect(afterRemove[2]).toBe(afterSave[2]);
-  });
-});
-
-describe("G-10b 未拆分测量态", () => {
-  const savedLayouts = new Map([[0, { index: 0, splitAt: 2 }]]);
-  const expansion = { index: 1, paraIndex: 0, splitAt: 4 };
-
-  it("同段单段重量和全书重量都不保留 transient，其他段的 transient 可以保留", () => {
-    expect(shouldRenderTransient(expansion, savedLayouts, 0)).toBe(false);
-    expect(shouldRenderTransient(expansion, null, null)).toBe(false);
-    expect(shouldRenderTransient(expansion, savedLayouts, 1)).toBe(true);
   });
 });
 
@@ -580,7 +570,7 @@ describe("G-15b 阅读器事件", () => {
     ]));
   });
 
-  it("gloss_dismiss_early：再点同一句、切换到另一句、Esc、点别处，可见不足 2 秒都发", async () => {
+  it("gloss_dismiss_early：同段切句不发，单句收起和批量主动收起逐句判定", async () => {
     stubEnvironment(["g15b-dismiss"]);
     const container = await mount("g15b-dismiss");
     await click(container, ".sentence[data-index='0']", 1_000);
@@ -596,7 +586,7 @@ describe("G-15b 阅读器事件", () => {
     await act(async () => { document.body.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(of("gloss_dismiss_early")).toEqual([
       { event: "gloss_dismiss_early", sentenceIndex: 0, visibleMs: 1_500 },
-      { event: "gloss_dismiss_early", sentenceIndex: 1, visibleMs: 800 },
+      { event: "gloss_dismiss_early", sentenceIndex: 1, visibleMs: 1_500 },
       { event: "gloss_dismiss_early", sentenceIndex: 2, visibleMs: 700 },
       { event: "gloss_dismiss_early", sentenceIndex: 3, visibleMs: 600 },
     ]);
@@ -823,7 +813,7 @@ describe("G-57 白话悬停与返回入口", () => {
     expect(panel).not.toBeNull();
     expect(panel.classList.contains("gloss-panel-saved")).toBe(saved);
     const pieces = [...body.querySelectorAll<HTMLElement>('.sentence[data-index="0"]')];
-    expect(pieces).toHaveLength(2);
+    expect(pieces.map(piece => piece.textContent).join("")).toBe("甲乙。");
     const other = body.querySelector<HTMLElement>('.sentence[data-index="1"]')!;
     const text = panel.querySelector(".gloss-panel-text")!;
     const child = text.querySelector("span")!;
@@ -868,16 +858,16 @@ describe("G-57 白话悬停与返回入口", () => {
     await act(async () => { host.querySelector<HTMLElement>('.sentence[data-index="0"]')!.click(); });
     await flush();
     const pieces = [...host.querySelectorAll<HTMLElement>('.sentence[data-index="1"]')];
-    expect(pieces).toHaveLength(2);
+    expect(pieces.map(piece => piece.textContent).join("")).toBe("丙丁。");
     const expectHover = (active: boolean) => expect(pieces.every(p => p.classList.contains("sentence-hover") === active)).toBe(true);
     await pointer(pieces[0], "pointerover");
     expectHover(true);
-    await pointer(pieces[0], "pointerout", "mouse", pieces[1]);
+    await pointer(pieces[0], "pointerout", "mouse", pieces.at(-1)!);
     expectHover(true);
-    await pointer(pieces[1], "pointerover", "mouse", pieces[0]);
+    await pointer(pieces.at(-1)!, "pointerover", "mouse", pieces[0]);
     expectHover(true);
     expect(host.querySelectorAll(".reader-tail-placeholder.sentence-hover")).toHaveLength(0);
-    await pointer(pieces[1], "pointerout", "mouse", host.querySelector('.sentence[data-index="0"]'));
+    await pointer(pieces.at(-1)!, "pointerout", "mouse", host.querySelector('.sentence[data-index="0"]'));
     expectHover(false);
     await pointer(host.querySelector(".reader-tail-placeholder")!, "pointerover");
     expectHover(false);
@@ -899,7 +889,7 @@ describe("G-57 白话悬停与返回入口", () => {
     await act(async () => { host.querySelector<HTMLElement>('.sentence[data-index="0"]')!.click(); });
     await flush();
     let pieces = [...host.querySelectorAll('.sentence[data-index="1"]')];
-    expect(pieces).toHaveLength(2);
+    expect(pieces.map(piece => piece.textContent).join("")).toBe("丙丁。");
     expect(pieces.every(p => p.classList.contains("sentence-hover"))).toBe(true);
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -976,30 +966,158 @@ describe("G-59 行尾占位与尾行", () => {
     expect(placeholder.hasAttribute("inert")).toBe(true);
     expect(host.querySelectorAll('.reader-tail-placeholder.sentence, .reader-tail-placeholder[data-index], .reader-tail-placeholder[data-offset], .reader-tail-placeholder.sentence-saved-collapsed, .reader-tail-placeholder.sentence-breathe, .reader-tail-placeholder.sentence-gloss-hover')).toHaveLength(0);
   });
-  it("尾行在面板后、续段前；可见片段恰为完整原文", () => {
+  it("面板后连续续排；可见片段恰为完整原文", () => {
     const host = render(pieces, [region(0, 8)]);
-    const line = host.querySelector<HTMLElement>(".reader-tail-line")!;
+    const line = host.querySelector<HTMLElement>(".reader-para-cont")!;
     expect(line.previousElementSibling?.classList.contains("gloss-panel")).toBe(true);
-    expect(line.nextElementSibling?.classList.contains("reader-para-cont")).toBe(true);
-    expect(line.querySelector('.sentence[data-index="1"][data-offset="6"]')?.textContent).toBe("乙丙");
+    expect(line.nextElementSibling).toBeNull();
+    expect(line.querySelector('.sentence[data-index="1"][data-offset="6"]')?.textContent).toBe("乙丙。");
     expect([...host.querySelectorAll(".sentence")].map((p) => p.textContent).join("")).toBe(pieces.map((p) => p.text).join(""));
   });
-  it("同拆点保存与临时区取最后一句末，只渲染一次尾行", () => {
+  it("同物理拆点仍逐句插入，真实文字只出现一次", () => {
     const host = render(pieces, [region(1, 11, true), region(0, 11)]);
-    expect(host.querySelectorAll(".reader-tail-line")).toHaveLength(1);
-    expect(host.querySelector(".reader-tail-line")?.textContent).toBe("丁戊");
-    expect(host.querySelector(".reader-tail-line")?.previousElementSibling?.getAttribute("data-sentence-index")).toBe("1");
-    expect(host.querySelector('p .sentence[data-index="1"]')?.textContent).toBe("乙丙。");
+    expect([...host.querySelectorAll(".gloss-panel")].map((panel) => panel.getAttribute("data-sentence-index"))).toEqual(["0", "1"]);
+    expect(host.querySelector(".reader-tail-line")).toBeNull();
+    expect([...host.querySelectorAll(".sentence")].map((span) => span.textContent).join("")).toBe(pieces.map((piece) => piece.text).join(""));
   });
-  it("末行 null 隐藏剩余文字，面板后尾行，无续段且不强加 justify", () => {
+  it("原末行不强加 justify，剩余真实文字连续续排", () => {
     const host = render(pieces, [region(1, null)]);
     expect(host.firstElementChild?.className).toBe("reader-para");
-    expect(host.querySelector(".reader-tail-line")?.textContent).toBe("丁戊。");
-    expect(host.querySelector(".reader-tail-line")?.nextElementSibling).toBeNull();
-    expect(host.querySelector(".reader-para-cont")).toBeNull();
+    expect(host.querySelector(".reader-para-cont")?.textContent).toBe("丁戊。");
+    expect(host.querySelector(".reader-para-cont")?.nextElementSibling).toBeNull();
+    expect(host.querySelectorAll(".reader-para-cont")).toHaveLength(1);
   });
-  it("零长度或仅空白尾巴不渲染尾行", () => {
-    expect(render(pieces, [region(1, 9)]).querySelector(".reader-tail-line")).toBeNull();
-    expect(render([{ index: 0, start: 0, text: "甲。  " }], [region(0, null)]).querySelector(".reader-tail-line")).toBeNull();
+  it("物理尾巴为空仍输出后续原文；没有真实剩余文字才不续排", () => {
+    expect(render(pieces, [region(1, 9)]).querySelector(".reader-para-cont")?.textContent).toBe("丁戊。");
+    expect(render([{ index: 0, start: 0, text: "甲。" }], [region(0, null)]).querySelector(".reader-para-cont")).toBeNull();
+  });
+});
+
+describe("G-63 同段多开、并发与整段收起", () => {
+  type EventDetail = { event: string; sentenceIndex?: number };
+  type Run = { signal: AbortSignal; onText: (text: string) => void;
+    resolve: (result: Awaited<ReturnType<typeof glossClient.streamGloss>>) => void };
+  const paragraphs = ["甲。乙。丙。", "丁。戊。"];
+  const indexes = segmentParagraphs(paragraphs).sentences;
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  let now: number;
+  let events: EventDetail[];
+  let runs: Map<number, Run>;
+  let observers: { callback: IntersectionObserverCallback; targets: Element[] }[];
+  const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+  const onEvent = (event: Event) => events.push((event as CustomEvent<EventDetail>).detail);
+  const details = (event: string) => events.filter((detail) => detail.event === event);
+  const panels = () => [...container.querySelectorAll(".gloss-panel")].map((panel) => Number(panel.getAttribute("data-sentence-index"))).sort((a, b) => a - b);
+  const original = () => [...container.querySelectorAll('[data-para="0"] .sentence')].map((span) => span.textContent).join("");
+  async function flush() { for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); }); }
+  async function mount(cached = false, saved = false) {
+    vi.spyOn(cache, "preloadGlossCache").mockResolvedValue(cached
+      ? new Map(indexes.map((sentence) => [sentence.index, { text: "白话。", hasStructure: false }])) : new Map());
+    vi.spyOn(storage, "loadSavedGlosses").mockResolvedValue(saved
+      ? new Map([[0, { paraIndex: 0, start: 0, sourceHash: "test", text: "留下的白话。", savedAt: 1, kind: "saved" as const }]]) : new Map());
+    localStorage.setItem("gloss:doc:g63", JSON.stringify({ version: 1, docId: "g63", paragraphs,
+      headings: [], footnotes: [], meta: { format: "txt", fileName: "g63.txt", charCount: 10 }, savedAt: 1 }));
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => { root.render(createElement(Reader, { docId: "g63" })); }); await flush();
+  }
+  async function click(index: number) {
+    now += 500;
+    await act(async () => { container.querySelector<HTMLElement>('.sentence[data-index="' + index + '"]')!.click(); });
+    await flush();
+  }
+  async function dismiss(kind: "escape" | "blank") {
+    now += 500;
+    await act(async () => { if (kind === "escape") document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      else container.querySelector<HTMLElement>(".reader-body")!.click(); });
+    await flush();
+  }
+  async function observe(values: (boolean | null)[]) {
+    const observer = observers.at(-1)!;
+    await act(async () => { observer.callback(observer.targets.flatMap((target, index) => values[index] === null
+      ? [] : [{ target, isIntersecting: values[index] ?? false } as IntersectionObserverEntry]), {} as IntersectionObserver); });
+    await flush();
+  }
+  beforeEach(() => {
+    vi.unstubAllGlobals(); localStorage.clear(); now = 1000; events = []; runs = new Map(); observers = [];
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    Object.defineProperty(document, "fonts", { configurable: true, value: { ready: Promise.resolve() } });
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    vi.spyOn(lineSplit, "measureSplit").mockReturnValue(null);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      { top: 100, bottom: 250, left: 0, right: 600, width: 600, height: 150, x: 0, y: 100 } as DOMRect);
+    vi.stubGlobal("IntersectionObserver", class {
+      targets: Element[] = [];
+      constructor(callback: IntersectionObserverCallback) { observers.push({ callback, targets: this.targets }); }
+      observe(target: Element) { this.targets.push(target); }
+      disconnect() {}
+      unobserve() {}
+      takeRecords() { return []; }
+    });
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    vi.spyOn(glossClient, "streamGloss").mockImplementation((input, options) => new Promise((resolve) => {
+      const index = indexes.find((sentence) => sentence.text === input.sentence)!.index;
+      runs.set(index, { signal: options.signal!, onText: options.onText, resolve });
+    }));
+    window.addEventListener("gloss:analytics", onEvent);
+  });
+  afterEach(async () => {
+    if (root) { await act(async () => { root.unmount(); }); container.remove(); }
+    window.removeEventListener("gloss:analytics", onEvent);
+    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts); else Reflect.deleteProperty(document, "fonts");
+    vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear();
+  });
+  it("同段 a、b 两面板保留，真实原文恰好一次，测量事务结束", async () => {
+    await mount(true); await click(0); await click(1);
+    expect(panels()).toEqual([0, 1]); expect(original()).toBe(paragraphs[0]);
+    expect(container.querySelector(".reader-body")?.getAttribute("data-measuring")).toBe("false");
+    expect(container.querySelector(".reader-tail-line")).toBeNull();
+  });
+  it("再点 a 只收 a，b 保留", async () => {
+    await mount(true); await click(0); await click(1); await click(0);
+    expect(panels()).toEqual([1]); expect(original()).toBe(paragraphs[0]);
+  });
+  it("跨段收全部临时白话，常驻保留", async () => {
+    await mount(true, true); await click(1); await click(2); await click(3);
+    expect(panels()).toEqual([0, 3]); expect(original()).toBe(paragraphs[0]);
+  });
+  it.each(["escape", "blank"] as const)("%s 收起全部临时白话", async (kind) => {
+    await mount(true); await click(0); await click(1); await dismiss(kind); expect(panels()).toEqual([]);
+  });
+  it("同段两请求同时运行；再点 a 仅中止 a 一次", async () => {
+    await mount(); await click(0); await click(1);
+    expect(runs.size).toBe(2); expect(runs.get(0)!.signal.aborted).toBe(false);
+    expect(details("gloss_abort")).toEqual([]); expect(details("gloss_dismiss_early")).toEqual([]);
+    await click(0); expect(runs.get(0)!.signal.aborted).toBe(true); expect(runs.get(1)!.signal.aborted).toBe(false);
+    expect(details("gloss_abort")).toEqual([expect.objectContaining({ sentenceIndex: 0 })]); expect(panels()).toEqual([1]);
+  });
+  it("Esc 将 a、b 运行请求各中止一次", async () => {
+    await mount(); await click(0); await click(1); await dismiss("escape");
+    expect([...runs.values()].every((run) => run.signal.aborted)).toBe(true);
+    expect(details("gloss_abort").map((detail) => detail.sentenceIndex).sort()).toEqual([0, 1]);
+  });
+  it("整段所有目标 false 才批量收起，true / null 保留，自动收起无 dismiss", async () => {
+    await mount(); await click(0); await click(1);
+    const count = observers.at(-1)!.targets.length;
+    expect(count).toBe(container.querySelectorAll('[data-reader-block][data-para="0"]').length + 2);
+    await observe(Array.from({ length: count }, (_, index) => index === count - 1 ? null : false)); expect(panels()).toEqual([0, 1]);
+    await observe(Array.from({ length: count }, (_, index) => index === count - 1 ? true : false)); expect(panels()).toEqual([0, 1]);
+    await observe(Array(count).fill(false)); expect(panels()).toEqual([]);
+    expect(details("gloss_abort")).toHaveLength(2); expect(details("gloss_dismiss_early")).toEqual([]);
+  });
+  it("同段点 b 后 a 计时继续，仍可达到读完阈值", async () => {
+    await mount(true); await click(0); await click(1);
+    now += 3000; await act(async () => { window.dispatchEvent(new Event("scroll")); });
+    expect(details("gloss_read_complete")).toContainEqual(expect.objectContaining({ sentenceIndex: 0 }));
+    expect(details("gloss_dismiss_early")).toEqual([]);
+  });
+  it("已中止请求的迟到流与结果不写状态、不写缓存", async () => {
+    const save = vi.spyOn(cache, "saveGlossCache").mockResolvedValue(true);
+    await mount(); await click(0); const stale = runs.get(0)!; await click(1); await click(0);
+    await act(async () => { stale.onText("迟到的白话"); stale.resolve({ status: "done", text: "迟到的白话" }); });
+    await flush();
+    expect(container.textContent).not.toContain("迟到的白话"); expect(save).not.toHaveBeenCalled(); expect(panels()).toEqual([1]);
   });
 });

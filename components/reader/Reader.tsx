@@ -58,7 +58,7 @@ import {
   type StoredDocument,
 } from "@/lib/storage";
 import GlossPanel, { IDLE_EXPLAIN_VIEW, LOADING_VIEW, type ExplainView, type GlossView } from "./GlossPanel";
-import { measureSplit, paragraphLength, paragraphOriginalFragments, rectOf, splitFragmentClassName, splitParagraphTail } from "./lineSplit";
+import { measureSplit, paragraphLength, paragraphOriginalFragments, rectOf, splitFragmentClassName, splitParagraphTail, slicePieces } from "./lineSplit";
 export { paragraphOriginalFragments, splitFragmentClassName } from "./lineSplit";
 import Sentence, { TailPlaceholder } from "./Sentence";
 
@@ -94,16 +94,13 @@ interface Piece {
   placeholder?: boolean;
 }
 
-/**
- * 当前撑开的句子（同时只有一个非锁定撑开态）。
- * splitAt：段落在这个偏移处拆开——它是「句子最后一个字所在行」的下一行行首；
- * null 表示句子在段落最后一行结束（或是标题），撑开区直接放在整段之后。
- */
-interface Expansion {
-  index: number;
-  paraIndex: number;
-  splitAt: number | null;
-}
+// G-63：临时白话逐句保存，splitAt 来自当前续排布局。
+interface Expansion { index: number; paraIndex: number; splitAt: number | null }
+interface Measurement { version: number; queue: readonly number[]; progress: number }
+type ReadAttempt = {
+  index: number; clickedAt: number; cacheHit: boolean; firstClick: boolean;
+  clock: ReadCompleteClock; completeReported: boolean; abortReported: boolean; settled: boolean; dismissReported: boolean;
+};
 
 type GlossShape = "inline" | "bubble";
 type ReadingMode = "reading" | "review";
@@ -113,24 +110,17 @@ interface SavedRegion {
   splitAt: number | null;
 }
 
-interface PendingOpen {
-  index: number;
-  anchor: CharAnchor | null;
-  animateOpen: boolean;
-}
-
 interface SaveContext {
-  activeIndex: number | null;
   docId: string;
-  expansion: Expansion | null;
-  glossView: GlossView;
+  expansions: ReadonlyMap<number, Expansion>;
+  glosses: ReadonlyMap<number, GlossView>;
   savedGlosses: ReadonlyMap<number, SavedGloss>;
   savedRegions: ReadonlyMap<number, SavedRegion> | null;
   readingMode: ReadingMode;
   sentences: readonly SentenceData[];
 }
 
-/** 同段多处插入都来自未拆分原文的一次测量。 */
+/** 各句在先前插入后的真实续排块中依次测量。 */
 export interface Region {
   index: number;
   splitAt: number | null;
@@ -139,6 +129,7 @@ export interface Region {
   presentation: GlossShape;
   actionVisible: boolean;
   explainView: ExplainView;
+  glossKey?: string;
 }
 
 /** 视口锚点：段内某个字在 DOM 变化前的视口纵坐标。DOM 变化后把这个字滚回原位 */
@@ -153,6 +144,8 @@ interface Transaction {
   animateOpen: boolean;
   /** false 时只维护视口锚点，不重复执行首次展开的 G6 可见性微调。 */
   adjustVisibility?: boolean;
+  operationIndex?: number;
+  closing?: readonly { index: number; height: number }[];
 }
 
 /** 阅读位置锚：视口顶部所在的句子，及其首行在视口中的纵坐标 */
@@ -215,9 +208,15 @@ export default function Reader({ docId }: { docId: string }) {
   const sampleAnalytics = isSample ? SAMPLE_ANALYTICS_FIELD : NO_SAMPLE_ANALYTICS_FIELD;
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [sampleBreathed, setSampleBreathed] = useState(false);
-  const [expansion, setExpansion] = useState<Expansion | null>(null);
+  const [expansions, setExpansions] = useState<ReadonlyMap<number, Expansion>>(() => new Map());
+  const expansionsRef = useRef(expansions);
+  expansionsRef.current = expansions;
+  const [recentIndex, setRecentIndex] = useState<number | null>(null);
   const [savedRegions, setSavedRegions] = useState<ReadonlyMap<number, SavedRegion> | null>(null);
-  const [measuringParaIndex, setMeasuringParaIndex] = useState<number | null>(null);
+  const [measurement, setMeasurement] = useState<Measurement | null>(null);
+  const measurementVersionRef = useRef(0);
+  const measurementRef = useRef(measurement);
+  measurementRef.current = measurement;
   const [activeSavedIndex, setActiveSavedIndex] = useState<number | null>(null);
   const [expandedSavedIndex, setExpandedSavedIndex] = useState<number | null>(null);
   const [glossShape, setGlossShape] = useState<GlossShape>("inline");
@@ -309,19 +308,27 @@ export default function Reader({ docId }: { docId: string }) {
   useLayoutEffect(() => { syncSentenceHover(); });
   useLayoutEffect(() => () => clearSentenceHover(), [docId, clearSentenceHover]);
 
-  const panelRef = useRef<HTMLDivElement>(null);
+  const panelsRef = useRef(new Map<number, HTMLDivElement>());
+  const panelCallbacksRef = useRef(new Map<number, (panel: HTMLDivElement | null) => void>());
+  const panelFor = useCallback((index: number) => {
+    let callback = panelCallbacksRef.current.get(index);
+    if (!callback) {
+      callback = (panel) => { if (panel) panelsRef.current.set(index, panel); else panelsRef.current.delete(index); };
+      panelCallbacksRef.current.set(index, callback);
+    }
+    return callback;
+  }, []);
   const contextMenuRef = useRef<ReaderContextMenu | null>(null);
   const suppressOutsideClickRef = useRef(false);
   const positionRef = useRef<PositionAnchor>({ index: 0, offset: 0, layout: "", measure: "" });
   const transactionRef = useRef<Transaction | null>(null);
   const growthAnchorRef = useRef<{ index: number; panel: HTMLElement; anchor: CharAnchor; scrollY: number } | null>(null);
   const animationRef = useRef<Animation | null>(null);
-  const collapseTimerRef = useRef<number | undefined>(undefined);
+  const collapseAnimationsRef = useRef(new Map<number, ReturnType<HTMLElement["animate"]>[]>());
   const lastToggleRef = useRef<{ index: number; time: number } | null>(null);
   const restoredDocRef = useRef<string | null>(null);
   /** reader_enter 的来源标记一经取出即作废；StrictMode 重跑 effect 时沿用同一次取出的结果。 */
   const entrySourceRef = useRef<{ docId: string; source: ReaderEntrySource } | null>(null);
-  const pendingOpenRef = useRef<PendingOpen | null>(null);
   /** 宽度／字体导致全书重量时，事务必须留到最终（已插回）布局才消费。 */
   const pendingMeasureTransactionRef = useRef<Transaction | null>(null);
   const savedRegionArraysRef = useRef<readonly (readonly Region[])[]>([]);
@@ -329,6 +336,7 @@ export default function Reader({ docId }: { docId: string }) {
   const pendingSavedJumpRef = useRef<number | null>(null);
   // Paragraph 是 memo；保存操作的回调也必须恒定，不能因为当前句或保存集合改变而让全书失效。
   const saveContextRef = useRef<SaveContext | null>(null);
+  const saveActionsRef = useRef({ commit, commitSaved });
 
   // 功能二请求属于 Reader，不属于可能随收起卸载的 GlossPanel。
   const [explainViews, setExplainViews] = useState<ReadonlyMap<number, ExplainView>>(EMPTY_EXPLAIN_VIEWS);
@@ -339,22 +347,26 @@ export default function Reader({ docId }: { docId: string }) {
   const mountedRef = useRef(false);
 
   // 功能一（G-07）
-  const [gloss, setGloss] = useState<{ index: number; view: GlossView } | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
+  const [glosses, setGlosses] = useState<ReadonlyMap<number, GlossView>>(() => new Map());
+  const glossesRef = useRef(glosses);
+  glossesRef.current = glosses;
+  const setGloss = useCallback((entry: { index: number; view: GlossView }) => {
+    setGlosses((current) => new Map(current).set(entry.index, entry.view));
+  }, []);
+  const [retryCounts, setRetryCounts] = useState<ReadonlyMap<number, number>>(() => new Map());
   /** 本次会话与 IndexedDB 预载的自动白话；只放 ref，预载完成不触发段落重渲染。 */
   const glossMemoRef = useRef(new Map<number, MemoryGloss>());
   /** 保存区更新只供点击与请求 effect 查询；不会因保存／取消保存重跑请求 effect。 */
   const savedGlossesRef = useRef<Map<number, SavedGloss>>(EMPTY_SAVED_GLOSSES);
-  const glossAbortRef = useRef<AbortController | null>(null);
+  const glossRunsRef = useRef(new Map<number, { controller: AbortController; runId: number; retry: number }>());
+  const nextGlossRunRef = useRef(0);
   const clickCountsRef = useRef(new Map<number, number>());
-  const readAttemptRef = useRef<{
-    index: number; clickedAt: number; cacheHit: boolean; firstClick: boolean;
-    clock: ReadCompleteClock; completeReported: boolean; abortReported: boolean; settled: boolean; dismissReported: boolean;
-  } | null>(null);
-  function sampleReadAttempt() {
-    const attempt = readAttemptRef.current;
+  const readAttemptRef = useRef(new Map<number, ReadAttempt>());
+  function sampleReadAttempt(index: number) {
+    if (measurement || savedRegions === null) return;
+    const attempt = readAttemptRef.current.get(index);
     if (!attempt) return;
-    const panel = panelRef.current?.dataset.sentenceIndex === String(attempt.index) ? panelRef.current : null;
+    const panel = panelsRef.current.get(index) ?? null;
     const displayedText = panel?.querySelector<HTMLElement>(".gloss-panel-text")?.textContent ?? "";
     const fullyShown = panel?.dataset.state === "done";
     const now = performance.now();
@@ -375,10 +387,10 @@ export default function Reader({ docId }: { docId: string }) {
    * 读者主动收起（再点同一句、点另一句、Esc、点别处）开始的那一刻判定 gloss_dismiss_early；
    * 收起动画、G-46 自动收起、离页都不经过这里。
    */
-  function reportEarlyDismiss() {
-    const attempt = readAttemptRef.current;
-    if (!attempt || attempt.dismissReported || expansion?.index !== attempt.index) return;
-    sampleReadAttempt();
+  function reportEarlyDismiss(index: number) {
+    const attempt = readAttemptRef.current.get(index);
+    if (!attempt || attempt.dismissReported || !expansionsRef.current.has(index)) return;
+    sampleReadAttempt(index);
     // 分母同读完率：首次撑开且白话已完整显示；生成未完成时收起归 gloss_abort。
     if (!attempt.firstClick || !attempt.completeReported || attempt.clock.readReported ||
       attempt.clock.visibleMs >= DISMISS_EARLY_MS) return;
@@ -399,21 +411,28 @@ export default function Reader({ docId }: { docId: string }) {
     entrySourceFor(docId);
     setReportedIndexes(new Set());
     clickCountsRef.current.clear();
-    readAttemptRef.current = null;
+    readAttemptRef.current.clear();
     setReportPendingIndex(null);
     setReportFeedback(null);
     closeContextMenu();
   }, [docId]);
 
+  function abortGloss(index: number) {
+    const run = glossRunsRef.current.get(index);
+    if (!run || run.controller.signal.aborted) return;
+    glossRunsRef.current.delete(index);
+    run.controller.abort();
+    const attempt = readAttemptRef.current.get(index);
+    if (attempt && !attempt.abortReported) {
+      attempt.abortReported = true;
+      emitAnalytics({ event: "gloss_abort", sentenceIndex: index,
+        abortPhase: attempt.clock.firstTextAt === null ? "waiting" : "streaming" });
+    }
+  }
   useEffect(() => {
     const finish = () => {
-      const attempt = readAttemptRef.current;
-      sampleReadAttempt();
-      if (!attempt || attempt.abortReported || attempt.settled || attempt.cacheHit) return;
-      attempt.clock.stop(performance.now());
-      attempt.abortReported = true;
-      emitAnalytics({ event: "gloss_abort", sentenceIndex: attempt.index,
-        abortPhase: attempt.clock.firstTextAt === null ? "waiting" : "streaming" });
+      for (const index of [...glossRunsRef.current.keys()]) abortGloss(index);
+      for (const attempt of readAttemptRef.current.values()) attempt.clock.stop(performance.now());
     };
     window.addEventListener("pagehide", finish);
     return () => { window.removeEventListener("pagehide", finish); finish(); };
@@ -477,7 +496,11 @@ export default function Reader({ docId }: { docId: string }) {
     explainViewsRef.current = EMPTY_EXPLAIN_VIEWS;
     setExplainViews(EMPTY_EXPLAIN_VIEWS);
     setSavedRegions(null);
-    setMeasuringParaIndex(null);
+    setMeasurement(null);
+    setExpansions(new Map());
+    setGlosses(new Map());
+    setRetryCounts(new Map());
+    setRecentIndex(null);
     setActiveSavedIndex(null);
     setExpandedSavedIndex(null);
     setFontsReady(false);
@@ -612,70 +635,50 @@ export default function Reader({ docId }: { docId: string }) {
     [doc],
   );
 
-  /**
-   * G-10b：只在真实、未拆分的正文上量全部保存句。savedRegions 为 null 时 Paragraph
-   * 故意不插任何区；这个 layout effect 在绘制前把测量结果同步提交，正文 CSS 同时保持隐藏。
-   */
+  function visibleIndexes(next = expansionsRef.current, mode = readingMode, expanded = expandedSavedIndex) {
+    return [...new Set([
+      ...next.keys(),
+      ...[...savedGlossesRef.current.keys()].filter((index) => mode === "review" || expanded === index),
+    ])].sort((a, b) => a - b);
+  }
+  function stageLayouts(paras: ReadonlySet<number>, from: number | ReadonlyMap<number, number>,
+    next = expansionsRef.current, mode = readingMode, expanded = expandedSavedIndex) {
+    for (const attempt of readAttemptRef.current.values()) attempt.clock.stop(performance.now());
+    const cutoff = (index: number) => typeof from === "number" ? from : from.get(sentences[index]?.paraIndex) ?? 0;
+    const queue = visibleIndexes(next, mode, expanded).filter((index) =>
+      paras.has(sentences[index]?.paraIndex) && index >= cutoff(index));
+    setSavedRegions((current) => new Map([...(current ?? [])].filter(([index]) =>
+      !paras.has(sentences[index]?.paraIndex) || index < cutoff(index))));
+    setMeasurement(queue.length ? { version: ++measurementVersionRef.current, queue, progress: 0 } : null);
+  }
+  // 每次同步提交只测下一句；已完成前缀已经插回并续排。正文不隐藏。
   useLayoutEffect(() => {
     const body = bodyRef.current;
-    const initialMeasure = savedRegions === null;
-    if (!doc || !body || !fontsReady || (!initialMeasure && measuringParaIndex === null)) return;
-    performance.mark("g10b:measure:start");
-    const next = new Map(savedRegions ?? []);
-    const pending = pendingOpenRef.current;
-    const measureIndexes = new Set<number>();
-    for (const [index] of savedGlosses) {
-      if (initialMeasure || sentences[index]?.paraIndex === measuringParaIndex) measureIndexes.add(index);
+    if (!doc || !body || !fontsReady) return;
+    if (savedRegions === null) {
+      const queue = visibleIndexes();
+      setSavedRegions(new Map());
+      setMeasurement(queue.length ? { version: ++measurementVersionRef.current, queue, progress: 0 } : null);
+      transactionRef.current ??= pendingMeasureTransactionRef.current;
+      pendingMeasureTransactionRef.current = null;
+      return;
     }
-    if (pending) measureIndexes.add(pending.index);
-    // 全书重测时，正在展开的句子也必须在同一份未拆分 DOM 上取得新 splitAt。
-    if (initialMeasure && expansion) measureIndexes.add(expansion.index);
-    if (!initialMeasure && measuringParaIndex !== null) {
-      for (const [index] of next) {
-        if (sentences[index]?.paraIndex === measuringParaIndex) next.delete(index);
-      }
-    }
-    let pendingSplit: number | null | undefined;
-    let expansionSplit: number | null | undefined;
-    for (const index of measureIndexes) {
+    if (!measurement) return;
+    const measuredParas = new Set<number>();
+    const next = new Map(savedRegions);
+    const remaining: number[] = [];
+    for (const index of measurement.queue) {
       const sentence = sentences[index];
       if (!sentence) continue;
+      if (measuredParas.has(sentence.paraIndex)) { remaining.push(index); continue; }
+      measuredParas.add(sentence.paraIndex);
       const splitAt = headingByParagraph.has(sentence.paraIndex) ? null : measureSplit(body, sentence.paraIndex, index);
-      if (pendingOpenRef.current?.index === index) pendingSplit = splitAt;
-      if (expansion?.index === index) expansionSplit = splitAt;
-      if (!savedGlosses.has(index)) continue;
-      next.set(index, {
-        index,
-        splitAt,
-      });
+      next.set(index, { index, splitAt });
     }
-    performance.mark("g10b:measure:end");
-    performance.measure("g10b:measure", "g10b:measure:start", "g10b:measure:end");
     setSavedRegions(next);
-    setMeasuringParaIndex(null);
-    pendingOpenRef.current = null;
-    if (pending) {
-      const sentence = sentences[pending.index];
-      if (sentence) {
-        const cacheLookup = isSample ? null : lookupPreloadedGloss(glossMemoRef.current, pending.index, structureRef.current !== null);
-        if (sample && !savedGlosses.has(pending.index)) {
-          setGloss({ index: pending.index, view: { status: "done", text: sample.glosses[pending.index], failure: null,
-            instant: false, firstChunkNow: true } });
-        } else if (cacheLookup?.status === "hit") {
-          setGloss({ index: pending.index, view: { status: "done", text: cacheLookup.entry.text, failure: null, instant: true } });
-        }
-        transactionRef.current = { anchor: pending.anchor, animateOpen: pending.animateOpen };
-        setActiveSavedIndex(null);
-        setExpansion({ index: pending.index, paraIndex: sentence.paraIndex, splitAt: pendingSplit ?? null });
-      }
-    } else if (initialMeasure) {
-      transactionRef.current = pendingMeasureTransactionRef.current;
-      pendingMeasureTransactionRef.current = null;
-      if (expansion) {
-        setExpansion({ ...expansion, splitAt: expansionSplit === undefined ? expansion.splitAt : expansionSplit });
-      }
-    }
-  }, [doc, expansion, fontsReady, headingByParagraph, isSample, measuringParaIndex, sample, savedGlosses, savedRegions, sentences]);
+    setMeasurement(remaining.length ? { ...measurement, queue: remaining,
+      progress: measurement.progress + measuredParas.size } : null);
+  }, [doc, fontsReady, headingByParagraph, measurement, savedRegions, sentences]);
 
   const cacheInputs = useMemo(
     () => sentences.map((_, index) => ({ index, input: glossInput(sentences, index, null) })),
@@ -714,31 +717,24 @@ export default function Reader({ docId }: { docId: string }) {
   }, [doc, expandedSavedIndex, readingMode, savedGlosses, sentences]);
 
   const regionsByParagraph = useMemo(() => {
-    if (!expansion && activeSavedIndex === null && measuringParaIndex === null) return visibleSavedRegionsByParagraph;
     const groups = visibleSavedRegionsByParagraph.slice();
-    if (measuringParaIndex !== null) groups[measuringParaIndex] = NO_REGIONS;
     if (activeSavedIndex !== null) {
       const sentence = sentences[activeSavedIndex];
-      if (sentence) {
-        const regions = groups[sentence.paraIndex] ?? NO_REGIONS;
-        groups[sentence.paraIndex] = regions.map((region) =>
-          region.index === activeSavedIndex ? { ...region, actionVisible: true } : region,
-        );
-      }
+      if (sentence) groups[sentence.paraIndex] = (groups[sentence.paraIndex] ?? NO_REGIONS).map((region) =>
+        region.index === activeSavedIndex ? { ...region, actionVisible: true } : region);
     }
-    if (shouldRenderTransient(expansion, savedRegions, measuringParaIndex)) {
-      groups[expansion.paraIndex] = [...(groups[expansion.paraIndex] ?? NO_REGIONS), {
-        index: expansion.index,
-        splitAt: expansion.splitAt,
-        view: gloss && gloss.index === expansion.index ? gloss.view : LOADING_VIEW,
-        saved: false,
-        presentation: glossShape,
-        actionVisible: true,
-        explainView: explainViews.get(expansion.index) ?? IDLE_EXPLAIN_VIEW,
-      }];
+    for (const item of expansions.values()) {
+      const layout = savedRegions?.get(item.index);
+      if (!layout || savedGlosses.has(item.index)) continue;
+      groups[item.paraIndex] = [...(groups[item.paraIndex] ?? NO_REGIONS), {
+        index: item.index, splitAt: layout.splitAt, view: glosses.get(item.index) ?? LOADING_VIEW,
+        saved: false, presentation: glossShape, actionVisible: true,
+        explainView: explainViews.get(item.index) ?? IDLE_EXPLAIN_VIEW,
+        glossKey: item.index + ":" + (retryCounts.get(item.index) ?? 0),
+      }].sort((a, b) => a.index - b.index);
     }
     return groups;
-  }, [activeSavedIndex, expansion, explainViews, gloss, glossShape, measuringParaIndex, savedRegions, sentences, visibleSavedRegionsByParagraph]);
+  }, [activeSavedIndex, expansions, explainViews, glosses, glossShape, retryCounts, savedGlosses, savedRegions, sentences, visibleSavedRegionsByParagraph]);
 
   const preloadAutoGloss = useCallback(
     (structure: string | null) => {
@@ -756,7 +752,7 @@ export default function Reader({ docId }: { docId: string }) {
   // 阅读位置：恢复到保存的句子；滚动时记录视口顶部所在的句子；布局变化时保持它在视口中的位置
   useLayoutEffect(() => {
     const body = bodyRef.current;
-    if (!doc || !body || sentences.length === 0 || (savedGlosses.size > 0 && savedRegions === null)) return;
+    if (!doc || !body || sentences.length === 0 || savedRegions === null || measurement) return;
 
     history.scrollRestoration = "manual";
     const position = positionRef.current;
@@ -774,7 +770,7 @@ export default function Reader({ docId }: { docId: string }) {
       position.layout = layoutKey(body);
       position.measure = layoutMeasureKey(body);
       restoredDocRef.current = docId;
-    } else {
+    } else if (!transactionRef.current) {
       const drift = sentenceTop(body, position.index) - position.offset;
       if (Math.abs(drift) > 1) window.scrollBy({ top: drift, behavior: "instant" });
       position.offset = sentenceTop(body, position.index);
@@ -803,7 +799,7 @@ export default function Reader({ docId }: { docId: string }) {
       const measure = layoutMeasureKey(body);
       // 撑开 / 收起已经自己锚定过视口（见下方事务），这里不再二次校正
       if (key === current.layout) return;
-      if (measure !== current.measure && (savedGlosses.size > 0 || expansion !== null)) {
+      if (measure !== current.measure && (savedGlossesRef.current.size > 0 || expansionsRef.current.size > 0)) {
         // 测量提交不消费本事务；量完、常驻区与 transient 都插回后才由事务 effect 锚定。
         pendingMeasureTransactionRef.current = { anchor: anchorAtViewportTop(body), animateOpen: false };
         setSavedRegions(null);
@@ -827,7 +823,7 @@ export default function Reader({ docId }: { docId: string }) {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [doc, docId, expansion, isSample, savedGlosses, savedRegions, sentences.length]);
+  }, [doc, docId, fontsReady, isSample, measurement !== null, savedRegions === null, sentences.length]);
 
   /* ---------------- 撑开 / 收起 ---------------- */
 
@@ -847,64 +843,82 @@ export default function Reader({ docId }: { docId: string }) {
     animationRef.current = null;
   }
 
-  function cancelPendingCollapse() {
-    if (collapseTimerRef.current === undefined) return;
-    window.clearTimeout(collapseTimerRef.current);
-    collapseTimerRef.current = undefined;
-    clearAnimation();
-  }
-
-  /**
-   * 产品不变量：正在读的内容，永远不因为别处的变化而移动。
-   * 所有改变撑开状态（从而改变文档高度）的路径都只能经由这里提交——撑开、点击收起、切换时前一个收起、
-   * 点别处 / Esc / 滚出视口自动收起，以及以后新增的任何路径。这里先记下视口参照物
-   * （调用方给定时用它，例如被点击的那个字；否则默认取视口顶端第一个完整可见的字），
-   * 提交后、绘制前由下方的事务把它滚回原位。
-   */
-  function commit(next: Expansion | null, options: { anchor?: CharAnchor | null; animateOpen?: boolean } = {}) {
-    const previousAttempt = readAttemptRef.current;
-    if (previousAttempt && (!next || next.index !== previousAttempt.index)) {
-      sampleReadAttempt();
-      previousAttempt.clock.stop(performance.now());
-      const previousView = gloss?.index === previousAttempt.index ? gloss.view : null;
-      if (!previousAttempt.abortReported && !previousAttempt.settled && previousView?.status !== "done" && previousView?.status !== "failed" && !previousAttempt.cacheHit) {
-        emitAnalytics({ event: "gloss_abort", sentenceIndex: previousAttempt.index,
-          abortPhase: previousAttempt.clock.firstTextAt === null ? "waiting" : "streaming" });
-        previousAttempt.abortReported = true;
-      }
-      readAttemptRef.current = null;
+  function cancelPendingCollapse(index?: number) {
+    for (const [key, animations] of collapseAnimationsRef.current) {
+      if (index !== undefined && key !== index) continue;
+      animations.forEach((animation) => animation.cancel());
+      collapseAnimationsRef.current.delete(key);
     }
-    if (!next || (contextMenuRef.current && contextMenuRef.current.index !== next.index)) closeContextMenu();
-    const body = bodyRef.current;
-    transactionRef.current = {
-      anchor: options.anchor ?? (body ? anchorAtViewportTop(body) : null),
-      animateOpen: options.animateOpen ?? false,
-    };
-    setActiveSavedIndex(null);
-    setExpansion(next);
   }
-
+  function setTransaction(transaction: Transaction) {
+    transactionRef.current ??= transaction;
+  }
+  function removeAttempts(indexes: readonly number[], early: boolean) {
+    for (const index of indexes) {
+      if (early) reportEarlyDismiss(index);
+      sampleReadAttempt(index);
+      abortGloss(index);
+      readAttemptRef.current.get(index)?.clock.stop(performance.now());
+      readAttemptRef.current.delete(index);
+    }
+  }
+  function commit(next: Expansion | null, options: { anchor?: CharAnchor | null; animateOpen?: boolean } = {}) {
+    const current = expansionsRef.current;
+    const removed = [...current.keys()].filter((index) => !next || sentences[index]?.paraIndex !== next.paraIndex);
+    removeAttempts(removed, true);
+    const values = new Map(current);
+    removed.forEach((index) => values.delete(index));
+    if (next) values.set(next.index, next);
+    else values.clear();
+    const paras = new Set(removed.map((index) => sentences[index].paraIndex));
+    const cutoffs = new Map([...paras].map((para) => [para, 0]));
+    if (next) { paras.add(next.paraIndex); cutoffs.set(next.paraIndex, next.index + 1); }
+    setTransaction({ anchor: options.anchor ?? (bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null),
+      animateOpen: options.animateOpen ?? false, operationIndex: next?.index });
+    expansionsRef.current = values;
+    setExpansions(values);
+    setRecentIndex(next?.index ?? null);
+    setActiveSavedIndex(null);
+    stageLayouts(paras, cutoffs, values);
+    if (next) setSavedRegions((currentLayouts) => new Map(currentLayouts).set(next.index, { index: next.index, splitAt: next.splitAt }));
+  }
+  function keepParagraph(paraIndex: number) {
+    const removed = [...expansionsRef.current.keys()].filter((index) => sentences[index]?.paraIndex !== paraIndex);
+    removeAttempts(removed, true);
+    const next = new Map(expansionsRef.current);
+    removed.forEach((index) => next.delete(index));
+    expansionsRef.current = next;
+    setExpansions(next);
+    return new Set(removed.map((index) => sentences[index].paraIndex));
+  }
   function commitSaved(index: number | null, options: { anchor?: CharAnchor | null } = {}) {
     closeContextMenu();
-    const body = bodyRef.current;
-    transactionRef.current = {
-      anchor: options.anchor ?? (body ? anchorAtViewportTop(body) : null),
-      animateOpen: false,
-    };
-    setExpansion(null);
+    setTransaction({ anchor: options.anchor ?? (bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null),
+      animateOpen: false, adjustVisibility: false });
+    if (index !== null) {
+      const paras = keepParagraph(sentences[index].paraIndex);
+      if (expansionsRef.current.has(index)) {
+        const next = new Map(expansionsRef.current);
+        next.delete(index);
+        expansionsRef.current = next;
+        setExpansions(next);
+      }
+      if (paras.size) stageLayouts(paras, 0);
+    }
     setActiveSavedIndex(index);
   }
-
   function expandSaved(index: number, options: { anchor?: CharAnchor | null; showActions?: boolean } = {}) {
     closeContextMenu();
-    const body = bodyRef.current;
-    transactionRef.current = {
-      anchor: options.anchor ?? (body ? anchorAtViewportTop(body) : null),
-      animateOpen: false,
-    };
-    setExpansion(null);
+    const paras = keepParagraph(sentences[index].paraIndex);
+    const cutoffs = new Map([...paras].map((para) => [para, 0]));
+    paras.add(sentences[index].paraIndex);
+    cutoffs.set(sentences[index].paraIndex, index);
+    setTransaction({ anchor: options.anchor ?? (bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null),
+      animateOpen: false, operationIndex: index });
+    setRecentIndex(index);
     setExpandedSavedIndex(index);
     setActiveSavedIndex(options.showActions ? index : null);
+    stageLayouts(paras, cutoffs, expansionsRef.current, readingMode, index);
   }
 
   function closeContextMenu() {
@@ -922,7 +936,7 @@ export default function Reader({ docId }: { docId: string }) {
     const index = Number(panelTarget?.dataset.sentenceIndex ?? sentenceTarget?.dataset.index);
     if (!Number.isInteger(index) || index < 0) return;
 
-    const transientVisible = expansion?.index === index;
+    const transientVisible = expansions.has(index);
     const savedVisible = savedRegions?.has(index) === true &&
       (readingMode === "review" || expandedSavedIndex === index || activeSavedIndex === index);
     if (!transientVisible && !savedVisible) return;
@@ -952,34 +966,13 @@ export default function Reader({ docId }: { docId: string }) {
     if (nextCount !== null) emitAnalytics(nextCount === 1
       ? { event: "sentence_click", sentenceIndex: index, sentenceCharsBucket: sentenceCharsBucket(countChars(sentence.text)), cacheHit, ...sampleAnalytics }
       : { event: "sentence_reclick", sentenceIndex: index, reclickOrdinal: nextCount, ...sampleAnalytics });
-    const priorAttempt = readAttemptRef.current;
-    if (priorAttempt && priorAttempt.index !== index) {
-      reportEarlyDismiss();
-      sampleReadAttempt();
-      priorAttempt.clock.stop(performance.now());
-      const priorView = gloss?.index === priorAttempt.index ? gloss.view : null;
-      if (!priorAttempt.abortReported && !priorAttempt.settled && priorView?.status !== "done" && priorView?.status !== "failed" && !priorAttempt.cacheHit) {
-        emitAnalytics({ event: "gloss_abort", sentenceIndex: priorAttempt.index,
-          abortPhase: priorAttempt.clock.firstTextAt === null ? "waiting" : "streaming" });
-      }
-    }
-    readAttemptRef.current = nextCount === null ? null : {
+    if (nextCount !== null) readAttemptRef.current.set(index, {
       index, clickedAt: performance.now(), cacheHit, firstClick: nextCount === 1,
       clock: new ReadCompleteClock(), completeReported: false, abortReported: false, settled: isSample || cacheHit, dismissReported: false,
-    };
-
-    cancelPendingCollapse();
+    });
+    cancelPendingCollapse(index);
     const anchor = anchorAtClick(target, clientX, clientY);
-    // 同段已有常驻区时，先在同一同步链里回到未拆分真实 DOM，再量保存区和新临时区。
-    const paragraphHasSaved = [...(savedRegions ?? []).keys()].some((savedIndex) => sentences[savedIndex]?.paraIndex === sentence.paraIndex);
-    if (paragraphHasSaved || expansion?.paraIndex === sentence.paraIndex) {
-      pendingOpenRef.current = { index, anchor, animateOpen: !prefersReducedMotion() };
-      setMeasuringParaIndex(sentence.paraIndex);
-      return;
-    }
-    const splitAt = headingByParagraph.has(sentence.paraIndex)
-      ? null
-      : measureSplit(body, sentence.paraIndex, index);
+    const splitAt = headingByParagraph.has(sentence.paraIndex) ? null : measureSplit(body, sentence.paraIndex, index);
     // 命中必须和撑开状态同一批 React 更新：第一次 DOM 更新直接放完整白话，不先经过加载态。
     const saved = savedGlosses.get(index);
     if (saved) {
@@ -1002,34 +995,24 @@ export default function Reader({ docId }: { docId: string }) {
     );
   }
 
-  function collapse(animate: boolean) {
+  function collapseIndexes(indexes: readonly number[], early: boolean, anchor?: CharAnchor | null, animate = false) {
+    if (!indexes.length) return;
     closeContextMenu();
-    const panel = panelRef.current;
-    if (!expansion || !panel || collapseTimerRef.current !== undefined) return;
-
-    // D3：生成中收起立即中止请求，不等收起动画放完
-    glossAbortRef.current?.abort();
-
-    const rect = panel.getBoundingClientRect();
-    // 只在撑开区整体位于视口顶端之下时播动画；其余情况（如自动收起时它已在视口上方）直接移除，由锚定保证可见内容不动
-    const canAnimate = animate && !prefersReducedMotion() && rect.top >= 0 && rect.top < window.innerHeight;
-    if (!canAnimate) {
-      commit(null);
-      return;
-    }
-
-    // 下方可见内容上滑盖住撑开区，结束后再移除。参照物在移除那一刻才取：
-    // 此时下方元素已处于 transform 终点，与移除后的自然位置一致；期间用户滚动也不会让参照物过期
-    const shift = panelShift(panel);
-    const elements = elementsBelow(panel, shift, 0);
-    clearAnimation();
-    slide(elements, 0, -shift);
-    fade(panel, 1, 0);
-    animationRef.current = { elements, panel };
-    collapseTimerRef.current = window.setTimeout(() => {
-      collapseTimerRef.current = undefined;
-      commit(null);
-    }, ANIMATION_MS);
+    const closing = animate ? indexes.flatMap((index) => {
+      const panel = panelsRef.current.get(index);
+      const rect = panel?.getBoundingClientRect();
+      return panel && rect && rect.top >= 0 && rect.top < window.innerHeight
+        ? [{ index, height: panelShift(panel) }] : [];
+    }) : [];
+    removeAttempts(indexes, early);
+    const next = new Map(expansionsRef.current);
+    indexes.forEach((index) => next.delete(index));
+    expansionsRef.current = next;
+    setExpansions(next);
+    const paras = new Set(indexes.map((index) => sentences[index].paraIndex));
+    setTransaction({ anchor: anchor ?? (bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null),
+      animateOpen: false, adjustVisibility: false, closing });
+    stageLayouts(paras, Math.min(...indexes), next);
   }
 
   function handleBodyClick(event: ReactMouseEvent<HTMLElement>) {
@@ -1051,17 +1034,15 @@ export default function Reader({ docId }: { docId: string }) {
     if (last && last.index === index && now - last.time < CLICK_DEBOUNCE_MS) return;
     lastToggleRef.current = { index, time: now };
 
-    if (savedRegions?.has(index)) {
-      reportEarlyDismiss();
+    if (savedGlosses.has(index)) {
       const anchor = anchorAtClick(target, event.clientX, event.clientY);
       if (readingMode === "reading" && expandedSavedIndex !== index) {
         expandSaved(index, { anchor, showActions: true });
       } else {
         commitSaved(activeSavedIndex === index ? null : index, { anchor });
       }
-    } else if (expansion?.index === index && collapseTimerRef.current === undefined) {
-      reportEarlyDismiss();
-      collapse(true);
+    } else if (expansions.has(index)) {
+      collapseIndexes([index], true, anchorAtClick(target, event.clientX, event.clientY), true);
     } else {
       open(index, target, event.clientX, event.clientY);
     }
@@ -1071,7 +1052,7 @@ export default function Reader({ docId }: { docId: string }) {
   useLayoutEffect(() => {
     const body = bodyRef.current;
     // 真实未拆分 DOM 只供测量，不能在这一次中间提交消费锚定事务。
-    if (!body || savedRegions === null || measuringParaIndex !== null) return;
+    if (!body || savedRegions === null || measurement) return;
     const transaction = transactionRef.current;
     const pendingSavedJump = pendingSavedJumpRef.current;
     transactionRef.current = null;
@@ -1087,7 +1068,8 @@ export default function Reader({ docId }: { docId: string }) {
         restorePanelAnchor(body, transaction.anchor);
         growthAnchorRef.current.scrollY = window.scrollY;
       } else {
-        restoreCharAnchor(body, transaction.anchor);
+        // scrollBy 的实际滚动量可能取整；沿用面板锚定的 translate 补齐剩余小数。
+        restorePanelAnchor(body, transaction.anchor);
       }
     }
     rememberTopSentence(body, positionRef.current);
@@ -1104,11 +1086,30 @@ export default function Reader({ docId }: { docId: string }) {
     // 功能二逐句增长只做字符锚定：不能像首次展开那样追着不断变长的面板自动滚动。
     if (transaction?.adjustVisibility === false) return;
 
-    const panel = panelRef.current;
-    if (!expansion || !panel) return;
+    if (transaction?.closing && !prefersReducedMotion()) {
+      for (const { index, height } of transaction.closing) {
+        const block = body.querySelector<HTMLElement>('.sentence[data-index="' + index + '"]')?.closest("[data-reader-block]");
+        if (!block) continue;
+        const animations: ReturnType<HTMLElement["animate"]>[] = [];
+        for (let node = block.nextElementSibling; node; node = node.nextElementSibling) {
+          if (node instanceof HTMLElement && typeof node.animate === "function") {
+            animations.push(node.animate([{ transform: "translateY(" + height + "px)" }, { transform: "translateY(0)" }],
+              { duration: ANIMATION_MS, easing: "ease-out" }));
+          }
+        }
+        collapseAnimationsRef.current.set(index, animations);
+        Promise.all(animations.map((animation) => animation.finished.catch(() => {}))).then(() => {
+          if (collapseAnimationsRef.current.get(index) === animations) collapseAnimationsRef.current.delete(index);
+        });
+      }
+    }
+    const operationIndex = transaction?.operationIndex;
+    const panel = operationIndex === undefined ? null : panelsRef.current.get(operationIndex) ??
+      body.querySelector<HTMLElement>('.gloss-panel[data-sentence-index="' + operationIndex + '"]');
+    if (operationIndex === undefined || !panel) return;
 
     // ② G6：整句或撑开区被视口截断时才微调；否则点击行纹丝不动
-    const adjustment = visibilityAdjustment(body, expansion.index, panel);
+    const adjustment = visibilityAdjustment(body, operationIndex, panel);
 
     // ③ 动画：撑开区一次性插入到最终高度（只触发这一次重排），
     //    再让视口内原本就在它下方的元素从旧位置 transform 回来——每帧只动合成层
@@ -1127,84 +1128,52 @@ export default function Reader({ docId }: { docId: string }) {
     if (adjustment !== 0) {
       window.scrollBy({ top: adjustment, behavior: prefersReducedMotion() ? "instant" : "smooth" });
     }
-  }, [activeSavedIndex, expandedSavedIndex, explainViews, expansion, gloss, glossShape, measuringParaIndex, readingMode, savedRegions]);
+  }, [activeSavedIndex, expandedSavedIndex, explainViews, expansions, glosses, glossShape, measurement, readingMode, savedRegions]);
 
-  // 收起条件：点别处、Esc，以及原句与撑开区都离开视口（G-46）。
+  // Esc / 空白一次收全部临时白话，常驻白话保留。
   useEffect(() => {
-    const body = bodyRef.current;
-    const activeIndexForDismiss = expansion?.index ?? activeSavedIndex;
-    if (activeIndexForDismiss === null || !body) return;
+    if (measurement || !bodyRef.current || (!expansions.size && activeSavedIndex === null)) return;
     const dismiss = () => {
-      if (activeSavedIndex !== null) {
-        commitSaved(null);
-        return;
-      }
-      reportEarlyDismiss();
-      collapse(true);
+      collapseIndexes([...expansionsRef.current.keys()], true);
+      setActiveSavedIndex(null);
     };
-
     const onDocumentClick = (event: MouseEvent) => {
       if (hasTextSelection()) return;
       const target = event.target as Element | null;
       if (target?.closest?.(".sentence, .gloss-panel, .feedback-card, .feedback-button")) return;
       dismiss();
     };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") dismiss();
-    };
-
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
     document.addEventListener("click", onDocumentClick);
     document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("click", onDocumentClick);
-      document.removeEventListener("keydown", onKeyDown);
-    };
+    return () => { document.removeEventListener("click", onDocumentClick); document.removeEventListener("keydown", onKeyDown); };
   });
-
   useLayoutEffect(() => {
     const body = bodyRef.current;
-    const activeIndexForDismiss = expansion?.index ?? activeSavedIndex;
-    if (activeIndexForDismiss === null || !body) return;
-    const source = [...body.querySelectorAll<HTMLElement>(`.sentence[data-index="${activeIndexForDismiss}"]`)];
-    const panel = body.querySelector<HTMLElement>(`.gloss-panel[data-sentence-index="${activeIndexForDismiss}"]`);
-    if (source.length === 0 || !panel) return;
-
-    // A fresh observer can report the sentence before the panel. Unknown is not invisible.
-    const visibility = new Map<Element, boolean | null>([...source, panel].map((node) => [node, null]));
-    let disconnected = false;
-    let dismissed = false;
+    if (!body || measurement || savedRegions === null || !fontsReady || !expansions.size) return;
+    const paraIndex = expansions.values().next().value!.paraIndex;
+    const blocks = [...body.querySelectorAll<HTMLElement>('[data-reader-block][data-para="' + paraIndex + '"]')];
+    const panels = [...body.querySelectorAll<HTMLElement>(".gloss-panel")].filter((panel) =>
+      sentences[Number(panel.dataset.sentenceIndex)]?.paraIndex === paraIndex);
+    const visibility = new Map<Element, boolean | null>([...blocks, ...panels].map((node) => [node, null]));
+    let disconnected = false, dismissed = false;
     const observer = new IntersectionObserver((entries) => {
       if (disconnected || dismissed) return;
-      for (const entry of entries) {
-        if (visibility.has(entry.target)) visibility.set(entry.target, entry.isIntersecting);
-      }
+      for (const entry of entries) if (visibility.has(entry.target)) visibility.set(entry.target, entry.isIntersecting);
       if (allObservedTargetsOutside(visibility.values())) {
         dismissed = true;
-        if (activeSavedIndex !== null) commitSaved(null);
-        else collapse(false);
+        collapseIndexes([...expansionsRef.current.keys()].filter((index) => sentences[index]?.paraIndex === paraIndex), false);
       }
     });
     for (const node of visibility.keys()) observer.observe(node);
-    return () => {
-      disconnected = true;
-      observer.disconnect();
-    };
-  }, [activeSavedIndex, docId, expandedSavedIndex, expansion, readingMode, retryCount, savedRegions]);
-
-  useEffect(
-    () => () => {
-      window.clearTimeout(collapseTimerRef.current);
-      clearAnimation();
-    },
-    [],
-  );
-
-  /* ---------------- 功能一：白话（G-07） ---------------- */
+    return () => { disconnected = true; observer.disconnect(); };
+  }, [docId, expandedSavedIndex, expansions, fontsReady, measurement, readingMode, savedRegions, sentences]);
+  useEffect(() => () => { cancelPendingCollapse(); clearAnimation(); }, []);
 
   const capturePanelGrowth = useCallback((index: number): CharAnchor | null => {
     const body = bodyRef.current;
     const panel = body?.querySelector<HTMLElement>(`.gloss-panel[data-sentence-index="${index}"]`);
-    if (!body || !panel || !shouldAnchorPanelGrowth(panel.getBoundingClientRect().bottom)) {
+    if (measurementRef.current || !body || !panel || !shouldAnchorPanelGrowth(panel.getBoundingClientRect().bottom)) {
       growthAnchorRef.current = null;
       return null;
     }
@@ -1259,58 +1228,63 @@ export default function Reader({ docId }: { docId: string }) {
   }, [preloadAutoGloss]);
 
   // 撑开一句就请求它的白话；收起、切换句子、离开页面时中止（D3 / D4）
-  const activeIndex = expansion?.index ?? null;
   useEffect(() => {
-    if (!contextMenu || expansion?.index === contextMenu.index) return;
+    if (!contextMenu || expansions.has(contextMenu.index)) return;
     const savedVisible = savedRegions?.has(contextMenu.index) === true &&
       (readingMode === "review" || expandedSavedIndex === contextMenu.index || activeSavedIndex === contextMenu.index);
     if (!savedVisible) closeContextMenu();
-  }, [activeSavedIndex, contextMenu, expandedSavedIndex, expansion, readingMode, savedRegions]);
+  }, [activeSavedIndex, contextMenu, expandedSavedIndex, expansions, readingMode, savedRegions]);
 
   useEffect(() => {
-    if (activeIndex === null) return;
-    if (isSample) return;
-    // 保存区优先于预载缓存；命中时既不读缓存，也不请求接口。
-    if (savedGlossesRef.current.has(activeIndex)) return;
-    const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, activeIndex, structureRef.current !== null);
-    if (cacheLookup.status === "hit") {
-      return;
-    }
-
-    const controller = new AbortController();
-    glossAbortRef.current = controller;
-    setGloss({ index: activeIndex, view: LOADING_VIEW });
-    const show = (view: GlossView) => {
-      const anchor = capturePanelGrowth(activeIndex);
-      if (anchor) transactionRef.current = { anchor, animateOpen: false, adjustVisibility: false };
-      setGloss({ index: activeIndex, view });
-    };
-    const input = glossInput(sentences, activeIndex, structureRef.current);
-    void streamGloss(input, {
-      signal: controller.signal,
-      onText: (text) => show({ status: "streaming", text, failure: null, instant: false }),
-    }).then((result) => {
-      if (result.status === "aborted" || controller.signal.aborted) return;
-      if (readAttemptRef.current?.index === activeIndex) readAttemptRef.current.settled = true;
-      if (result.status === "done") {
-        const remembered = { text: result.text, hasStructure: input.structure !== null, source: "session" as const, shown: true };
-        glossMemoRef.current.set(activeIndex, remembered);
-        void saveGlossCache(docId, input, result.text);
-        show({ status: "done", text: result.text, failure: null, instant: false });
-      } else {
-        const failureCode = result.rawErrorCode === "timeout" ? "C1" : result.rawErrorCode === "empty" ? "C4"
-          : result.rawErrorCode === "refused" ? "C6" : result.rawErrorCode === "waf_403" || result.rawErrorCode === "upstream_429" ? "C3"
+    if (measurement || savedRegions === null || !fontsReady || isSample) return;
+    for (const [index] of expansions) {
+      if (!savedRegions.has(index) || savedGlossesRef.current.has(index)) continue;
+      const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null);
+      if (cacheLookup.status === "hit") continue;
+      const retry = retryCounts.get(index) ?? 0;
+      const currentRun = glossRunsRef.current.get(index);
+      if (currentRun?.retry === retry || (!currentRun && (glossesRef.current.get(index)?.status === "done" ||
+        glossesRef.current.get(index)?.status === "failed"))) continue;
+      if (currentRun) abortGloss(index);
+      const controller = new AbortController();
+      const run = { controller, runId: ++nextGlossRunRef.current, retry };
+      glossRunsRef.current.set(index, run);
+      const alive = () => !controller.signal.aborted && glossRunsRef.current.get(index) === run && expansionsRef.current.has(index);
+      setGloss({ index, view: LOADING_VIEW });
+      const show = (view: GlossView) => {
+        if (!alive()) return;
+        const anchor = capturePanelGrowth(index);
+        if (anchor) setTransaction({ anchor, animateOpen: false, adjustVisibility: false });
+        setGloss({ index, view });
+      };
+      const input = glossInput(sentences, index, structureRef.current);
+      void streamGloss(input, { signal: controller.signal,
+        onText: (text) => show({ status: "streaming", text, failure: null, instant: false }),
+      }).then((result) => {
+        if (!alive() || result.status === "aborted") return;
+        const attempt = readAttemptRef.current.get(index);
+        if (attempt) attempt.settled = true;
+        if (result.status === "done") {
+          glossMemoRef.current.set(index, { text: result.text, hasStructure: input.structure !== null, source: "session", shown: true });
+          void saveGlossCache(docId, input, result.text);
+          show({ status: "done", text: result.text, failure: null, instant: false });
+        } else {
+          const failureCode = result.rawErrorCode === "timeout" ? "C1" : result.rawErrorCode === "empty" ? "C4"
+            : result.rawErrorCode === "refused" ? "C6" : result.rawErrorCode === "waf_403" || result.rawErrorCode === "upstream_429" ? "C3"
             : result.rawErrorCode === "interrupted" ? "D2" : result.rawErrorCode === "offline" ? "D1"
-              : result.rawErrorCode === "api_error" ? "C2" : "OTHER";
-        emitAnalytics({ event: "gloss_fail", sentenceIndex: activeIndex, failureCode,
-          limitSource: result.rawErrorCode === "waf_403" ? "waf" : result.rawErrorCode === "upstream_429" ? "upstream" : null });
-        show({ status: "failed", text: result.text, failure: result.failure, instant: false });
-      }
-    });
-    return () => controller.abort();
-  }, [activeIndex, capturePanelGrowth, docId, isSample, retryCount, sentences]);
-
-  const retryGloss = useCallback(() => setRetryCount((n) => n + 1), []);
+            : result.rawErrorCode === "api_error" ? "C2" : "OTHER";
+          emitAnalytics({ event: "gloss_fail", sentenceIndex: index, failureCode,
+            limitSource: result.rawErrorCode === "waf_403" ? "waf" : result.rawErrorCode === "upstream_429" ? "upstream" : null });
+          show({ status: "failed", text: result.text, failure: result.failure, instant: false });
+        }
+        glossRunsRef.current.delete(index);
+      });
+    }
+  }, [expansions, measurement, savedRegions, fontsReady, docId, isSample, retryCounts, sentences, capturePanelGrowth, setGloss]);
+  const retryGloss = useCallback((index: number) => {
+    setGloss({ index, view: LOADING_VIEW });
+    setRetryCounts((counts) => new Map(counts).set(index, (counts.get(index) ?? 0) + 1));
+  }, [setGloss]);
 
   /**
    * 只有整块面板已经在视口上方时才建立字符锚定：视口顶边切在面板内时，
@@ -1416,7 +1390,7 @@ export default function Reader({ docId }: { docId: string }) {
   function reportViewFor(index: number): GlossView | null {
     const saved = savedGlosses.get(index);
     if (saved) return { status: "done", text: saved.text, failure: null, instant: true };
-    if (gloss?.index === index) return gloss.view;
+    if (glosses.has(index)) return glosses.get(index)!;
     const remembered = glossMemoRef.current.get(index);
     if (remembered) return { status: "done", text: remembered.text, failure: null, instant: true };
     return null;
@@ -1485,31 +1459,32 @@ export default function Reader({ docId }: { docId: string }) {
     startExplainFor(index);
   }
 
-  const glossView = gloss && gloss.index === activeIndex ? gloss.view : LOADING_VIEW;
   useLayoutEffect(() => {
-    const attempt = readAttemptRef.current;
-    if (!attempt || activeIndex !== attempt.index) return;
-    const sample = () => { if (readAttemptRef.current === attempt) sampleReadAttempt(); };
+    if (measurement || savedRegions === null || !readAttemptRef.current.size) return;
+    const sample = () => { for (const index of readAttemptRef.current.keys()) sampleReadAttempt(index); };
     sample();
-    const observer = panelRef.current ? new MutationObserver(sample) : null;
-    if (observer && panelRef.current) observer.observe(panelRef.current, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-state"] });
+    const observer = new MutationObserver(sample);
+    for (const index of readAttemptRef.current.keys()) {
+      const panel = panelsRef.current.get(index);
+      if (panel) observer.observe(panel, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-state"] });
+    }
     const timer = window.setInterval(sample, 100);
     window.addEventListener("scroll", sample, { passive: true });
     window.addEventListener("resize", sample);
     document.addEventListener("visibilitychange", sample);
     return () => {
-      observer?.disconnect();
-      window.clearInterval(timer);
-      window.removeEventListener("scroll", sample);
-      window.removeEventListener("resize", sample);
-      document.removeEventListener("visibilitychange", sample);
+      observer.disconnect(); window.clearInterval(timer); window.removeEventListener("scroll", sample);
+      window.removeEventListener("resize", sample); document.removeEventListener("visibilitychange", sample);
     };
-  }, [activeIndex, expansion, glossView]);
-  saveContextRef.current = { activeIndex, docId, expansion, glossView, readingMode, savedGlosses, savedRegions, sentences };
+  }, [expansions, glosses, measurement, savedRegions]);
+  saveContextRef.current = { docId, expansions, glosses, readingMode, savedGlosses, savedRegions, sentences };
+  saveActionsRef.current = { commit, commitSaved };
   const toggleSavedGlossFor = useCallback(async (index: number): Promise<"saved" | "removed" | StorageErrorCode> => {
     const context = saveContextRef.current;
     if (!context) return "E2";
-    const { activeIndex, docId, expansion, glossView, readingMode, savedGlosses, savedRegions, sentences } = context;
+    const { docId, expansions, glosses, readingMode, savedGlosses, savedRegions, sentences } = context;
+    const expansion = expansions.get(index);
+    const glossView = glosses.get(index) ?? LOADING_VIEW;
     const sentence = sentences[index];
     if (!sentence) return "E2";
 
@@ -1538,13 +1513,13 @@ export default function Reader({ docId }: { docId: string }) {
           return layouts;
         });
         setExpandedSavedIndex((current) => current === index ? null : current);
-        commit(
+        saveActionsRef.current.commit(
           { index, paraIndex: sentence.paraIndex, splitAt: region?.splitAt ?? null },
           { anchor, animateOpen: false },
         );
         return "removed";
       }
-      if (index !== activeIndex || glossView.status !== "done" || !expansion) return "E2";
+      if (glossView.status !== "done" || !expansion) return "E2";
       const entry = await saveSavedGloss(docId, sentence, glossView.text);
       emitAnalytics({ event: "gloss_save", sentenceIndex: index, edited: false, ...sampleAnalytics });
       const next = new Map(savedGlossesRef.current).set(index, entry);
@@ -1554,18 +1529,15 @@ export default function Reader({ docId }: { docId: string }) {
         if (current.status !== "ready") return current;
         return { ...current, savedGlosses: next };
       });
-      setSavedRegions((current) => new Map(current).set(index, { index, splitAt: expansion.splitAt }));
+      setSavedRegions((current) => new Map(current).set(index, { index, splitAt: savedRegions?.get(index)?.splitAt ?? expansion.splitAt }));
       if (readingMode === "reading") setExpandedSavedIndex(index);
-      commitSaved(index, { anchor });
+      saveActionsRef.current.commitSaved(index, { anchor });
       return "saved";
     } catch (err) {
       if (!(err instanceof StorageError)) throw err;
       return err.code;
     }
   }, []);
-  // 每次重试换一个 key，撑开区重新挂载，逐块放字的进度从头开始
-  const glossKey = `${activeIndex}:${retryCount}`;
-
   const minHeadingLevel = Math.min(...(doc?.headings ?? []).map((h) => h.level));
   // 左栏常驻信息（G-25）：全部来自已存的记录，不随滚动变化，不新增状态
   const skippedLine = skippedSummary(doc?.meta.skipped);
@@ -1592,6 +1564,7 @@ export default function Reader({ docId }: { docId: string }) {
     setActiveSavedIndex(null);
     setExpandedSavedIndex(null);
     setReadingMode(next);
+    stageLayouts(new Set(sentences.map((sentence) => sentence.paraIndex)), 0, expansionsRef.current, next, null);
   }, [readingMode]);
   const jumpToSaved = useCallback((index: number) => {
     const body = bodyRef.current;
@@ -1602,7 +1575,7 @@ export default function Reader({ docId }: { docId: string }) {
       transactionRef.current = { anchor: null, animateOpen: false };
       setActiveSavedIndex(null);
       if (needsExpand) {
-        setExpansion(null);
+        collapseIndexes([...expansionsRef.current.keys()], true);
         setExpandedSavedIndex(index);
       }
       return;
@@ -1612,7 +1585,7 @@ export default function Reader({ docId }: { docId: string }) {
       behavior: prefersReducedMotion() ? "instant" : "smooth",
     });
   }, [activeSavedIndex, expandedSavedIndex, readingMode]);
-  const measuringSavedLayout = savedGlosses.size > 0 && (savedRegions === null || !fontsReady);
+
 
   return (
     <div className="shell">
@@ -1713,7 +1686,8 @@ export default function Reader({ docId }: { docId: string }) {
         {doc && (
           <article
             ref={bodyRef}
-            className={`reader-body${measuringSavedLayout ? " reader-body-measuring" : ""}${sample && !sampleBreathed ? " reader-body-sample-breathing" : ""}`}
+            className={"reader-body" + (sample && !sampleBreathed ? " reader-body-sample-breathing" : "")}
+            data-measuring={measurement !== null || savedRegions === null || !fontsReady ? "true" : "false"}
             lang="zh-CN"
             onClick={handleBodyClick}
             onPointerOver={(event) => { handleGlossPointerOver(event); handleSentencePointerOver(event); }}
@@ -1733,11 +1707,9 @@ export default function Reader({ docId }: { docId: string }) {
                   heading={headingByParagraph.get(paraIndex)}
                   pieces={piecesByParagraph[paraIndex] ?? NO_PIECES}
                   regions={regionsByParagraph[paraIndex] ?? NO_REGIONS}
-                  savedMarkers={savedRegions === null || measuringParaIndex === paraIndex
-                    ? NO_INDEXES
-                    : savedMarkersByParagraph[paraIndex] ?? NO_INDEXES}
-                  panelRef={panelRef}
-                  glossKey={expansion?.paraIndex === paraIndex ? glossKey : undefined}
+                  savedMarkers={savedMarkersByParagraph[paraIndex] ?? NO_INDEXES}
+                  panelRef={null}
+                  panelFor={panelFor}
                   onRetry={retryGloss}
                   onBeforeReveal={capturePanelGrowth}
                   onAfterReveal={restorePanelGrowth}
@@ -1825,15 +1797,6 @@ function restorePanelAnchor(body: HTMLElement, anchor: CharAnchor): void {
   restoreCharAnchor(body, anchor);
   const top = charTop(body, anchor.paraIndex, anchor.offset);
   if (top !== null) body.style.translate = `0 ${anchor.viewportTop - top}px`;
-}
-
-/** 测量中的段落必须保持为原始、未拆分 DOM，不能残留 transient 插入区。 */
-export function shouldRenderTransient(
-  expansion: Expansion | null,
-  savedRegions: ReadonlyMap<number, SavedRegion> | null,
-  measuringParaIndex: number | null,
-): expansion is Expansion {
-  return expansion !== null && savedRegions !== null && measuringParaIndex !== expansion.paraIndex;
 }
 
 /**
@@ -1970,7 +1933,8 @@ interface ParagraphProps {
   savedMarkers: readonly number[];
   panelRef: Ref<HTMLDivElement>;
   glossKey?: string;
-  onRetry: () => void;
+  panelFor?: (index: number) => Ref<HTMLDivElement>;
+  onRetry: (index: number) => void;
   onBeforeReveal: (index: number) => CharAnchor | null;
   onAfterReveal: (anchor: CharAnchor | null) => void;
   onSave: (index: number) => Promise<"saved" | "removed" | StorageErrorCode>;
@@ -2108,6 +2072,7 @@ export const Paragraph = memo(function Paragraph({
   regions,
   savedMarkers,
   panelRef,
+  panelFor,
   glossKey,
   onRetry,
   onBeforeReveal,
@@ -2125,88 +2090,51 @@ export const Paragraph = memo(function Paragraph({
 
   if (regions.length === 0) {
     return (
-      <Tag id={`para-${paraIndex}`} data-para={paraIndex} className={className}>
+      <Tag id={"para-" + paraIndex} data-para={paraIndex} data-reader-block="" data-block-start={0} data-block-end={paragraphLength(pieces)} data-block-continues="false" className={className}>
         {renderPieces(pieces, markerIndexes, breatheSentenceIndex)}
       </Tag>
     );
   }
 
-  const groups = groupRegions(regions);
-  const boundaries = [...groups.keys()];
-  const fragments = paragraphOriginalFragments(pieces, boundaries);
-  const hasTrailingFragment = fragments.length > boundaries.length;
-  return (
-    <Fragment>
-      {boundaries.map((boundary, groupIndex) => {
-        const end = boundary ?? Infinity;
-        const group = groups.get(boundary)!;
-        const { head: part, tail } = splitParagraphTail(
-          pieces, fragments[groupIndex] ?? NO_PIECES, group.map((region) => region.index), boundary,
-        );
-        const hasTail = end !== Infinity && end < paragraphLength(pieces);
-        const isFirst = groupIndex === 0;
-        return (
-          <Fragment key={`split:${String(boundary)}`}>
-            {part.length > 0 && (
-              <Tag
-                id={isFirst ? `para-${paraIndex}` : undefined}
-                data-para={paraIndex}
-                className={splitFragmentClassName(className, heading !== undefined, isFirst, hasTail)}
-              >
-                {renderPieces(part, markerIndexes, breatheSentenceIndex)}
-              </Tag>
-            )}
-            {group.map((region) => (
-                <GlossPanel
-                  key={region.saved ? `saved:${region.index}` : glossKey}
-                  ref={region.saved ? undefined : panelRef}
-                  view={region.view}
-                  onRetry={onRetry}
-                  onBeforeReveal={onBeforeReveal}
-                  onAfterReveal={onAfterReveal}
-                  saved={region.saved}
-                  onSave={() => onSave(region.index)}
-                  source={sentences[region.index]?.text}
-                  presentation={region.presentation}
-                  actionVisible={!region.saved || region.actionVisible}
-                  savedIndex={region.saved ? region.index : undefined}
-                  sentenceIndex={region.index}
-                  explainView={region.explainView}
-                  onExplain={onExplain}
-                  onExplainRetry={onExplainRetry}
-                  onExplainBlocked={onExplainBlocked}
-                />
-              ))}
-            {tail.length > 0 && (
-              <Tag data-para={paraIndex} className={`${className} reader-tail-line`}>
-                {renderPieces(tail, markerIndexes, breatheSentenceIndex)}
-              </Tag>
-            )}
-          </Fragment>
-        );
-      })}
-      {hasTrailingFragment && (
-        <Tag data-para={paraIndex} className="reader-para reader-para-cont">
-          {renderPieces(fragments[boundaries.length]!, markerIndexes, breatheSentenceIndex)}
-        </Tag>
-      )}
-    </Fragment>
-  );
+  const ordered = [...groupRegions(regions).values()].flat();
+  let from = 0;
+  const nodes = ordered.map((region, position) => {
+    const sentence = pieces.find((piece) => piece.index === region.index);
+    const end = sentence ? sentence.start + sentence.text.trimEnd().length : from;
+    const boundary = Math.max(end, region.splitAt ?? paragraphLength(pieces));
+    const { head } = splitParagraphTail(pieces, slicePieces(pieces, from, boundary), [region.index], region.splitAt);
+    const start = from;
+    from = end;
+    return (
+      <Fragment key={"region:" + region.index}>
+        {head.length > 0 && <Tag id={position === 0 ? "para-" + paraIndex : undefined} data-para={paraIndex}
+          data-reader-block="" data-block-start={start} data-block-end={boundary}
+          data-block-continues={region.splitAt !== null ? "true" : "false"}
+          className={splitFragmentClassName(className, heading !== undefined, position === 0, region.splitAt !== null)}>
+          {renderPieces(head, markerIndexes, breatheSentenceIndex)}
+        </Tag>}
+        <GlossPanel key={region.saved ? "saved:" + region.index : region.glossKey ?? glossKey ?? "transient:" + region.index}
+          ref={panelFor ? panelFor(region.index) : region.saved ? undefined : panelRef}
+          view={region.view} onRetry={() => onRetry(region.index)}
+          onBeforeReveal={onBeforeReveal} onAfterReveal={onAfterReveal} saved={region.saved}
+          onSave={() => onSave(region.index)} source={sentences[region.index]?.text} presentation={region.presentation}
+          actionVisible={!region.saved || region.actionVisible} savedIndex={region.saved ? region.index : undefined}
+          sentenceIndex={region.index} explainView={region.explainView} onExplain={onExplain}
+          onExplainRetry={onExplainRetry} onExplainBlocked={onExplainBlocked} />
+      </Fragment>
+    );
+  });
+  const remaining = slicePieces(pieces, from, Infinity);
+  return <Fragment>{nodes}{remaining.length > 0 && (
+    <Tag data-para={paraIndex} data-reader-block="" data-block-start={from} data-block-end={paragraphLength(pieces)}
+      data-block-continues="false" className="reader-para reader-para-cont">{renderPieces(remaining, markerIndexes, breatheSentenceIndex)}</Tag>
+  )}</Fragment>;
+
 });
 
-/** 同一行结束的句子共享切分边界，但保持为按句序排列的独立区。 */
-export function groupRegions(regions: readonly Region[]): ReadonlyMap<number | null, readonly Region[]> {
-  const groups = new Map<number | null, Region[]>();
-  for (const region of regions) {
-    const list = groups.get(region.splitAt) ?? [];
-    list.push(region);
-    groups.set(region.splitAt, list);
-  }
-  return new Map(
-    [...groups.entries()]
-      .sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : a - b))
-      .map(([splitAt, group]) => [splitAt, group.sort((a, b) => a.index - b.index)]),
-  );
+// G-63：句序为唯一插入顺序；相同物理边界不再合组。
+export function groupRegions(regions: readonly Region[]): ReadonlyMap<number, readonly Region[]> {
+  return new Map([...regions].sort((a, b) => a.index - b.index).map((region) => [region.index, [region]]));
 }
 
 function renderPieces(

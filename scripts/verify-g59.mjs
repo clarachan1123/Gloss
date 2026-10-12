@@ -106,6 +106,11 @@ window.__g59.snapshot = function(selector) {
   if(document.hidden || this.hidden) throw new Error('document.hidden during measurement');
   const scope = document.querySelector(selector);
   if(!scope) throw new Error('Missing original text scope');
+  // Compare document layout independently of the explicit viewport-anchor translation.
+  // G-63 verifies actual viewport glyph positions, including this compensation.
+  const translation=getComputedStyle(scope).translate.split(' ');
+  const anchorX=translation[0]==='none'?0:parseFloat(translation[0])||0;
+  const anchorY=translation[0]==='none'?0:parseFloat(translation[1])||0;
   const chars = [];
   for(const span of scope.querySelectorAll('.sentence')) {
     if(getComputedStyle(span).visibility !== 'visible' || span.closest('[inert]')) continue;
@@ -117,12 +122,12 @@ window.__g59.snapshot = function(selector) {
       const rect = range.getBoundingClientRect();
       chars.push({key: para.dataset.para+':'+(Number(span.dataset.offset)+local),
         para: Number(para.dataset.para), offset: Number(span.dataset.offset)+local, index: Number(span.dataset.index),
-        char, x: rect.left+scrollX, y: rect.top+scrollY,
-        tail: !!span.closest('.reader-tail-line'), lineHeight: parseFloat(getComputedStyle(span).lineHeight)});
+        char, x: rect.left+scrollX-anchorX, y: rect.top+scrollY-anchorY,
+        tail: !!span.closest('.reader-para-cont'), lineHeight: parseFloat(getComputedStyle(span).lineHeight)});
       local += char.length;
     }
   }
-  return {chars, panels:[...scope.querySelectorAll('.gloss-panel')].map(p=>({index:Number(p.dataset.sentenceIndex),bottom:p.getBoundingClientRect().bottom+scrollY})),
+  return {chars, panels:[...scope.querySelectorAll('.gloss-panel')].map(p=>({index:Number(p.dataset.sentenceIndex),bottom:p.getBoundingClientRect().bottom+scrollY-anchorY})),
     placeholders:[...scope.querySelectorAll('.reader-tail-placeholder')].map(p=>({text:p.textContent,valid:p.getAttribute('aria-hidden')==='true'&&p.hasAttribute('inert')&&!p.matches('.sentence,[data-index],[data-offset],.sentence-breathe,.sentence-gloss-hover,.sentence-hover')}))};
 };
 (function watchLanding(){
@@ -164,7 +169,7 @@ function compare(before, after, index, width, kind='open') {
     const matches=map.get(c.key)??[];
     if(matches.length!==1 || !matches[0].tail || matches[0].y<bottom)fail('b',width,index,c.char,null,null,'tail must appear once in tail line below final panel: '+c.key);
   }} else if(after.chars.some(c=>c.para===b.para&&c.tail&&c.offset>=b.end&&c.offset<split))fail('b',width,index,'empty tail',null,null,'unexpected tail line');
-  for(const c of before.chars.filter(c=>c.para>b.para||(c.para===b.para&&c.offset>=split))){
+  for(const c of before.chars.filter(c=>c.para>b.para)){
     const matches=map.get(c.key)??[];if(matches.length!==1)fail('b',width,index,c.char,null,null,'lower character count '+matches.length);
     const n=matches[0],dx=n.x-c.x,dy=n.y-c.y;
     if(lowerShift===null)lowerShift=dy;
@@ -189,9 +194,9 @@ async function clickSentence(cdp,index,selector='.reader-body .sentence'){
 async function checkSentenceHover(cdp, width, index) {
   const targets = await cdp.evaluate(`(()=>{
     const body=document.querySelector('.reader-body');
-    const upper=[...body.querySelectorAll('.sentence[data-index="${index}"]')].filter(span=>!span.closest('.reader-tail-line'));
-    const tail=[...body.querySelectorAll('.reader-tail-line .sentence')];
-    return [...upper,...tail].filter(span=>span.textContent.trim()).map(span=>({index:Number(span.dataset.index),offset:Number(span.dataset.offset),kind:span.closest('.reader-tail-line')?'tail':'upper'}));
+    const upper=[...body.querySelectorAll('.sentence[data-index="${index}"]')].filter(span=>!span.closest('.reader-para-cont'));
+    const tail=[...body.querySelectorAll('.reader-para-cont .sentence')];
+    return [...upper,...tail].filter(span=>span.textContent.trim()).map(span=>({index:Number(span.dataset.index),offset:Number(span.dataset.offset),kind:span.closest('.reader-para-cont')?'tail':'upper'}));
   })()`,false,'hover:targets');
   if(!targets.some(target=>target.kind==='upper') || !targets.some(target=>target.kind==='tail'))fail('hover',width,index,'fragment',null,null,'missing source or tail hover target');
   let maxX=0,maxY=0;
@@ -334,7 +339,7 @@ async function runReader(cdp,width){
   const b=boundary(baselines[10],10);
   const tailText=baselines[10].chars.filter(c=>c.para===b.para&&c.offset>=b.end&&c.offset<(b.split??b.paraEnd)).map(c=>c.char).join('');
   if(tailText.trim()){
-    const selected=await cdp.evaluate(`(()=>{const first=document.querySelector('.sentence[data-index="10"]'),line=document.querySelector('.reader-tail-line'),last=line?.querySelector('.sentence:last-child');if(!first||!last)throw new Error('Missing selection endpoints');const range=document.createRange();range.setStart(first.firstChild,0);range.setEnd(last.firstChild,last.firstChild.length);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);const text=selection.toString();selection.removeAllRanges();return text;})()`,false,'copy:selection');
+    const selected=await cdp.evaluate(`(()=>{const first=document.querySelector('.sentence[data-index="10"]'),line=document.querySelector('.reader-para-cont'),last=line?.querySelector('.sentence:last-child');if(!first||!last)throw new Error('Missing selection endpoints');const range=document.createRange();range.setStart(first.firstChild,0);range.setEnd(last.firstChild,last.firstChild.length);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);const text=selection.toString();selection.removeAllRanges();return text;})()`,false,'copy:selection');
     if(selected.split(tailText).length-1!==1)fail('copy',width,10,tailText,null,null,'tail substring count in Selection is not one');
   }
   // Remove this saved item via its action row, then compare a same-line saved/transient pair.
@@ -347,19 +352,18 @@ async function runReader(cdp,width){
   }
   if(!pair)throw new Error('No same-split pair at width '+width);
   await clickSentence(cdp,pair[0]);await clickButton(cdp,`.gloss-panel[data-sentence-index="${pair[0]}"]`,'留下');
-  await clickButton(cdp,'.mode-switch','收起');await clickButton(cdp,'.mode-switch','显示');await clickSentence(cdp,pair[1]);
-  const mixed=await snap(cdp);compare(original,mixed,pair[1],width);
-  const group=boundary(original,pair[1]);
-  const lineCount=await cdp.evaluate(`document.querySelectorAll('[data-para="${group.para}"].reader-tail-line').length`,false,'group:tail-line-count');
-  const expected=original.chars.some(c=>c.para===group.para&&c.offset>=group.end&&c.offset<(group.split??group.paraEnd)&&c.char.trim());
-  if(lineCount!==Number(expected))fail('group',width,pair[1],'tail line',null,null,'tail line count '+lineCount);
+  await clickButton(cdp,'.mode-switch','收起');await clickButton(cdp,'.mode-switch','显示');const sequentialBefore=await snap(cdp);await clickSentence(cdp,pair[1]);
+  const mixed=await snap(cdp);compare(sequentialBefore,mixed,pair[1],width);
+  const visibleOriginal=original.chars.map(c=>c.char).join('');
+  if(mixed.chars.map(c=>c.char).join('')!==visibleOriginal)fail('group',width,pair[1],'text',null,null,'real original is not present exactly once');
+  if(mixed.panels.filter(p=>pair.includes(p.index)).length!==2)fail('group',width,pair[1],'panels',null,null,'missing sequential saved/transient panel');
   // Fresh document visit resets per-session click counts; first tail click must be sentence_click.
   await cdp.evaluate('localStorage.clear()',false,'fixture:clear');await reload(cdp);
   const tailOwner=baselines.findIndex((before,index)=>{const b=boundary(before,index);return before.chars.some(c=>c.para===b.para&&c.offset>=b.end&&c.offset<(b.split??b.paraEnd)&&c.char.trim()&&c.index!==index);});
   if(tailOwner<0)throw new Error('No clickable tail at width '+width);
   await clickSentence(cdp,tailOwner);
-  const tailIndex=await cdp.evaluate("Number(document.querySelector('.reader-tail-line .sentence').dataset.index)",false,'tail:index');
-  await cdp.evaluate("window.__g59.events=[]; const s=document.querySelector('.reader-tail-line .sentence');s.click()",false,'tail:click');
+  const tailIndex=await cdp.evaluate("Number(document.querySelector('.reader-para-cont .sentence').dataset.index)",false,'tail:index');
+  await cdp.evaluate("window.__g59.events=[]; const s=document.querySelector('.reader-para-cont .sentence');s.click()",false,'tail:click');
   await waitForValue(()=>cdp.evaluate(`!!document.querySelector('.gloss-panel[data-sentence-index="${tailIndex}"][data-state="done"]')`,false,'tail:complete'),'tail gloss');await settled(cdp);
   const events=await cdp.evaluate('window.__g59.events',false,'tail:events');
   if(!events.some(e=>e.event==='sentence_click'&&e.sentenceIndex===tailIndex))fail('analytics',width,tailIndex,'tail first character',null,null,'sentence_click index mismatch');

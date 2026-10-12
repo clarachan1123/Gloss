@@ -98,7 +98,10 @@ it("G-52 点击前原文完整，reveal 时才拆段并保留最终白话高度�
   await act(async () => { vi.advanceTimersByTime(650); });
   expectWhole();
   await act(async () => { vi.advanceTimersByTime(180); });
-  expect(visible().querySelectorAll("p.reader-para")).toHaveLength(3); // G-59 adds the separate tail line.
+  expect(visible().querySelectorAll("p.reader-para")).toHaveLength(2);
+  expect(visible().querySelectorAll(".reader-para-cont")).toHaveLength(1);
+  expect([...visible().querySelectorAll(".sentence")].map(span => span.textContent).join("")).toBe(
+    host.querySelector(".landing-demo-measure .reader-para")?.textContent);
   expect(visible().querySelector(".landing-demo-panel-slot")).not.toBeNull();
   expect(visible().querySelector<HTMLElement>(".landing-demo-panel-slot")?.style.height).toBe("83px");
   expect(host.querySelector<HTMLElement>(".landing-demo-canvas")?.style.minHeight).toBe("240px");
@@ -277,7 +280,7 @@ describe("G-57 演示进入视口后启动", () => {
 });
 
 
-it("G-59 演示终态尾行位于白话后，占位排除句子查询", async () => {
+it("G-63 演示终态为单个连续续排块，占位排除句子查询", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
@@ -289,10 +292,11 @@ it("G-59 演示终态尾行位于白话后，占位排除句子查询", async ()
   await act(async () => { root.render(createElement(LandingDemo, { replayIndex: 0 })); });
   for (let step = 0; step < 4; step++) await act(async () => { await Promise.resolve(); });
   const visible = host.querySelector(".landing-demo-visible")!;
-  const tail = visible.querySelector(".reader-tail-line")!;
+  const tail = visible.querySelector(".reader-para-cont")!;
   expect(tail).not.toBeNull();
   expect(tail.previousElementSibling?.classList.contains("landing-demo-panel-slot")).toBe(true);
-  expect(tail.nextElementSibling?.classList.contains("reader-para-cont")).toBe(true);
+  expect(tail.nextElementSibling).toBeNull();
+  expect(visible.querySelector(".reader-tail-line")).toBeNull();
   expect(visible.querySelectorAll(".reader-tail-placeholder.sentence, .reader-tail-placeholder[data-index], .reader-tail-placeholder[data-offset]")).toHaveLength(0);
   expect([...visible.querySelectorAll(".sentence")].map((p) => p.textContent).join("")).toBe(
     host.querySelector(".landing-demo-measure .reader-para")?.textContent,

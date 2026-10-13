@@ -164,7 +164,7 @@
 :root:has(.landing-page) { scrollbar-gutter: stable; }
 .landing-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 38px; align-items: start; }
 .landing-copy { min-width: 0; }
-.landing-steps { position: relative; isolation: isolate; list-style: none; margin: 32px 0 0; padding: 0; }
+.landing-steps { display: none; position: relative; isolation: isolate; list-style: none; margin: 32px 0 0; padding: 0; }
 .landing-steps > ol { list-style: none; margin: 0; padding: 0; }
 .landing-step { position: relative; display: flex; gap: 16px; align-items: start; padding: 12px; opacity: .32; transition: opacity 400ms, transform 600ms cubic-bezier(.4,0,.2,1); }
 .landing-step + .landing-step { margin-top: 12px; }
@@ -184,6 +184,8 @@
   .landing-layout { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 56px; margin-top: 58px; }
   .landing-copy { padding-top: 56px; }
   .landing-copy h1 { margin-top: 0; }
+  .landing-steps { display: block; }
+  .landing-demo-steps { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .landing-step, .landing-step-number, .landing-step-answer, .landing-step-slider { transition: none; }
@@ -193,3 +195,18 @@
 .landing-demo-pointer-replay-out { opacity: 0; transition: opacity 200ms ease; }
 .landing-demo-pointer-replay-reset { opacity: 0; transition: none; }
 .landing-demo-pointer-replay-in { opacity: 1; transition: opacity 200ms ease; }
+
+.landing-demo-steps { list-style: none; margin: 0; padding: 10px 24px 4px; }
+.landing-demo-step { display: flex; align-items: start; gap: 8px; padding-left: 8px; border-left: 3px solid transparent; opacity: .45; color: var(--gloss); transition: opacity 400ms, color 400ms, border-color 400ms; }
+.landing-demo-step + .landing-demo-step { margin-top: 6px; }
+.landing-demo-step-number { display: grid; place-items: center; box-sizing: border-box; flex: 0 0 20px; width: 20px; height: 20px; border: 1px solid var(--ink); border-radius: 50%; font-size: 12px; color: var(--ink); transition: background-color 400ms, color 400ms; }
+.landing-demo-step-text { min-width: 0; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.landing-demo-step-current { opacity: 1; color: var(--ink); border-color: var(--hover); }
+.landing-demo-step-completed { opacity: .7; }
+.landing-demo-step-current .landing-demo-step-number { background: var(--ink); color: var(--paper-main); }
+@media (max-width: 390px) {
+  .landing-demo-steps { padding-inline: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-demo-step, .landing-demo-step-number { transition: none; }
+}

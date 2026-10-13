@@ -65,6 +65,17 @@ it("G-57 按钮及小字在 DOM 中位于演示之前，窄屏自然顺排，宽
     expect(host.querySelector(".landing-header .wordmark")?.textContent).toBe("Gloss");
     expect(host.querySelector(".landing-copy .landing-supplement")).not.toBeNull();
     expect(host.querySelector(".landing-demo-header")?.textContent).toContain("再看一遍");
+    const compact = host.querySelector("ol.landing-demo-steps")!;
+    expect(host.querySelector(".landing-demo-header")!.nextElementSibling).toBe(compact);
+    expect(compact.nextElementSibling?.matches("[data-demo-stub]")).toBe(true);
+    expect(compact.querySelector("a,button,input,[tabindex]")).toBeNull();
+    const texts = ["句子太绕、结构复杂？点一下句子，转成大白话", "还是不懂？点「听不懂」，结合前后文讲清这句"];
+    expect([...host.querySelectorAll(".landing-step")].map(el => el.querySelector("div")?.textContent)).toEqual(texts);
+    expect([...compact.querySelectorAll(".landing-demo-step-text")].map(el => el.textContent)).toEqual(texts);
+    for (const list of [host.querySelector(".landing-steps > ol")!, compact]) {
+      expect(list.querySelectorAll("li")).toHaveLength(2);
+      expect([...list.querySelectorAll("li > span:first-child")].map(el => [el.textContent, el.getAttribute("aria-hidden")])).toEqual([["1", "true"], ["2", "true"]]);
+    }
   } finally {
     await act(async () => { root.unmount(); });
     host.remove();
@@ -72,10 +83,10 @@ it("G-57 按钮及小字在 DOM 中位于演示之前，窄屏自然顺排，宽
   }
 });
 
-async function mountRealLanding(reduced: boolean) {
+async function mountRealLanding(reduced: boolean, resizeObserver: unknown = class { observe() {} disconnect() {} }) {
   demoMode.real = true;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.stubGlobal("ResizeObserver", resizeObserver === false ? undefined : resizeObserver);
   vi.stubGlobal("IntersectionObserver", class {
     constructor(private callback: IntersectionObserverCallback) {}
     observe(target: Element) { this.callback([{ target, isIntersecting: true, intersectionRatio: 1 } as IntersectionObserverEntry], this as unknown as IntersectionObserver); }
@@ -97,9 +108,12 @@ it("G-62 同一次 act 提交指针移动与当前步骤；连播解释、重播
   const advance = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); }); };
   try {
     expect(host.querySelector(".landing-step-current")).toBeNull();
+    expect(host.querySelector(".landing-demo-step-current")).toBeNull();
     await advance(1_000);
     expect(host.querySelector(".landing-demo-pointer-moving")).not.toBeNull();
     expect(host.querySelectorAll(".landing-step")[0].classList.contains("landing-step-current")).toBe(true);
+    expect(host.querySelectorAll(".landing-demo-step")[0].getAttribute("aria-current")).toBe("step");
+    expect(host.querySelectorAll(".landing-demo-step")[1].getAttribute("aria-current")).toBeNull();
     await advance(650); await advance(180);
     expect(host.querySelector(".action-row-save")).not.toBeNull();
     expect(host.querySelector<HTMLButtonElement>(".action-row-save")?.disabled).toBe(true);
@@ -110,6 +124,8 @@ it("G-62 同一次 act 提交指针移动与当前步骤；连播解释、重播
     await advance(1_600);
     expect(host.querySelector(".landing-demo-pointer-explain-moving")).not.toBeNull();
     expect(host.querySelectorAll(".landing-step")[1].classList.contains("landing-step-current")).toBe(true);
+    expect(host.querySelectorAll(".landing-demo-step")[1].getAttribute("aria-current")).toBe("step");
+    expect(host.querySelectorAll(".landing-demo-step")[0].classList.contains("landing-demo-step-completed")).toBe(true);
     await advance(700);
     const point = host.querySelector<HTMLElement>(".landing-demo-pointer")!;
     const frozen = [point.style.left, point.style.top];
@@ -129,6 +145,7 @@ it("G-62 同一次 act 提交指针移动与当前步骤；连播解释、重播
     expect(host.querySelector(".landing-demo-pointer-settled")).not.toBeNull();
     await act(async () => { host.querySelector<HTMLButtonElement>(".landing-demo-header button")!.click(); });
     expect(host.querySelector(".landing-step-current")).toBeNull();
+    expect(host.querySelector(".landing-demo-step-current")).toBeNull();
     expect(host.querySelector(".explain-result")).toBeNull();
     expect(host.querySelector(".landing-demo-pointer-waiting")).not.toBeNull();
   } finally { await act(async () => root.unmount()); host.remove(); }
@@ -141,6 +158,37 @@ it("G-62 减少动态效果终态有两个 inert 演示按钮，真实入口列�
     expect(buttons.map(el => el.textContent)).toEqual(["留下", "听不懂"]);
     expect(buttons.every(el => !!el.closest("[inert]"))).toBe(true);
     expect(host.querySelectorAll(".landing-step")[1].classList.contains("landing-step-current")).toBe(true);
+    expect(host.querySelectorAll(".landing-demo-step")[1].getAttribute("aria-current")).toBe("step");
+    expect(host.querySelectorAll(".landing-demo-step")[0].classList.contains("landing-demo-step-completed")).toBe(true);
     expect(host.querySelector(".landing-demo-pointer")).toBeNull();
+  } finally { await act(async () => root.unmount()); host.remove(); }
+});
+
+it.each([true, false])("G-62b 隐藏步骤不写零高度并清除 positioned，恢复时重新定位（ResizeObserver=%s）", async (hasObserver) => {
+  let notify: (() => void) | undefined;
+  const Observer = class { constructor(callback: () => void) { notify = callback; } observe() {} disconnect() {} };
+  const { host, root } = await mountRealLanding(true, hasObserver ? Observer : false);
+  try {
+    const steps = host.querySelector<HTMLElement>(".landing-steps")!;
+    const slider = host.querySelector<HTMLElement>(".landing-step-slider")!;
+    const active = steps.querySelector<HTMLElement>(".landing-step-current")!;
+    let hasLayout = true;
+    vi.spyOn(steps, "getClientRects").mockImplementation(() => (hasLayout ? [new DOMRect(0, 0, 400, 200)] : []) as unknown as DOMRectList);
+    Object.defineProperties(active, { offsetTop: { value: 100 }, offsetHeight: { value: 80 } });
+    const measure = () => hasObserver ? notify!() : window.dispatchEvent(new Event("resize"));
+    measure();
+    expect(slider.style.height).toBe("80px");
+    expect(slider.dataset.positioned).toBe("true");
+    hasLayout = false;
+    measure();
+    expect(slider.style.opacity).toBe("0");
+    expect(slider.style.height).toBe("80px");
+    expect(slider.dataset.positioned).toBeUndefined();
+    hasLayout = true;
+    measure();
+    expect(slider.style.transform).toBe("translateY(100px)");
+    expect(slider.style.height).toBe("80px");
+    expect(slider.style.opacity).toBe("1");
+    expect(slider.dataset.positioned).toBe("true");
   } finally { await act(async () => root.unmount()); host.remove(); }
 });

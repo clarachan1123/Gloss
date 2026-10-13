@@ -1,3 +1,4 @@
+import { detectHeadings } from "./headings";
 import { ParseError, assembleDocument, type ParseFormat, type ParsedDocument } from "./validate";
 
 /** 在浏览器内读取并解码 .txt，不上传任何内容 */
@@ -52,5 +53,5 @@ export function plainTextToDocument(
     .replace(/\r\n?/g, "\n")
     .split("\n")
     .filter((line) => line.trim() !== "");
-  return assembleDocument({ paragraphs, headings: [], footnotes: [] }, format, fileName);
+  return assembleDocument({ paragraphs, headings: detectHeadings(paragraphs), footnotes: [] }, format, fileName);
 }

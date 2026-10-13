@@ -11,7 +11,7 @@ export type ParseFormat = "docx" | "txt" | "paste" | "pdf";
 export interface ParsedHeading {
   /** 在 paragraphs 中的下标 */
   paraIndex: number;
-  /** 1–6 */
+  /** 从 1 起，可超过 6；渲染时标签钳到 H6 */
   level: number;
   text: string;
 }

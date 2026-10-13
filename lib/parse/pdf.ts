@@ -1,3 +1,4 @@
+import { detectHeadings } from "./headings";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import {
@@ -5,6 +6,7 @@ import {
   assembleDocument,
   countChars,
   type ParsedDocument,
+  type ParsedHeading,
   type WarningCode,
 } from "./validate";
 
@@ -54,6 +56,93 @@ export interface PdfPageData {
   charCount: number;
   /** 最大一张图片占页面面积的比例，0–1。字数不少的页不计算，记 0 */
   imageCoverage: number;
+}
+
+export interface PdfOutlineHeading {
+  title: string;
+  level: number;
+  /** 原始文件页码，从 1 起；不受扫描页过滤影响。 */
+  page: number;
+  y: number | null;
+}
+
+export type PdfPages = PdfPageData[] & { outline?: PdfOutlineHeading[] };
+
+type OutlineDocument = Pick<PDFDocumentProxy, "getOutline" | "getDestination" | "getPageIndex" | "numPages">;
+
+/** 在文档销毁前解析书签目标；无效或外部目标不阻断正文读取。 */
+export async function readPdfOutline(doc: OutlineDocument): Promise<PdfOutlineHeading[]> {
+  let outline: Awaited<ReturnType<PDFDocumentProxy["getOutline"]>>;
+  try {
+    outline = await doc.getOutline();
+  } catch {
+    return [];
+  }
+  const result: PdfOutlineHeading[] = [];
+  type Item = NonNullable<typeof outline>[number];
+  const visit = async (items: Item[], level: number): Promise<void> => {
+    for (const item of items) {
+      if (!item.url && !item.unsafeUrl && item.dest) {
+        try {
+          const dest = typeof item.dest === "string" ? await doc.getDestination(item.dest) : item.dest;
+          if (Array.isArray(dest) && dest.length >= 2) {
+            const target = dest[0];
+            const index = typeof target === "number" ? target :
+              target && typeof target.num === "number" && typeof target.gen === "number"
+                ? await doc.getPageIndex(target) : -1;
+            if (Number.isInteger(index) && index >= 0 && index < doc.numPages) {
+              const mode = dest[1]?.name;
+              const coordinate = mode === "XYZ" ? dest[3] :
+                mode === "FitH" || mode === "FitBH" ? dest[2] : mode === "FitR" ? dest[5] : null;
+              result.push({ title: item.title, level, page: index + 1,
+                y: typeof coordinate === "number" && Number.isFinite(coordinate) ? coordinate : null });
+            }
+          }
+        } catch {
+          // 某条目标损坏时仍读取其子书签和后续书签。
+        }
+      }
+      await visit(item.items ?? [], level + 1);
+    }
+  };
+  await visit(outline ?? [], 1);
+  return result;
+}
+
+interface ParagraphLocation {
+  /** 各关联页上的第一条文字行基线；跨页段落保留每一页。 */
+  pages: Map<number, number>;
+}
+
+function mapOutlineHeadings(
+  paragraphs: string[], locations: ParagraphLocation[], outline: readonly PdfOutlineHeading[],
+): ParsedHeading[] {
+  const compact = (text: string) => text.replace(/\s/g, "");
+  const texts = paragraphs.map(compact);
+  const mapped = new Map<number, ParsedHeading>();
+  for (const item of outline) {
+    const title = compact(item.title);
+    if (!title) continue;
+    const candidates = texts.flatMap((text, index) =>
+      text === title && locations[index].pages.has(item.page) ? [index] : []);
+    let paraIndex: number;
+    if (candidates.length === 1) {
+      paraIndex = candidates[0];
+    } else if (candidates.length > 1 && item.y !== null) {
+      const distances = candidates.map((index) => ({
+        index, distance: Math.abs(locations[index].pages.get(item.page)! - item.y!),
+      })).sort((a, b) => a.distance - b.distance);
+      if (distances[0].distance === distances[1].distance) continue;
+      paraIndex = distances[0].index;
+    } else {
+      continue;
+    }
+    const previous = mapped.get(paraIndex);
+    if (!previous || item.level < previous.level) {
+      mapped.set(paraIndex, { paraIndex, level: item.level, text: paragraphs[paraIndex] });
+    }
+  }
+  return [...mapped.values()].sort((a, b) => a.paraIndex - b.paraIndex);
 }
 
 export interface PdfParseResult {
@@ -135,7 +224,7 @@ export async function parsePdf(file: File): Promise<PdfParseResult> {
 type GetDocumentParams = Parameters<PdfjsModule["getDocument"]>[0] & object;
 
 /** 打开 PDF 并逐页取文字行与图片面积。加密 → A4，其他打不开 → A3 */
-export async function readPdfPages(pdfjs: PdfjsModule, params: GetDocumentParams): Promise<PdfPageData[]> {
+export async function readPdfPages(pdfjs: PdfjsModule, params: GetDocumentParams): Promise<PdfPages> {
   const task = pdfjs.getDocument({ verbosity: pdfjs.VerbosityLevel.ERRORS, ...params });
   let doc: PDFDocumentProxy;
   try {
@@ -148,7 +237,8 @@ export async function readPdfPages(pdfjs: PdfjsModule, params: GetDocumentParams
   }
 
   try {
-    const pages: PdfPageData[] = [];
+    const pages: PdfPages = [];
+    pages.outline = await readPdfOutline(doc);
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);
       const content = await page.getTextContent();
@@ -259,7 +349,7 @@ export function isScannedPage(page: PdfPageData): boolean {
  * 3. 保留页里乱码占比 > GARBLED_RATIO_THRESHOLD → GARBLED。
  * A7（0 字）/ A8（超字数）/ A9（非中文）由调用方的 checkParsed 统一处理。
  */
-export function buildPdfDocument(pages: PdfPageData[], fileName: string | null): PdfParseResult {
+export function buildPdfDocument(pages: PdfPages, fileName: string | null): PdfParseResult {
   const scanned = pages.map(isScannedPage);
   const skippedPages = scanned.flatMap((s, i) => (s ? [i + 1] : []));
   if (pages.length === 0 || skippedPages.length === pages.length) throw new ParseError("A5");
@@ -273,10 +363,12 @@ export function buildPdfDocument(pages: PdfPageData[], fileName: string | null):
   if (garbledRatio(keptText) > GARBLED_RATIO_THRESHOLD) throw new ParseError("GARBLED");
 
   const bodies = stripPageEdges(kept);
-  const paragraphs = linesToParagraphs(bodies);
+  const { paragraphs, locations } = assemblePdfParagraphs(bodies);
+  const outlineHeadings = mapOutlineHeadings(paragraphs, locations, pages.outline ?? []);
+  const headings = outlineHeadings.length > 0 ? outlineHeadings : detectHeadings(paragraphs);
   return {
     doc: assembleDocument(
-      { paragraphs, headings: [], footnotes: [] },
+      { paragraphs, headings, footnotes: [] },
       "pdf",
       fileName,
       pages.length,
@@ -437,15 +529,26 @@ function layoutOf(lines: PdfLine[]): PageLayout {
  * 已知限制：页底的脚注混进正文，会打断跨页段落；英文长单词换行会让行末提前，被误判为段末。
  */
 export function linesToParagraphs(pages: (PdfLine[] | null)[]): string[] {
+  return assemblePdfParagraphs(pages).paragraphs;
+}
+
+/** 与 G-02B 相同的拼段过程，仅旁记页号和坐标，不改变分段或文字。 */
+function assemblePdfParagraphs(pages: (PdfLine[] | null)[]): { paragraphs: string[]; locations: ParagraphLocation[] } {
   const allLines = pages.flatMap((p) => p ?? []);
   const docLayout = layoutOf(allLines);
   const paragraphs: string[] = [];
+  const locations: ParagraphLocation[] = [];
+  let currentPages = new Map<number, number>();
   let current = "";
   let prev: { line: PdfLine; layout: PageLayout; page: number } | null = null;
 
   const flush = () => {
-    if (current.trim() !== "") paragraphs.push(current.trimEnd());
+    if (current.trim() !== "") {
+      paragraphs.push(current.trimEnd());
+      locations.push({ pages: currentPages });
+    }
     current = "";
+    currentPages = new Map();
   };
 
   pages.forEach((lines, pageIndex) => {
@@ -460,12 +563,13 @@ export function linesToParagraphs(pages: (PdfLine[] | null)[]): string[] {
     for (const line of lines) {
       if (line.text.trim() === "") continue;
       if (prev && endsParagraph(prev.line, prev.layout, line, layout, prev.page === pageIndex)) flush();
+      if (!currentPages.has(pageIndex + 1)) currentPages.set(pageIndex + 1, line.y);
       current = joinLine(current, line.text);
       prev = { line, layout, page: pageIndex };
     }
   });
   flush();
-  return paragraphs;
+  return { paragraphs, locations };
 }
 
 function endsParagraph(

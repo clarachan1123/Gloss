@@ -1,3 +1,4 @@
+import { detectHeadings } from "./headings";
 import {
   ParseError,
   assembleDocument,
@@ -122,7 +123,7 @@ function htmlToDocument(html: string, fileName: string, hasFormula: boolean): Do
     ? { tableCount: tables.length, tableChars, hasFormula }
     : undefined;
   return {
-    doc: assembleDocument({ paragraphs, headings, footnotes }, "docx", fileName, undefined, skipped),
+    doc: assembleDocument({ paragraphs, headings: headings.length > 0 ? headings : detectHeadings(paragraphs), footnotes }, "docx", fileName, undefined, skipped),
     warnings: skippedSomething ? ["A10"] : [],
     detail: { tableCount: tables.length, tableChars, hasFormula },
   };

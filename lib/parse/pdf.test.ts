@@ -317,3 +317,106 @@ describe("行拼段落", () => {
     expect(linesToParagraphs([lines])).toEqual(["see the book 1859年出版"]);
   });
 });
+
+import { readPdfOutline, type PdfPages } from "./pdf";
+
+type G27OutlineDoc = Parameters<typeof readPdfOutline>[0];
+type G27Item = { title: string; dest: string | unknown[] | null; items?: G27Item[]; url?: string; unsafeUrl?: string };
+const g27Document = (items: G27Item[]): G27OutlineDoc => ({
+  numPages: 3,
+  getOutline: vi.fn(async () => items) as unknown as G27OutlineDoc["getOutline"],
+  getDestination: vi.fn(async (name: string) => name === "named" ? [0, { name: "XYZ" }, 0, 700, null] : null),
+  getPageIndex: vi.fn(async () => 1),
+});
+const g27Pages = (titles: string[]): PdfPages => [page(titles.flatMap((text, i) => [
+  line(text, 700 - i * 60, { indent: 2, short: 5 }), line(LONG, 685 - i * 60),
+]))];
+
+describe("G-27 PDF 书签", () => {
+  it("命名 dest、页引用、页索引与嵌套层级", async () => {
+    const doc = g27Document([
+      { title: "命名", dest: "named", items: [{ title: "子项", dest: [{ num: 9, gen: 0 }, { name: "FitH" }, 640] }] },
+      { title: "索引", dest: [2, { name: "FitR" }, 0, 0, 0, 600] },
+    ]);
+    expect(await readPdfOutline(doc)).toEqual([
+      { title: "命名", level: 1, page: 1, y: 700 },
+      { title: "子项", level: 2, page: 2, y: 640 },
+      { title: "索引", level: 1, page: 3, y: 600 },
+    ]);
+    expect(doc.getDestination).toHaveBeenCalledWith("named");
+    expect(doc.getPageIndex).toHaveBeenCalledWith({ num: 9, gen: 0 });
+  });
+  it("外部链接、无效目标不映射，但子项继续；读取 outline 失败则回退", async () => {
+    const doc = g27Document([
+      { title: "外链", dest: [0, { name: "Fit" }], url: "https://example.invalid", items: [{ title: "子", dest: [1, { name: "Fit" }] }] },
+      { title: "不安全外链", dest: [0, { name: "Fit" }], unsafeUrl: "https://example.invalid" },
+      { title: "缺失", dest: "missing" }, { title: "越界", dest: [3, { name: "Fit" }] },
+      { title: "负数", dest: [-1, { name: "Fit" }] },
+      { title: "损坏", dest: [{ num: 2, gen: 0 }, { name: "Fit" }] },
+      { title: "正常", dest: [0, { name: "FitV" }, 10] },
+    ]);
+    vi.mocked(doc.getPageIndex).mockRejectedValue(new Error("invalid reference"));
+    expect(await readPdfOutline(doc)).toEqual([
+      { title: "子", level: 2, page: 2, y: null }, { title: "正常", level: 1, page: 1, y: null },
+    ]);
+    vi.mocked(doc.getOutline).mockRejectedValue(new Error("no outline"));
+    expect(await readPdfOutline(doc)).toEqual([]);
+    const pages = g27Pages(["第一章 甲", "第二章 乙"]);
+    pages.outline = await readPdfOutline(doc);
+    expect(buildPdfDocument(pages, null).doc.headings).toHaveLength(2);
+  });
+  it("至少一条成功只用书签；全部失败和没有书签才用规则", () => {
+    const pages = g27Pages(["第一章 甲", "第二章 乙"]);
+    pages.outline = [{ title: " 第一章甲 ", level: 4, page: 1, y: null }, { title: "不存在", level: 1, page: 1, y: null }];
+    expect(buildPdfDocument(pages, null).doc.headings).toEqual([{ paraIndex: 0, level: 4, text: "第一章甲" }]);
+    pages.outline = [{ title: "不存在", level: 1, page: 1, y: null }];
+    expect(buildPdfDocument(pages, null).doc.headings.map((h) => h.level)).toEqual([1, 1]);
+    delete pages.outline;
+    expect(buildPdfDocument(pages, null).doc.headings.map((h) => h.level)).toEqual([1, 1]);
+  });
+  it("被合入正文的标题不能对应，paragraphs 不因书签改变", () => {
+    const pages: PdfPages = [page([line("书签标题", 700), line(LONG, 685), line(LONG, 670)])];
+    const before = buildPdfDocument(pages, null).doc.paragraphs;
+    pages.outline = [{ title: "书签标题", level: 1, page: 1, y: 700 }];
+    const doc = buildPdfDocument(pages, null).doc;
+    expect(doc.paragraphs).toEqual(before);
+    expect(doc.headings).toEqual([]);
+  });
+  it("同页重复整段用 y 选最近，没有 y 或等距则丢弃", () => {
+    const pages = g27Pages(["重复标题", "重复标题"]);
+    pages.outline = [{ title: "重复标题", level: 2, page: 1, y: 642 }];
+    expect(buildPdfDocument(pages, null).doc.headings).toEqual([{ paraIndex: 2, level: 2, text: "重复标题" }]);
+    pages.outline[0].y = null;
+    expect(buildPdfDocument(pages, null).doc.headings).toEqual([]);
+    pages.outline[0].y = 670;
+    expect(buildPdfDocument(pages, null).doc.headings).toEqual([]);
+  });
+  it("同一段多书签去重，保留较浅层级", () => {
+    const pages = g27Pages(["唯一标题"]);
+    pages.outline = [3, 1, 2].map((level) => ({ title: "唯一标题", level, page: 1, y: null }));
+    expect(buildPdfDocument(pages, null).doc.headings).toEqual([{ paraIndex: 0, level: 1, text: "唯一标题" }]);
+  });
+  it("跨页段落关联两页；扫描页目标和错页文字不对应", () => {
+    const first = bodyPage(["跨页标题", "继续", "继续"]);
+    const second = bodyPage(["继续", "继续", LONG], { lastShort: true });
+    const text = linesToParagraphs([first, second])[0];
+    const pages: PdfPages = [page(first), page(second)];
+    pages.outline = [{ title: text, level: 2, page: 2, y: null }];
+    expect(buildPdfDocument(pages, null).doc.headings).toEqual([{ paraIndex: 0, level: 2, text }]);
+    const skipped: PdfPages = [page(first), page([line("跨页标题", 700)], 0.8), page(second)];
+    skipped.outline = [{ title: "跨页标题", level: 1, page: 2, y: 700 }];
+    expect(buildPdfDocument(skipped, null).doc.headings).toEqual([]);
+    const wrongPage = g27Pages(["唯一标题"]);
+    wrongPage.outline = [{ title: "唯一标题", level: 1, page: 2, y: null }];
+    expect(buildPdfDocument(wrongPage, null).doc.headings).toEqual([]);
+  });
+  it("真实 pdf-text.pdf 恰好一条 L1 序言，指向完整段落", async () => {
+    expect(has("pdf-text.pdf")).toBe(true);
+    const { doc } = await parseFixture("pdf-text.pdf");
+    expect(doc.headings).toHaveLength(1);
+    const heading = doc.headings[0];
+    expect(heading.level).toBe(1);
+    expect(strip(doc.paragraphs[heading.paraIndex])).toBe("序言");
+    console.log(`G-27 pdf-text.pdf paraIndex ${heading.paraIndex} / level ${heading.level} / text ${heading.text}`);
+  });
+});

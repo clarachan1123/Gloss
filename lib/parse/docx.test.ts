@@ -144,3 +144,28 @@ describe("A10 提示文案", () => {
     expect(noticeContent("A10", { tableCount: 3, tableChars: 12345 }).message).toContain("12,345 字");
   });
 });
+
+describe("G-27 标题样式优先与规则回退", () => {
+  it("有任一 H 样式就沿用原层级，不补关键词或序号标题", async () => {
+    const { doc } = await parseHtml("<h3>样式标题</h3><p>序言</p><p>第一章 甲</p><p>正文。</p><p>第二章 乙</p>");
+    expect(doc.headings).toEqual([{ paraIndex: 0, level: 3, text: "样式标题" }]);
+  });
+  it("没有 H 样式才识别，且在空白归一化前识别", async () => {
+    const { doc } = await parseHtml("<p>第一 哲学</p><p>正文。</p><p>第二 科学</p>");
+    expect(doc.paragraphs).toEqual(["第一哲学", "正文。", "第二科学"]);
+    expect(doc.headings).toEqual([
+      { paraIndex: 0, level: 1, text: "第一哲学" },
+      { paraIndex: 2, level: 1, text: "第二科学" },
+    ]);
+  });
+  it("表格和脚注不参与候选次数与关键词识别", async () => {
+    const { doc } = await parseHtml(
+      '<p>第一章 单次</p><p>正文<sup><a id="gloss-docx-footnote-ref-1" href="#gloss-docx-footnote-1">[1]</a></sup>。</p>' +
+      '<table><tr><td><p>第二章 表内</p><p>序言</p></td></tr></table>' +
+      '<ol><li id="gloss-docx-footnote-1"><p>第三章 注内</p><p>后记</p></li></ol>',
+    );
+    expect(doc.paragraphs).toEqual(["第一章单次", "正文。"]);
+    expect(doc.headings).toEqual([]);
+    expect(doc.footnotes).toEqual([{ marker: "1", text: "第三章 注内\n后记" }]);
+  });
+});

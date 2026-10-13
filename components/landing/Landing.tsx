@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import FeedbackButton from "@/components/feedback/FeedbackButton";
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { emitAnalytics } from "@/lib/analytics-events";
 import { enqueueAnalytics, markReaderEntry } from "@/lib/analytics-local";
 import { SAMPLE_DOC_ID, SAMPLE_SOURCE } from "@/lib/sample";
@@ -27,6 +27,33 @@ export default function Landing({ onImport, importButtonRef }: {
   importButtonRef: RefObject<HTMLButtonElement | null>;
 }) {
   const [replayIndex, setReplayIndex] = useState(0);
+  const [currentStep, setCurrentStep] = useState<0 | 1 | 2>(0);
+  const stepsRef = useRef<HTMLDivElement>(null);
+  const sliderRef = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const steps = stepsRef.current;
+    const slider = sliderRef.current;
+    const active = steps?.querySelector<HTMLElement>(".landing-step-current");
+    if (!steps || !slider) return;
+    const position = () => {
+      if (!active) { slider.style.opacity = "0"; return; }
+      slider.style.transform = `translateY(${active.offsetTop}px)`;
+      slider.style.height = `${active.offsetHeight}px`;
+      if (!slider.dataset.positioned) {
+        slider.style.transition = "none";
+        slider.style.opacity = "0";
+        void slider.offsetHeight;
+        slider.style.transition = "";
+        slider.dataset.positioned = "true";
+      }
+      slider.style.opacity = "1";
+    };
+    position();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(position);
+    observer.observe(steps);
+    return () => observer.disconnect();
+  }, [currentStep]);
   useEffect(() => {
     if (leaveTimer !== null) window.clearTimeout(leaveTimer);
     leaveTimer = null;
@@ -47,9 +74,26 @@ export default function Landing({ onImport, importButtonRef }: {
       <div className="landing-content">
         <header className="landing-header">
           <span className="wordmark">Gloss</span>
+        </header>
+        <div className="landing-layout">
+        <div className="landing-copy">
           <h1>{COPY.title}</h1>
           <p className="landing-subtitle">{COPY.subtitle}</p>
-        </header>
+          <div className="landing-steps" ref={stepsRef}>
+            <span className="landing-step-slider" ref={sliderRef} aria-hidden="true" />
+            <ol>
+            {[
+              ["句子太绕、结构复杂？", "点一下句子，转成大白话"],
+              ["还是不懂？", "点「听不懂」，结合前后文讲清这句"],
+            ].map(([question, answer], ordinal) => {
+              const step = ordinal + 1;
+              return <li key={step} className={`landing-step${currentStep === step ? " landing-step-current" : currentStep > step ? " landing-step-completed" : ""}`} aria-current={currentStep === step ? "step" : undefined}>
+                <span className="landing-step-number" aria-hidden="true">{step}</span>
+                <div><p className="landing-step-question">{question}</p><p className="landing-step-answer">{answer}</p></div>
+              </li>;
+            })}
+            </ol>
+          </div>
         <div className="landing-actions">
           <Link href="/read/sample" className="landing-primary" onClick={() => emitAnalytics({ event: "landing_cta_click", target: "sample" })} onNavigate={() => markReaderEntry(SAMPLE_DOC_ID, "landing")}>{COPY.sampleButton}</Link>
           <div className="landing-secondary-group">
@@ -57,14 +101,16 @@ export default function Landing({ onImport, importButtonRef }: {
             <small>{COPY.importNote}</small>
           </div>
         </div>
+        <p className="landing-supplement">{COPY.supplement}</p>
+        </div>
         <section className="landing-demonstration" aria-label="点击句子查看白话的演示">
-          <LandingDemo replayIndex={replayIndex} />
-          <div className="landing-demo-footer">
+          <div className="landing-demo-header">
             <small>{SAMPLE_SOURCE}</small>
             <button type="button" onClick={() => setReplayIndex((index) => index + 1)}>{COPY.replayButton}</button>
           </div>
+          <LandingDemo replayIndex={replayIndex} onStepChange={setCurrentStep} />
         </section>
-        <p className="landing-supplement">{COPY.supplement}</p>
+        </div>
         <p className="landing-feedback">测试版，很需要你的意见。<FeedbackButton /></p>
       </div>
     </main>

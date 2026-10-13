@@ -25,4 +25,4 @@
 .feedback-contact { font-size: 12px; }
 .landing-feedback { margin: 12px 0 0; color: var(--gloss); font-size: 14px; line-height: 1.7; }
 .landing-page { position: relative; }
-.landing-feedback .feedback-entry { position: absolute; top: 18px; right: max(20px, calc((100% - 39rem) / 2)); margin: 0; }
+.landing-feedback .feedback-entry { position: absolute; top: 18px; right: max(20px, calc((100% - 76rem) / 2)); margin: 0; }

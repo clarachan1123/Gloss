@@ -5,7 +5,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import sampleContent from "../../public/samples/shan-yu-e.json";
-import LandingDemo from "./LandingDemo";
+import LandingDemo, { DEMO_EXPLANATION } from "./LandingDemo";
 
 vi.mock("@/components/reader/lineSplit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../reader/lineSplit")>()),
@@ -56,9 +56,13 @@ it("G-52 系统减少动态效果时首个演示状态已完整展开且无指�
   for (let step = 0; step < 4; step++) await act(async () => { await Promise.resolve(); });
   expect(host.querySelector(".landing-demo-pointer")).toBeNull();
   expect(host.querySelector(".landing-demo-panel-play .gloss-panel-text")?.textContent).toBe(sampleContent.glosses[10]);
+  expect(host.querySelector(".explain-result-text")?.textContent).toBe(DEMO_EXPLANATION);
+  expect(host.querySelector(".action-row-explain")?.getAttribute("aria-disabled")).toBe("true");
+  expect([...host.querySelectorAll(".landing-demo-panel-play button")].map(button => button.textContent)).toEqual(["留下", "听不懂"]);
+  expect([...host.querySelectorAll(".landing-demo-panel-play button")].every(button => !!button.closest("[inert]"))).toBe(true);
 });
 
-it("G-52 点击前原文完整，reveal 时才拆段并保留最终白话高度；重播复原", async () => {
+it("G-52 点击前原文完整，reveal 时才拆段并面板自然增长；重播复原", async () => {
   // G-57：演示改为进入视口才播放，此处模拟一挂载即可见，以下时序断言沿用 G-52
   vi.stubGlobal("IntersectionObserver", class {
     constructor(private callback: IntersectionObserverCallback) {}
@@ -73,8 +77,8 @@ it("G-52 点击前原文完整，reveal 时才拆段并保留最终白话高度�
   vi.stubGlobal("fetch", vi.fn(async () => Response.json(sampleContent)));
   const originalRect = HTMLElement.prototype.getBoundingClientRect;
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    if (this.classList.contains("landing-demo-expanded-measure")) return { height: 240 } as DOMRect;
-    if (this.classList.contains("landing-demo-panel-slot")) return { height: 83 } as DOMRect;
+    if (this.classList.contains("landing-demo-canvas")) return { height: 120 } as DOMRect;
+    if (this.classList.contains("gloss-panel")) return { height: 83 } as DOMRect;
     return originalRect.call(this);
   });
   const host = document.createElement("div");
@@ -90,7 +94,7 @@ it("G-52 点击前原文完整，reveal 时才拆段并保留最终白话高度�
     expect(visible().querySelectorAll("p.reader-para")).toHaveLength(1);
     expect(visible().querySelectorAll(".sentence")).toHaveLength(4);
     expect(visible().querySelector(".landing-demo-panel-slot")).toBeNull();
-    expect(host.querySelector<HTMLElement>(".landing-demo-canvas")?.style.minHeight).toBe("240px");
+    expect(host.querySelector<HTMLElement>(".landing-demo-canvas")?.style.minHeight).toBe("");
   };
   expectWhole();
   await act(async () => { vi.advanceTimersByTime(1_000); });
@@ -103,8 +107,8 @@ it("G-52 点击前原文完整，reveal 时才拆段并保留最终白话高度�
   expect([...visible().querySelectorAll(".sentence")].map(span => span.textContent).join("")).toBe(
     host.querySelector(".landing-demo-measure .reader-para")?.textContent);
   expect(visible().querySelector(".landing-demo-panel-slot")).not.toBeNull();
-  expect(visible().querySelector<HTMLElement>(".landing-demo-panel-slot")?.style.height).toBe("83px");
-  expect(host.querySelector<HTMLElement>(".landing-demo-canvas")?.style.minHeight).toBe("240px");
+  expect(visible().querySelector<HTMLElement>(".landing-demo-panel-slot")?.style.height).toBe("");
+  expect(host.querySelector<HTMLElement>(".landing-demo-canvas")?.style.minHeight).toBe("");
   await act(async () => { root.render(createElement(LandingDemo, { replayIndex: 1 })); });
   expectWhole();
   } finally {
@@ -221,8 +225,44 @@ describe("G-57 演示进入视口后启动", () => {
     expect(host.querySelector(".landing-demo-pointer-clicking")).not.toBeNull();
     await act(async () => { root.render(createElement(LandingDemo, { replayIndex: 1 })); });
     expect(host.querySelector(".landing-demo-pointer-waiting")).not.toBeNull();
+    await advance(200);
+    await advance(16); await advance(16); await advance(16); await advance(16);
+    await advance(200);
     await advance(1_000);
     expect(host.querySelector(".landing-demo-pointer-moving")).not.toBeNull();
+  });
+
+  it("G-62 重播先淡出，透明且无位置过渡时复位，淡入后才等 1000ms", async () => {
+    const { host, root } = await mount();
+    Object.defineProperty(host.querySelector(".landing-demo-canvas"), "clientWidth", { configurable: true, value: 320 });
+    await visible(0.8);
+    await advance(1_000);
+    const pointer = host.querySelector<HTMLElement>(".landing-demo-pointer")!;
+    const before = [pointer.style.left, pointer.style.top];
+    await act(async () => root.render(createElement(LandingDemo, { replayIndex: 1 })));
+    expect(pointer.classList.contains("landing-demo-pointer-replay-out")).toBe(true);
+    expect([pointer.style.left, pointer.style.top]).toEqual(before);
+    await advance(199);
+    expect(pointer.classList.contains("landing-demo-pointer-replay-out")).toBe(true);
+    await advance(1);
+    expect(pointer.classList.contains("landing-demo-pointer-replay-reset")).toBe(true);
+    expect(pointer.style.opacity).toBe("0");
+    expect(pointer.style.transition).toBe("none");
+    await advance(16); await advance(16);
+    expect([pointer.style.left, pointer.style.top]).toEqual(["290px", "10px"]);
+    expect(pointer.style.opacity).toBe("0");
+    expect(pointer.style.transition).toBe("none");
+    await advance(16); await advance(16);
+    expect(pointer.classList.contains("landing-demo-pointer-replay-in")).toBe(true);
+    await advance(199);
+    expect(pointer.classList.contains("landing-demo-pointer-replay-in")).toBe(true);
+    await advance(1);
+    expect(pointer.classList.contains("landing-demo-pointer-replay-in")).toBe(false);
+    expect(pointer.classList.contains("landing-demo-pointer-waiting")).toBe(true);
+    await advance(999);
+    expect(pointer.classList.contains("landing-demo-pointer-moving")).toBe(false);
+    await advance(1);
+    expect(pointer.classList.contains("landing-demo-pointer-moving")).toBe(true);
   });
 
   it("没有 IntersectionObserver 时立即启动现有计时", async () => {
@@ -243,6 +283,7 @@ describe("G-57 演示进入视口后启动", () => {
     expect(construct).not.toHaveBeenCalled();
     expect(host.querySelector(".landing-demo-pointer")).toBeNull();
     expect(host.querySelector(".landing-demo-visible .gloss-panel-text")?.textContent).toBe(sampleContent.glosses[10]);
+    expect(host.querySelector(".explain-result-text")?.textContent).toBe(DEMO_EXPLANATION);
   });
 
   it("G-57 可见通知前无指针，首次挂载即位于起点", async () => {

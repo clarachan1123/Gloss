@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
  * 直接读 styles/tokens.css 的色值，按 WCAG 2.1 的相对亮度公式算对比度：
  * 颜色一改，这个测试立刻失败，不依赖浏览器、不依赖模型。
  *
- * 阈值 4.5:1 用的是正文标准，不是大字号的 3:1——术语与正文同字号（16.5px），
+ * 阈值 4.5:1 用的是正文标准，不是大字号的 3:1——术语与正文同字号（17.5px），
  * 按 WCAG 的定义（< 18.66px 粗体 / < 24px 常规）属于正文。
  */
 
@@ -16,7 +16,7 @@ const AA_NORMAL_TEXT = 4.5;
 
 const CSS = readFileSync(path.resolve(__dirname, "../styles/tokens.css"), "utf8");
 
-type Token = "--paper-main" | "--paper-side" | "--ink" | "--gloss" | "--saved-inline" | "--term" | "--hover";
+type Token = "--text-body" | "--paper-main" | "--paper-side" | "--ink" | "--gloss" | "--saved-inline" | "--term" | "--hover";
 
 /** 从 tokens.css 里取某套主题的色值。主题块按 [data-theme="…"] 分段 */
 function themeColors(theme: string): Record<Token, string> {
@@ -32,6 +32,7 @@ function themeColors(theme: string): Record<Token, string> {
     "--paper-main": read("--paper-main"),
     "--paper-side": read("--paper-side"),
     "--ink": read("--ink"),
+    "--text-body": read("--text-body"),
     "--gloss": read("--gloss"),
     "--saved-inline": read("--saved-inline"),
     "--term": read("--term"),
@@ -116,6 +117,14 @@ const MIN_HOVER_TERM_DELTA_E = 10;
 const THEMES = ["parchment", "moon-white", "eye-green"] as const;
 
 describe("三套主题的对比度", () => {
+  it.each(THEMES)("%s：G-66 正文与底色对比度在 [7, 12]", (theme) => {
+    const c = themeColors(theme);
+    const ratio = contrast(c["--text-body"], c["--paper-main"]);
+    expect(ratio).toBeGreaterThanOrEqual(7);
+    expect(ratio).toBeLessThanOrEqual(12);
+    console.log(JSON.stringify({ theme, textBodyContrast: ratio }));
+  });
+
   it.each(THEMES)("%s：术语色在中栏底色上达 WCAG AA（≥ 4.5:1）", (theme) => {
     const c = themeColors(theme);
     expect(contrast(c["--term"], c["--paper-main"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
@@ -135,7 +144,7 @@ describe("三套主题的对比度", () => {
     const c = themeColors(theme);
     // 换色前的悬停色（羊皮纸 / 月白 #3F4B53，护眼绿 #37505A）与墨色的色差约 14.5–15.1；C 档要比它大
     const before = theme === "eye-green" ? "#37505A" : "#3F4B53";
-    expect(deltaE00(c["--hover"], c["--ink"])).toBeGreaterThan(deltaE00(before, c["--ink"]));
+    expect(deltaE00(c["--hover"], c["--text-body"])).toBeGreaterThan(deltaE00(before, c["--text-body"]));
   });
 
   it("色差计算与已知值一致（换色前的月白悬停色 vs 墨色 ≈ 14.5）", () => {

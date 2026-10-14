@@ -980,7 +980,7 @@ describe("G-59 行尾占位与尾行", () => {
     expect(host.querySelector(".reader-tail-line")).toBeNull();
     expect([...host.querySelectorAll(".sentence")].map((span) => span.textContent).join("")).toBe(pieces.map((piece) => piece.text).join(""));
   });
-  it("原末行不强加 justify，剩余真实文字连续续排", () => {
+  it("左对齐原末行保留段落身份，剩余真实文字连续续排", () => {
     const host = render(pieces, [region(1, null)]);
     expect(host.firstElementChild?.className).toBe("reader-para");
     expect(host.querySelector(".reader-para-cont")?.textContent).toBe("丁戊。");
@@ -1069,6 +1069,38 @@ describe("G-63 同段多开、并发与整段收起", () => {
     window.removeEventListener("gloss:analytics", onEvent);
     if (originalFonts) Object.defineProperty(document, "fonts", originalFonts); else Reflect.deleteProperty(document, "fonts");
     vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear();
+  });
+  it("G-66 每个逻辑原文段只有一个容器，拆分后边界不增，句序号与原文不变", async () => {
+    await mount(true);
+    const wrappers = () => [...container.querySelectorAll(".reader-body > .reader-paragraph")];
+    expect(wrappers()).toHaveLength(paragraphs.length);
+    expect(wrappers().map(block => block.textContent)).toEqual(paragraphs);
+    const identities = () => [...container.querySelectorAll(".sentence")].map(span => ({
+      index: span.getAttribute("data-index"), offset: span.getAttribute("data-offset"), text: span.textContent,
+    }));
+    const before = identities();
+    await click(0); await click(1);
+    expect(wrappers()).toHaveLength(paragraphs.length);
+    expect(wrappers()[0].querySelectorAll("[data-reader-block]").length).toBeGreaterThan(1);
+    expect(wrappers()[0].querySelectorAll(".reader-paragraph")).toHaveLength(0);
+    expect(wrappers()[0].querySelectorAll(".gloss-panel")).toHaveLength(2);
+    expect(identities()).toEqual(before);
+    expect(original()).toBe(paragraphs[0]);
+  });
+  it("G-66 标题容器单独标记并保留标题、段号与句序", async () => {
+    await mount(true);
+    await act(async () => { root.unmount(); }); container.remove();
+    const doc = JSON.parse(localStorage.getItem("gloss:doc:g63")!);
+    doc.headings = [{ paraIndex: 0, level: 1, text: paragraphs[0] }];
+    localStorage.setItem("gloss:doc:g63", JSON.stringify(doc));
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => { root.render(createElement(Reader, { docId: "g63" })); }); await flush();
+    const blocks = [...container.querySelectorAll(".reader-body > .reader-paragraph")];
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].classList.contains("reader-heading-block")).toBe(true);
+    expect(blocks[1].classList.contains("reader-heading-block")).toBe(false);
+    expect(blocks[0].querySelector('h1.reader-heading[data-para="0"][data-reader-block]')?.textContent).toBe(paragraphs[0]);
+    expect([...container.querySelectorAll(".sentence")].map(span => Number(span.getAttribute("data-index")))).toEqual(indexes.map(sentence => sentence.index));
   });
   it("同段 a、b 两面板保留，真实原文恰好一次，测量事务结束", async () => {
     await mount(true); await click(0); await click(1);

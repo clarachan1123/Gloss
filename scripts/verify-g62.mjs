@@ -127,6 +127,12 @@ function pageSetup() {
   function sample() {
     const visible=document.querySelector('.landing-demo-visible');
     if(!visible)return null;
+    const measuring=document.querySelector('.landing-demo-measure .landing-demo-body');
+    if(!measuring)throw Error('G-66 missing landing measuring body');
+    const properties=['fontFamily','fontSize','lineHeight','letterSpacing','textAlign','textIndent','color','wordBreak','lineBreak','maxWidth'];
+    const measuredStyle=getComputedStyle(measuring),visibleStyle=getComputedStyle(visible);
+    for(const property of properties)if(measuredStyle[property]!==visibleStyle[property])throw Error('G-66 landing style differs: '+property);
+    if(measuring.getBoundingClientRect().width!==visible.getBoundingClientRect().width||measuring.getBoundingClientRect().left!==visible.getBoundingClientRect().left)throw Error('G-66 landing measuring width/left differs');
     const pointer=document.querySelector('.landing-demo-pointer');
     const phase=pointer?.className.split(' ').find(c=>c.startsWith('landing-demo-pointer-'))?.replace('landing-demo-pointer-','')??null;
     const allLists=[...document.querySelectorAll('.landing-steps > ol,.landing-demo-steps')];

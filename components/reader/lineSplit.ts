@@ -6,7 +6,7 @@ interface Piece {
   placeholder?: boolean;
 }
 
-/** 段内切片续排必须取消首段缩进；标题段沿用既有 class 规则。 */
+/** 段内切片保留续排与上半段身份；普通段落不缩进，标题沿用既有 class 规则。 */
 export function splitFragmentClassName(
   className: string,
   isHeading: boolean,
@@ -63,8 +63,8 @@ export function rectOf(node: Text, offset: number): DOMRect | null {
 
 /**
  * 拆分点：被点击句最后一个字所在行的「下一行行首」在段落显示文本中的偏移。
- * 在这里拆开，上半段每一行的字与拆分前完全相同；配合上半段的 text-align-last: justify，
- * 原句所在各行的每个字位置不变（D13，已逐字实测 0px 偏移）。句子在最后一行结束时返回 null。
+ * 在这里拆开，保留上半段原行尾文字（含透明尾巴）；左对齐与字距和可见层一致。
+ * D13 由真实字框测量与视口锚定共同维护；句子在最后一行结束时返回 null。
  */
 export function measureSplit(body: HTMLElement, paraIndex: number, index: number): number | null {
   const ownInParagraph = Array.from(body.querySelectorAll<HTMLElement>('[data-para="' + paraIndex + '"] .sentence'))

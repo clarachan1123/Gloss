@@ -23,6 +23,7 @@
   --paper-main: #F8F6F0;
   --paper-side: #F1EEE6;
   --ink: #212121;
+  --text-body: #3C3C3C;
   --gloss: #5D5750;
   --saved-inline: #666057;
   --rule: #E5DFC8;
@@ -35,6 +36,7 @@
   --paper-main: #F5F5F7;
   --paper-side: #EAEAEE;
   --ink: #212121;
+  --text-body: #3C3C3C;
   --gloss: #5A5A61;
   --saved-inline: #626269;
   --rule: #E2E2E8;
@@ -47,6 +49,7 @@
   --paper-main: #EDF2EA;
   --paper-side: #E3E9DF;
   --ink: #223027;
+  --text-body: #3C3C3C;
   --gloss: #4F5D50;
   --saved-inline: #58675A;
   --rule: #D5DFD0;
@@ -60,6 +63,7 @@
  * 由 app/layout.tsx 里的 next/font 注入到 <html> 上。
  */
 :root {
+  --font-sans-cjk: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
   --font-serif-cjk: "Noto Serif CJK SC", "Source Han Serif SC",
                     "Songti SC", "SimSun", "Noto Serif SC", serif;
   --font-serif: var(--font-serif-cjk);

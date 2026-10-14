@@ -625,7 +625,7 @@ export default function Reader({ docId }: { docId: string }) {
       const group = groups[s.paraIndex];
       if (!group) continue;
       const previous = group[group.length - 1];
-      // 原文段首的全角空格不渲染，缩进由 CSS 的 text-indent 承担
+      // 段首空白只在显示层去掉；正文不缩进，以逻辑段容器间距区分段落。
       group.push(
         previous
           ? { index: s.index, start: previous.start + previous.text.length, text: s.text }
@@ -1714,8 +1714,8 @@ export default function Reader({ docId }: { docId: string }) {
           >
             {doc.paragraphs.map((_, paraIndex) => {
               return (
+                <div key={paraIndex} className={"reader-paragraph" + (headingByParagraph.has(paraIndex) ? " reader-heading-block" : "")}>
                 <Paragraph
-                  key={paraIndex}
                   paraIndex={paraIndex}
                   heading={headingByParagraph.get(paraIndex)}
                   pieces={piecesByParagraph[paraIndex] ?? NO_PIECES}
@@ -1733,6 +1733,7 @@ export default function Reader({ docId }: { docId: string }) {
                   sentences={sentences}
                   breatheSentenceIndex={sample?.breatheSentenceIndex ?? null}
                 />
+                </div>
               );
             })}
 

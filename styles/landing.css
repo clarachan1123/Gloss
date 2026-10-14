@@ -55,8 +55,7 @@
 }
 .landing-demo-body.reader-body {
   width: 100%;
-  max-width: none;
-  margin: 0;
+  margin: 0 auto;
   padding: 0;
   overflow-anchor: none;
 }

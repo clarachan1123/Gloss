@@ -153,9 +153,9 @@ async function save(c,index) {
   await c.evaluate(`document.querySelector('.gloss-panel[data-sentence-index="${index}"] .action-row-save').click()`);await settle(c);
 }
 async function reload(c) { await c.call('Page.reload');await ready(c); }
-async function checks(c,width) {
+async function layoutChecks(c,width) {
   const layout=await evaluate(c,width=>{
-    const rect=el=>{const r=el.getBoundingClientRect();return{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width};};
+    const rect=el=>{const r=el.getBoundingClientRect();return{text:el.textContent,font:getComputedStyle(el).fontSize,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width};};
     const aa=document.querySelector('.reader-typography-aa'),right=document.querySelector('.col-right');
     if(getComputedStyle(document.querySelector('.reader-body')).paddingBottom!==innerHeight+'px')throw Error('Reader 100lvh padding');
     if(width<768){const els=[document.querySelector('.reader-shelf-back'),...document.querySelectorAll('.mode-switch > span,.mode-options button'),document.querySelector('.feedback-button'),aa],boxes=els.map(rect);
@@ -165,6 +165,9 @@ async function checks(c,width) {
     }
     if(rect(right).width<200)throw Error('right minimum');if(getComputedStyle(aa).display!=='none')throw Error('desktop Aa visible');return{grid:getComputedStyle(document.querySelector('.shell')).gridTemplateColumns};
   },width);console.log(JSON.stringify({width,layout}));
+}
+async function checks(c,width) {
+  await layoutChecks(c,width);
   await revealControls(c,width);
   await evaluate(c,width=>{const scope=document.querySelector(width<768?'.reader-typography-sheet':'.col-right');
     if(scope.querySelectorAll('input[type=range]').length!==(width<768?2:3))throw Error('range count');
@@ -379,7 +382,8 @@ async function run(width) {
     c=new Cdp(target.webSocketDebuggerUrl);c.socket.on('message',data=>{const m=JSON.parse(data);if(m.method==='Network.requestWillBeSent'&&new URL(m.params.request.url).pathname.startsWith('/api/'))api.push(m.params.request.url);});
     await c.call('Page.enable');await c.call('Runtime.enable');await c.call('Network.enable');await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
     await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`(${setup.toString()})();`});await c.call('Page.navigate',{url:ORIGIN+'/read/sample'});await ready(c);
-    if(process.env.G19_PERF_MODE)await performanceHarness(c,profile);
+    if(process.env.G19_LAYOUT_ONLY==='1'){await layoutChecks(c,width);await ownedShelfCheck(c,width);}
+    else if(process.env.G19_PERF_MODE)await performanceHarness(c,profile);
     else if(process.env.G19_OWNED_IMPORT==='1')await actualOwnedImport(c,width);
     else if(process.env.G19_NEGATIVE_CONTROL==='1')await negativeControl(c,width);
     else if(process.env.G19_BASELINE_LANDING==='1') {

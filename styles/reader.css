@@ -683,8 +683,8 @@ body {
   .col-left .feedback-reader { grid-column: 3; grid-row: 1; height: auto; }
   .col-left .feedback-reader > .feedback-button { position: static; padding: 5px 4px; font-size: 14px; line-height: 14px; }
   .col-left .feedback-reader + .mode-switch { grid-column: 2; grid-row: 1; width: max-content; margin-top: 0; gap: 3px; align-items: flex-start; }
-  .col-left .mode-label { font-size: 11px; line-height: 24px; }
+  .col-left .mode-label { font-size: 13px; line-height: 24px; }
   .col-left .mode-options { gap: 2px; }
-  .col-left .mode-option { font-size: 12px; line-height: 18px; padding: 2px 3px; }
+  .col-left .mode-option { font-size: 14px; line-height: 18px; padding: 2px 3px; }
   .reader-typography-aa { display: block; grid-column: 4; grid-row: 1; padding: 2px 4px; font-size: 12px; line-height: 18px; }
 }

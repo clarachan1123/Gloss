@@ -57,3 +57,19 @@ it("pointerdown and pointerup/cancel expose gesture boundaries; radio choices ar
     expect(change).toHaveBeenCalledWith({ ...defaults, bodyFont: "serif" }, true);
   } finally { await act(async () => root.unmount()); }
 });
+
+it("theme radios follow the disclosure outside it, and typography reset leaves theme alone", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  document.documentElement.dataset.theme = "parchment";
+  const host = document.createElement("div"), root = createRoot(host);
+  try {
+    await act(async () => root.render(createElement(SettingsPanel, { glossShape: "inline", onGlossShapeChange: vi.fn(), typography: { ...defaults }, onTypographyChange: vi.fn() })));
+    expect(host.querySelector(".settings-theme")?.previousElementSibling?.className).toBe("settings-typography");
+    expect(host.querySelectorAll("[data-reader-theme]")).toHaveLength(3);
+    expect(host.querySelectorAll('.reader-theme-swatch[aria-hidden="true"]')).toHaveLength(3);
+    await act(async () => host.querySelector<HTMLInputElement>('[data-reader-theme="moon-white"]')!.click());
+    await act(async () => host.querySelector<HTMLButtonElement>(".settings-typography-toggle")!.click());
+    await act(async () => host.querySelector<HTMLButtonElement>(".reader-typography-reset")!.click());
+    expect(document.documentElement.dataset.theme).toBe("moon-white");
+  } finally { await act(async () => root.unmount()); localStorage.removeItem("gloss:settings:theme"); }
+});

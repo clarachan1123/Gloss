@@ -256,3 +256,19 @@ describe("G-60b 实心反馈按钮配色", () => {
     expect(contrast(c["--paper-main"], c["--gloss"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 });
+
+describe("G-19 完整主题", () => {
+  it.each(THEMES)("%s：所有阅读文字角色在实际纸色上达 AA，中栏最亮", theme => {
+    const c = themeColors(theme);
+    for (const role of ["--text-body", "--ink", "--gloss", "--saved-inline", "--term", "--hover"] as const)
+      expect(contrast(c[role], c["--paper-main"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    for (const role of ["--ink", "--gloss", "--hover"] as const)
+      expect(contrast(c[role], c["--paper-side"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    expect(luminance(c["--paper-main"])).toBeGreaterThan(luminance(c["--paper-side"]));
+  });
+  it.each(THEMES)("%s：层板五项均在本主题定义", theme => {
+    const start = CSS.indexOf(`[data-theme="${theme}"]`), block = CSS.slice(start, CSS.indexOf("}", start));
+    for (const part of ["top", "mid", "bottom", "edge", "shadow"])
+      expect(block).toMatch(new RegExp(`--shelf-ledge-${part}:\\s*#[0-9a-fA-F]{6};`));
+  });
+});

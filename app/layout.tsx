@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Cinzel, JetBrains_Mono } from "next/font/google";
 import AnalyticsCollector from "@/components/AnalyticsCollector";
+import { READER_THEME_BOOTSTRAP } from "@/lib/reader-theme";
 import "../styles/tokens.css";
 import "../styles/reader.css";
 import "../styles/shelf.css";
@@ -35,8 +36,10 @@ export default function RootLayout({
     <html
       lang="zh-CN"
       data-theme="parchment"
+      suppressHydrationWarning
       className={`${cinzel.variable} ${jetbrainsMono.variable}`}
     >
+      <head><script id="gloss-theme-bootstrap" dangerouslySetInnerHTML={{ __html: READER_THEME_BOOTSTRAP }} /></head>
       <body>{children}<Suspense fallback={null}><AnalyticsCollector /></Suspense></body>
     </html>
   );

@@ -1,8 +1,9 @@
-import { useEffect, useId, useState, type CSSProperties } from "react";
+import { useEffect, useId, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { clearAllGlossCache } from "@/lib/cache";
 import { DEFAULT_READER_TYPOGRAPHY, TYPOGRAPHY_RANGES, type ReaderTypography } from "@/lib/reader-typography";
+import { THEME_OPTIONS, readerThemeSnapshot, setReaderTheme, subscribeReaderTheme } from "@/lib/reader-theme";
 
-const SETTINGS = ["呈现模式", "导出形态", "纸面底色"];
+const SETTINGS = ["呈现模式", "导出形态"];
 const CONFIRM_MS = 5_000;
 const RESULT_MS = 3_000;
 
@@ -68,6 +69,7 @@ export default function SettingsPanel({
           {expanded && <div id={typographyId}><ReaderTypographyControls value={typography} onChange={onTypographyChange}
             onGestureStart={onTypographyGestureStart} onGestureEnd={onTypographyGestureEnd} /></div>}
         </li>
+        <li className="settings-theme" data-reader-settings><ReaderThemeControls /></li>
         {SETTINGS.map((item) => (
           <li key={item}>{item}</li>
         ))}
@@ -80,6 +82,19 @@ export default function SettingsPanel({
       </div>
     </>
   );
+}
+
+export function ReaderThemeControls() {
+  const id = useId();
+  const theme = useSyncExternalStore(subscribeReaderTheme, readerThemeSnapshot, () => "parchment");
+  return <fieldset className="reader-theme-options" data-reader-settings>
+    <legend>纸面底色</legend>
+    {THEME_OPTIONS.map(option => <label key={option.value}>
+      <input type="radio" name={`${id}-theme`} data-reader-theme={option.value} value={option.value}
+        checked={theme === option.value} onChange={() => setReaderTheme(option.value)} />
+      <span className="reader-theme-swatch" aria-hidden="true" style={{ backgroundColor: option.paper }} />{option.label}
+    </label>)}
+  </fieldset>;
 }
 
 /** One control set for the desktop disclosure and the nonmodal mobile sheet. */

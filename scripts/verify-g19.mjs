@@ -80,11 +80,13 @@ function setup() {
         translate,translateAbs,targetScrollY:trace.targetScrollY,maxScroll:document.scrollingElement.scrollHeight-innerHeight,
         value:getComputedStyle(body).fontSize,measuring:body.dataset.measuring,
         panels:[...body.querySelectorAll('.gloss-panel')].map(p=>({index:p.dataset.sentenceIndex,height:p.getBoundingClientRect().height}))};
-      trace.previous=t;trace.frames.push(frame);if(sig!==trace.signature){trace.signature=sig;trace.changes.push(frame);}
+      const layoutChanged=sig!==trace.signature;
+      trace.previous=t;trace.frames.push(frame);if(layoutChanged){trace.signature=sig;trace.changes.push(frame);}
       const boundary=allowTop&&scrollY===0&&trace.targetScrollY<0&&frame.dy===trace.targetScrollY;frame.topBoundaryException=boundary;
-      const invalid=!(translateAbs<1)||(frame.dy!==0&&!boundary)||(label.startsWith('D13')&&frame.dx!==0);
+      const themeGeometry=label.startsWith('theme:')&&layoutChanged;
+      const invalid=!(translateAbs<1)||(frame.dy!==0&&!boundary)||(label.startsWith('D13')&&frame.dx!==0)||themeGeometry;
       if(!negative&&trace.firstFailure===null&&invalid){
-        trace.firstFailure=trace.frames.length-1;trace.failureReason=!(translateAbs<1)?'translate >=1px':(label.startsWith('D13')&&frame.dx!==0)?'D13 horizontal displacement':'nonzero displacement outside top exception';
+        trace.firstFailure=trace.frames.length-1;trace.failureReason=!(translateAbs<1)?'translate >=1px':themeGeometry?'Theme layout signature changed':(label.startsWith('D13')&&frame.dx!==0)?'D13 horizontal displacement':'nonzero displacement outside top exception';
         document.querySelector('input[type=range]:focus')?.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true}));
       }
       if(trace.firstFailure!==null&&trace.frames.length>trace.firstFailure+3){trace.stop=true;return;}
@@ -381,6 +383,13 @@ async function run(width) {
     let target;await waitFor(async()=>{const r=await fetch('http://127.0.0.1:'+port+'/json').catch(()=>null);if(!r)return false;target=(await r.json()).find(t=>t.type==='page');return!!target;},'Edge');
     c=new Cdp(target.webSocketDebuggerUrl);c.socket.on('message',data=>{const m=JSON.parse(data);if(m.method==='Network.requestWillBeSent'&&new URL(m.params.request.url).pathname.startsWith('/api/'))api.push(m.params.request.url);});
     await c.call('Page.enable');await c.call('Runtime.enable');await c.call('Network.enable');await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+    await c.call('Emulation.setFocusEmulationEnabled',{enabled:true});
+    const rawCall=c.call.bind(c);
+    c.call=async(method,params={})=>{
+      if(method!=='Page.navigate'&&method!=='Page.reload')return rawCall(method,params);
+      let handler,timer;const loaded=new Promise((resolve,reject)=>{handler=data=>{if(JSON.parse(data).method==='Page.domContentEventFired')resolve();};c.socket.on('message',handler);timer=setTimeout(()=>reject(Error('Navigation DOMContentLoaded timeout')),20000);});
+      try{const result=await rawCall(method,params);await loaded;await rawCall('Page.bringToFront');return result;}finally{clearTimeout(timer);c.socket.off('message',handler);}
+    };
     await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`(${setup.toString()})();`});await c.call('Page.navigate',{url:ORIGIN+'/read/sample'});await ready(c);
     if(process.env.G19_LAYOUT_ONLY==='1'){await layoutChecks(c,width);await ownedShelfCheck(c,width);}
     else if(process.env.G19_PERF_MODE)await performanceHarness(c,profile);
@@ -400,5 +409,8 @@ async function run(width) {
     const absolute=resolve(profile);assert(absolute.startsWith(resolve(tmpdir(),persistent?'gloss-g19-perf-':'gloss-g19-edge-')),'Safe cleanup');if(!persistent)await rm(absolute,{recursive:true,force:true});
   }
 }
-if(process.env.G19_PERF_MODE||process.env.G19_NEGATIVE_CONTROL==='1')await run(1280);else for(const width of WIDTHS)await run(width);
-console.log('G-19 typography checks passed');
+export { Cdp, setup, ready, freePort, settle, revealControls, align, open, save, evaluate, ownedShelfCheck, measured };
+if(process.env.G19_IMPORT_ONLY!=='1') {
+  if(process.env.G19_PERF_MODE||process.env.G19_NEGATIVE_CONTROL==='1')await run(1280);else for(const width of WIDTHS)await run(width);
+  console.log('G-19 typography checks passed');
+}

@@ -10,6 +10,9 @@ html {
   scrollbar-gutter: stable;
 }
 
+/* Reader owns character anchoring; ancestors and sidebars must not become native anchors. */
+html:has(.shell) { overflow-anchor: none; }
+
 body {
   background: var(--paper-main);
   color: var(--ink);
@@ -23,7 +26,7 @@ body {
  */
 .shell {
   display: grid;
-  grid-template-columns: minmax(184px, 1fr) minmax(0, 750px) minmax(140px, 1fr);
+  grid-template-columns: minmax(184px, 1fr) minmax(0, 750px) minmax(200px, 1fr);
   min-height: 100vh;
 }
 
@@ -278,7 +281,8 @@ body {
 
 /*
  * 约 32 字/行：全角字按 1em、字距 0 折算，32em × 17.5px = 560px；窄屏自然缩窄。
- * 底部留白让靠后的句子也能滚到视口顶端，阅读位置才能精确恢复。
+ * 阅读页底部留白不小于一整屏：视口内参照字的补偿不会撞到底部滚动上限。
+ * LandingDemo 保持原来的通用规则，不使用阅读页专属类。
  *
  * overflow-anchor: none —— 关掉浏览器自带的 scroll anchoring，视口锚定全部由 Reader 手动完成：
  * 所有改变撑开状态的路径都经由同一个提交函数，先记下参照字（撑开时是被点击的那个字，其余情况是
@@ -292,19 +296,20 @@ body {
  * 与 auto 模式的对照实验未做（不是验收项）。
  */
 .reader-body {
-  max-width: 32em;
+  max-width: calc(var(--reader-line-chars, 32) * 1em);
   margin: 0 auto;
   padding-block: 32px 40vh;
   color: var(--text-body);
-  font-family: var(--font-sans-cjk);
-  font-size: 17.5px;
-  line-height: 1.75;
+  font-family: var(--reader-body-font, var(--font-sans-cjk));
+  font-size: var(--reader-font-size, 17.5px);
+  line-height: var(--reader-line-height, 1.75);
   letter-spacing: 0;
   text-align: start;
   line-break: strict;
   word-break: normal;
   overflow-anchor: none;
 }
+.reader-body-reader { padding-block-end: 100lvh; }
 
 
 /*
@@ -406,12 +411,13 @@ body {
 /* G-66：白话、操作行和脚注保留正文换排版之前继承的字体、字距与断行。 */
 .gloss-panel,
 .reader-notes {
-  font-family: var(--font-serif-cjk);
   /* = 旧正文 16.5px × 0.025em，G-66 前继承值，勿改为 em */
   letter-spacing: 0.4125px;
   word-break: normal;
   line-break: auto;
 }
+.gloss-panel { font-family: var(--reader-gloss-font, var(--font-serif-cjk)); }
+.reader-notes { font-family: var(--font-serif-cjk); }
 .reader-notes { text-indent: 0; }
 
 /* 已保存与未保存只用颜色区分；显示形态由所有白话共同选择。 */
@@ -651,4 +657,34 @@ body {
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* G-19: controls use fixed UI type, independent of the reading article. */
+.reader-typography-controls { display: grid; gap: 14px; padding-block: 12px 4px; font-family: var(--font-serif-cjk); font-size: 13px; line-height: 1.5; color: var(--ink); white-space: normal; }
+.settings-typography-toggle { display: flex; justify-content: space-between; width: 100%; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+.reader-typography-field label { display: flex; justify-content: space-between; gap: 6px; }
+.reader-typography-field input[type="range"] { display: block; width: 100%; min-width: 0; height: 24px; margin: 2px 0 0; accent-color: var(--hover); cursor: pointer; }
+.reader-recommended-band { height: 3px; margin: 3px 8px 0; background: linear-gradient(to right, transparent var(--band-start), var(--hover) var(--band-start), var(--hover) var(--band-end), transparent var(--band-end)); opacity: .55; }
+.reader-font-options { display: flex; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.reader-font-options legend { padding: 0; margin-bottom: 4px; }
+.reader-font-options label { display: flex; align-items: center; gap: 3px; }
+.reader-font-options input { margin: 0; accent-color: var(--hover); }
+.reader-typography-reset, .reader-typography-aa, .reader-typography-sheet-header button { padding: 4px 8px; border: 1px solid var(--rule); color: var(--ink); background: transparent; font: inherit; cursor: pointer; }
+.reader-typography-reset { justify-self: start; }
+.reader-typography-aa { display: none; }
+.reader-typography-controls :focus-visible, .settings-typography-toggle:focus-visible, .reader-typography-aa:focus-visible, .reader-typography-sheet-header button:focus-visible { outline: 2px solid var(--hover); outline-offset: 2px; }
+.reader-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.reader-typography-sheet { position: fixed; z-index: 90; inset-inline: 0; bottom: 0; box-sizing: border-box; max-height: 50dvh; overflow-y: auto; padding: 12px 20px max(12px, env(safe-area-inset-bottom)); border-top: 1px solid var(--rule); color: var(--ink); background: var(--paper-side); font-size: 14px; }
+.reader-typography-sheet-header { display: flex; justify-content: space-between; align-items: center; }
+.reader-typography-sheet-header h2 { margin: 0; font-size: 14px; }
+@media (max-width: 767.98px) {
+  .col-left { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 4px; align-items: start; }
+  .col-left .reader-shelf-back { grid-column: 1; grid-row: 1; line-height: 24px; white-space: nowrap; }
+  .col-left .feedback-reader { grid-column: 3; grid-row: 1; height: auto; }
+  .col-left .feedback-reader > .feedback-button { position: static; padding: 5px 4px; font-size: 14px; line-height: 14px; }
+  .col-left .feedback-reader + .mode-switch { grid-column: 2; grid-row: 1; width: max-content; margin-top: 0; gap: 3px; align-items: flex-start; }
+  .col-left .mode-label { font-size: 11px; line-height: 24px; }
+  .col-left .mode-options { gap: 2px; }
+  .col-left .mode-option { font-size: 12px; line-height: 18px; padding: 2px 3px; }
+  .reader-typography-aa { display: block; grid-column: 4; grid-row: 1; padding: 2px 4px; font-size: 12px; line-height: 18px; }
 }

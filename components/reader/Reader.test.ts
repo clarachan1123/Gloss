@@ -1202,4 +1202,29 @@ describe("G-63 同段多开、并发与整段收起", () => {
     await click(1); await observe(Array(observers.at(-1)!.targets.length).fill(false));
     expect(panels()).toEqual([0]);
   });
+  it("G-19 正文字体重排保留常驻和临时白话，不重新调用或发关闭事件", async () => {
+    await mount(true, true); await click(1);
+    await act(async () => { container.querySelector<HTMLButtonElement>(".settings-typography-toggle")!.click(); });
+    const before = panels(), source = original(), eventCount = events.length;
+    await act(async () => { container.querySelector<HTMLInputElement>('.col-right [data-typography="bodyFont"][value="serif"]')!.click();
+      await new Promise(resolve => requestAnimationFrame(() => resolve(null))); });
+    await flush();
+    expect(panels()).toEqual(before); expect(original()).toBe(source);
+    expect(container.querySelector<HTMLElement>(".reader-body")!.style.getPropertyValue("--reader-body-font")).toBe("var(--font-serif-cjk)");
+    expect(JSON.parse(localStorage.getItem("gloss:settings:reader-typography")!).bodyFont).toBe("serif");
+    expect(events.slice(eventCount).filter(e => ["gloss_abort", "gloss_dismiss_early", "sentence_click"].includes(e.event))).toEqual([]);
+    expect(runs.size).toBe(0);
+  });
+  it("G-19 Aa 和面板 Esc 不收白话；手机面板暂停计时，关闭后续计", async () => {
+    await mount(true); await click(0);
+    await act(async () => container.querySelector<HTMLButtonElement>(".reader-typography-aa")!.click()); await flush();
+    expect(container.querySelector('[role="dialog"][aria-labelledby="reader-typography-sheet-title"]')).not.toBeNull();
+    now += 5000; await act(async () => window.dispatchEvent(new Event("scroll")));
+    expect(details("gloss_read_complete")).toEqual([]);
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))); await flush();
+    expect(container.querySelector(".reader-typography-sheet")).toBeNull(); expect(panels()).toEqual([0]);
+    expect(details("gloss_dismiss_early")).toEqual([]); expect(details("gloss_abort")).toEqual([]);
+    now += 3000; await act(async () => window.dispatchEvent(new Event("scroll")));
+    expect(details("gloss_read_complete")).toContainEqual(expect.objectContaining({ sentenceIndex: 0 }));
+  });
 });

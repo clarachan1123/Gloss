@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { flushSync } from "react-dom";
 import FeedbackButton from "@/components/feedback/FeedbackButton";
 import {
   Fragment,
@@ -15,10 +16,12 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type Ref,
+  type CSSProperties,
 } from "react";
 import ContextMenu, { type ContextMenuPoint } from "@/components/reader/ContextMenu";
 import Notice from "@/components/Notice";
-import SettingsPanel from "@/components/settings/SettingsPanel";
+import SettingsPanel, { ReaderTypographyControls } from "@/components/settings/SettingsPanel";
+import { DEFAULT_READER_TYPOGRAPHY, readReaderTypography, validateReaderTypography, writeReaderTypography, type ReaderTypography } from "@/lib/reader-typography";
 import {
   lookupPreloadedGloss,
   mergePreloadedGlosses,
@@ -233,6 +236,19 @@ export default function Reader({ docId }: { docId: string }) {
   const [fontsReady, setFontsReady] = useState(false);
   const [hasOwnBooks, setHasOwnBooks] = useState<boolean | null>(null);
   const bodyRef = useRef<HTMLElement>(null);
+  const [typography, setTypography] = useState<ReaderTypography>({ ...DEFAULT_READER_TYPOGRAPHY });
+  const typographyRef = useRef(typography);
+  typographyRef.current = typography;
+  const queuedTypographyRef = useRef<ReaderTypography | null>(null);
+  const typographyFrameRef = useRef<number | null>(null);
+  const typographyGestureRef = useRef<{ anchor: CharAnchor | null; pointer: boolean } | null>(null);
+  const queuedTypographyAnchorRef = useRef<CharAnchor | null>(null);
+  const typographyGestureTimerRef = useRef<number | undefined>(undefined);
+  const typographyLayoutRef = useRef<{ anchor: CharAnchor | null; scrollY: number } | null>(null);
+  const [mobileTypographyOpen, setMobileTypographyOpen] = useState(false);
+  const mobileTypographyOpenRef = useRef(false);
+  const typographySheetRef = useRef<HTMLDivElement>(null);
+  const typographyButtonRef = useRef<HTMLButtonElement>(null);
   const hoveredGlossRef = useRef<HTMLElement | null>(null);
   const hoveredSentenceRef = useRef<number | null>(null);
 
@@ -368,6 +384,7 @@ export default function Reader({ docId }: { docId: string }) {
   const clickCountsRef = useRef(new Map<number, number>());
   const readAttemptRef = useRef(new Map<number, ReadAttempt>());
   function sampleReadAttempt(index: number) {
+    if (mobileTypographyOpenRef.current) return;
     if (measurement || savedRegions === null) return;
     const attempt = readAttemptRef.current.get(index);
     if (!attempt) return;
@@ -510,6 +527,8 @@ export default function Reader({ docId }: { docId: string }) {
     updateExpandedSavedIndexes(new Set());
     setFontsReady(false);
     setReadingMode(readReadingMode());
+    typographyLayoutRef.current = null;
+    setTypography(readReaderTypography());
     const finish = (doc: StoredDocument | null, sample: SampleContent | null) => {
       if (cancelled) return;
       if (!doc) {
@@ -775,7 +794,7 @@ export default function Reader({ docId }: { docId: string }) {
       position.layout = layoutKey(body);
       position.measure = layoutMeasureKey(body);
       restoredDocRef.current = docId;
-    } else if (!transactionRef.current) {
+    } else if (!transactionRef.current && !typographyLayoutRef.current) {
       const drift = sentenceTop(body, position.index) - position.offset;
       if (Math.abs(drift) > 1) window.scrollBy({ top: drift, behavior: "instant" });
       position.offset = sentenceTop(body, position.index);
@@ -789,6 +808,11 @@ export default function Reader({ docId }: { docId: string }) {
       saveReadingPosition(docId, positionRef.current.index);
     };
     const onScroll = () => {
+      const layout = typographyLayoutRef.current;
+      if (layout?.anchor && !transactionRef.current && !measurementRef.current) {
+        restoreTypographyAnchor(body, layout.anchor);
+        layout.scrollY = window.scrollY;
+      }
       // 布局刚变过：这次滚动由浏览器保持像素位置造成，不是用户在读，交给 ResizeObserver 处理
       if (layoutKey(body) !== positionRef.current.layout) return;
       rememberTopSentence(body, positionRef.current);
@@ -799,9 +823,25 @@ export default function Reader({ docId }: { docId: string }) {
       if (document.visibilityState === "hidden") flush();
     };
     const observer = new ResizeObserver(() => {
+      if (transactionRef.current || pendingMeasureTransactionRef.current || measurementRef.current) return;
       const current = positionRef.current;
       const key = layoutKey(body);
       const measure = layoutMeasureKey(body);
+      const typographyLayout = typographyLayoutRef.current;
+      if (typographyLayout) {
+        if (measure !== current.measure && (savedGlossesRef.current.size > 0 || expansionsRef.current.size > 0)) {
+          pendingMeasureTransactionRef.current = { anchor: typographyLayout.anchor, animateOpen: false, adjustVisibility: false };
+          setSavedRegions(null);
+          return;
+        }
+        // A late change below the locked character has delta 0: never scroll for that change.
+        if (typographyLayout.anchor && charTop(body, typographyLayout.anchor.paraIndex, typographyLayout.anchor.offset) !== typographyLayout.anchor.viewportTop) {
+          restoreTypographyAnchor(body, typographyLayout.anchor);
+        }
+        typographyLayout.scrollY = window.scrollY;
+        rememberTopSentence(body, current); current.layout = layoutKey(body); current.measure = layoutMeasureKey(body);
+        return;
+      }
       // 撑开 / 收起已经自己锚定过视口（见下方事务），这里不再二次校正
       if (key === current.layout) return;
       if (measure !== current.measure && (savedGlossesRef.current.size > 0 || expansionsRef.current.size > 0)) {
@@ -1026,6 +1066,7 @@ export default function Reader({ docId }: { docId: string }) {
   }
 
   function handleBodyClick(event: ReactMouseEvent<HTMLElement>) {
+    typographyLayoutRef.current = null;
     // G5：用户划选了文字（复制原文），松开鼠标不触发撑开
     if (hasTextSelection()) return;
     const eventTarget = event.target as Element;
@@ -1074,7 +1115,9 @@ export default function Reader({ docId }: { docId: string }) {
 
     // ① 视口锚定（产品不变量）：把参照字滚回 DOM 变化前的位置。
     //    改动在参照字下方时补偿为 0（D13 保证上方的行不重排）；改动在上方时，补偿恰好抵消文档高度的变化
-    if (transaction?.anchor) {
+    if (typographyLayoutRef.current?.anchor) {
+      restoreTypographyAnchor(body, typographyLayoutRef.current.anchor);
+    } else if (transaction?.anchor) {
       if (growthAnchorRef.current?.anchor === transaction.anchor) {
         restorePanelAnchor(body, transaction.anchor);
         growthAnchorRef.current.scrollY = window.scrollY;
@@ -1086,8 +1129,9 @@ export default function Reader({ docId }: { docId: string }) {
     rememberTopSentence(body, positionRef.current);
     positionRef.current.layout = layoutKey(body);
     positionRef.current.measure = layoutMeasureKey(body);
+    if (typographyLayoutRef.current) typographyLayoutRef.current.scrollY = window.scrollY;
 
-    if (pendingSavedJump !== null) {
+    if (pendingSavedJump !== null && !typographyLayoutRef.current) {
       body.querySelector<HTMLElement>(`.sentence[data-index="${pendingSavedJump}"]`)?.scrollIntoView({
         block: "center",
         behavior: prefersReducedMotion() ? "instant" : "smooth",
@@ -1095,7 +1139,7 @@ export default function Reader({ docId }: { docId: string }) {
     }
 
     // 功能二逐句增长只做字符锚定：不能像首次展开那样追着不断变长的面板自动滚动。
-    if (transaction?.adjustVisibility === false) return;
+    if (typographyLayoutRef.current || transaction?.adjustVisibility === false) return;
 
     if (transaction?.closing && !prefersReducedMotion()) {
       for (const { index, height } of transaction.closing) {
@@ -1139,22 +1183,23 @@ export default function Reader({ docId }: { docId: string }) {
     if (adjustment !== 0) {
       window.scrollBy({ top: adjustment, behavior: prefersReducedMotion() ? "instant" : "smooth" });
     }
-  }, [activeSavedIndex, expandedSavedIndexes, explainViews, expansions, glosses, glossShape, measurement, readingMode, savedRegions]);
+  }, [activeSavedIndex, expandedSavedIndexes, explainViews, expansions, glosses, glossShape, measurement, readingMode, savedRegions, typography]);
 
   // Esc / 空白批量收临时白话与收起模式的已留下展开，显示模式常驻保留。
   useEffect(() => {
     if (measurement || !bodyRef.current || (!expansions.size && !expandedSavedIndexes.size && activeSavedIndex === null)) return;
     const dismiss = () => {
+      typographyLayoutRef.current = null;
       collapseIndexes([...expansionsRef.current.keys(), ...expandedSavedIndexesRef.current], true);
       setActiveSavedIndex(null);
     };
     const onDocumentClick = (event: MouseEvent) => {
       if (hasTextSelection()) return;
       const target = event.target as Element | null;
-      if (target?.closest?.(".sentence, .gloss-panel, .feedback-card, .feedback-button")) return;
+      if (target?.closest?.(".sentence, .gloss-panel, .feedback-card, .feedback-button, .col-right, [data-reader-settings]")) return;
       dismiss();
     };
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented && !mobileTypographyOpenRef.current) dismiss(); };
     document.addEventListener("click", onDocumentClick);
     document.addEventListener("keydown", onKeyDown);
     return () => { document.removeEventListener("click", onDocumentClick); document.removeEventListener("keydown", onKeyDown); };
@@ -1170,7 +1215,7 @@ export default function Reader({ docId }: { docId: string }) {
     const visibility = new Map<Element, boolean | null>([...blocks, ...panels].map((node) => [node, null]));
     let disconnected = false, dismissed = false;
     const observer = new IntersectionObserver((entries) => {
-      if (disconnected || dismissed) return;
+      if (disconnected || dismissed || typographyLayoutRef.current || measurementRef.current) return;
       for (const entry of entries) if (visibility.has(entry.target)) visibility.set(entry.target, entry.isIntersecting);
       if (allObservedTargetsOutside(visibility.values())) {
         dismissed = true;
@@ -1185,6 +1230,7 @@ export default function Reader({ docId }: { docId: string }) {
   const capturePanelGrowth = useCallback((index: number): CharAnchor | null => {
     const body = bodyRef.current;
     const panel = body?.querySelector<HTMLElement>(`.gloss-panel[data-sentence-index="${index}"]`);
+    if (typographyLayoutRef.current) return typographyLayoutRef.current.anchor;
     if (measurementRef.current || !body || !panel || !shouldAnchorPanelGrowth(panel.getBoundingClientRect().bottom)) {
       growthAnchorRef.current = null;
       return null;
@@ -1200,7 +1246,10 @@ export default function Reader({ docId }: { docId: string }) {
   const restorePanelGrowth = useCallback((anchor: CharAnchor | null) => {
     const body = bodyRef.current;
     if (body && anchor) {
-      restorePanelAnchor(body, anchor);
+      const owner = typographyLayoutRef.current;
+      if (owner?.anchor) restoreTypographyAnchor(body, owner.anchor);
+      else restorePanelAnchor(body, anchor);
+      if (owner) owner.scrollY = window.scrollY;
       if (growthAnchorRef.current?.anchor === anchor) growthAnchorRef.current.scrollY = window.scrollY;
     }
   }, []);
@@ -1472,7 +1521,7 @@ export default function Reader({ docId }: { docId: string }) {
   }
 
   useLayoutEffect(() => {
-    if (measurement || savedRegions === null || !readAttemptRef.current.size) return;
+    if (measurement || savedRegions === null || mobileTypographyOpen || !readAttemptRef.current.size) return;
     const sample = () => { for (const index of readAttemptRef.current.keys()) sampleReadAttempt(index); };
     sample();
     const observer = new MutationObserver(sample);
@@ -1488,7 +1537,7 @@ export default function Reader({ docId }: { docId: string }) {
       observer.disconnect(); window.clearInterval(timer); window.removeEventListener("scroll", sample);
       window.removeEventListener("resize", sample); document.removeEventListener("visibilitychange", sample);
     };
-  }, [expansions, glosses, measurement, savedRegions]);
+  }, [expansions, glosses, measurement, savedRegions, mobileTypographyOpen]);
   saveContextRef.current = { docId, expansions, glosses, readingMode, savedGlosses, savedRegions, sentences };
   saveActionsRef.current = { commit, commitSaved };
   const toggleSavedGlossFor = useCallback(async (index: number): Promise<"saved" | "removed" | StorageErrorCode> => {
@@ -1553,6 +1602,92 @@ export default function Reader({ docId }: { docId: string }) {
     }
   }, []);
   const minHeadingLevel = Math.min(...(doc?.headings ?? []).map((h) => h.level));
+  function startTypographyGesture() {
+    window.clearTimeout(typographyGestureTimerRef.current);
+    typographyGestureRef.current = { anchor: bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null, pointer: true };
+    typographyLayoutRef.current = { anchor: typographyGestureRef.current.anchor, scrollY: window.scrollY };
+  }
+  function endTypographyGesture() {
+    window.clearTimeout(typographyGestureTimerRef.current);
+    typographyGestureRef.current = null;
+  }
+  function changeTypography(value: ReaderTypography, discrete = false) {
+    if (discrete || !typographyGestureRef.current) {
+      typographyGestureRef.current = { anchor: bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null, pointer: false };
+    }
+    queuedTypographyAnchorRef.current = typographyGestureRef.current.anchor;
+    typographyLayoutRef.current = { anchor: typographyGestureRef.current.anchor, scrollY: window.scrollY };
+    // Resolve the old layout before queuing a new one; browser scroll-range clamping is also owned here.
+    if (bodyRef.current && typographyGestureRef.current.anchor) {
+      restoreTypographyAnchor(bodyRef.current, typographyGestureRef.current.anchor);
+      typographyLayoutRef.current.scrollY = window.scrollY;
+    }
+    if (!typographyGestureRef.current.pointer) {
+      window.clearTimeout(typographyGestureTimerRef.current);
+      typographyGestureTimerRef.current = window.setTimeout(endTypographyGesture, 300);
+    }
+    queuedTypographyRef.current = validateReaderTypography(value);
+    if (discrete) endTypographyGesture();
+    if (typographyFrameRef.current !== null) return;
+    typographyFrameRef.current = window.requestAnimationFrame(() => {
+      typographyFrameRef.current = null;
+      const next = queuedTypographyRef.current;
+      queuedTypographyRef.current = null;
+      if (!next || JSON.stringify(next) === JSON.stringify(typographyRef.current)) return;
+      const body = bodyRef.current;
+      const anchor = queuedTypographyAnchorRef.current;
+      typographyLayoutRef.current = { anchor, scrollY: window.scrollY };
+      const old = typographyRef.current;
+      const remeasure = next.fontSize !== old.fontSize || next.lineHeight !== old.lineHeight ||
+        next.lineChars !== old.lineChars || next.bodyFont !== old.bodyFont;
+      // The rAF presents one value. React's complete measurement transaction must finish before paint.
+      flushSync(() => {
+        clearAnimation(); cancelPendingCollapse();
+        transactionRef.current = { anchor, animateOpen: false, adjustVisibility: false };
+        if (remeasure) stageLayouts(new Set(visibleIndexes().map(index => sentences[index].paraIndex)), 0);
+        setTypography(next);
+      });
+      writeReaderTypography(next);
+    });
+  }
+  function setTypographySheet(open: boolean) {
+    if (open === mobileTypographyOpenRef.current) return;
+    if (open) for (const attempt of readAttemptRef.current.values()) attempt.clock.stop(performance.now());
+    mobileTypographyOpenRef.current = open;
+    setMobileTypographyOpen(open);
+    if (!open) typographyButtonRef.current?.focus({ preventScroll: true });
+  }
+  useEffect(() => {
+    if (!mobileTypographyOpen) return;
+    typographySheetRef.current?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault(); event.stopImmediatePropagation(); setTypographySheet(false);
+    };
+    const outside = (event: MouseEvent) => {
+      if ((event.target as Element)?.closest?.('[data-reader-settings]')) return;
+      event.preventDefault(); event.stopImmediatePropagation(); setTypographySheet(false);
+    };
+    const media = window.matchMedia?.("(min-width: 768px)");
+    const resize = () => { if (media?.matches) setTypographySheet(false); };
+    document.addEventListener("keydown", keydown, true);
+    document.addEventListener("click", outside, true);
+    media?.addEventListener("change", resize);
+    return () => {
+      document.removeEventListener("keydown", keydown, true); document.removeEventListener("click", outside, true);
+      media?.removeEventListener("change", resize);
+    };
+  }, [mobileTypographyOpen]);
+  useEffect(() => () => { if (typographyFrameRef.current !== null) cancelAnimationFrame(typographyFrameRef.current);
+    window.clearTimeout(typographyGestureTimerRef.current); }, []);
+  useEffect(() => {
+    const release = () => { typographyLayoutRef.current = null; };
+    const key = (event: KeyboardEvent) => { if (!(event.target as Element)?.closest?.('[data-reader-settings]') &&
+      ['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key)) release(); };
+    window.addEventListener('wheel', release, { passive: true }); window.addEventListener('touchstart', release, { passive: true });
+    document.addEventListener('keydown', key);
+    return () => { window.removeEventListener('wheel', release); window.removeEventListener('touchstart', release); document.removeEventListener('keydown', key); };
+  }, []);
   // 左栏常驻信息（G-25）：全部来自已存的记录，不随滚动变化，不新增状态
   const skippedLine = skippedSummary(doc?.meta.skipped);
   const changeGlossShape = useCallback((next: GlossShape) => {
@@ -1581,6 +1716,7 @@ export default function Reader({ docId }: { docId: string }) {
     stageLayouts(new Set(sentences.map((sentence) => sentence.paraIndex)), 0, expansionsRef.current, next, new Set());
   }, [readingMode]);
   const jumpToSaved = useCallback((index: number) => {
+    typographyLayoutRef.current = null;
     const body = bodyRef.current;
     if (!body) return;
     const needsExpand = readingMode === "reading" && !expandedSavedIndexes.has(index);
@@ -1621,6 +1757,10 @@ export default function Reader({ docId }: { docId: string }) {
           </div>
         </div>
 
+        <button type="button" ref={typographyButtonRef} className="reader-typography-aa" data-reader-settings
+          aria-label="阅读排版" aria-haspopup="dialog" aria-controls="reader-typography-sheet" aria-expanded={mobileTypographyOpen}
+          onClick={() => setTypographySheet(!mobileTypographyOpenRef.current)}>Aa</button>
+
         {doc && (
           <section className="side-section" aria-labelledby="doc-title">
             <h2 id="doc-title" className="side-title">
@@ -1643,7 +1783,7 @@ export default function Reader({ docId }: { docId: string }) {
                   <button
                     type="button"
                     className="toc-link"
-                    onClick={() => document.getElementById(`para-${h.paraIndex}`)?.scrollIntoView()}
+                    onClick={() => { typographyLayoutRef.current = null; document.getElementById(`para-${h.paraIndex}`)?.scrollIntoView(); }}
                   >
                     {h.text.trim()}
                   </button>
@@ -1699,7 +1839,10 @@ export default function Reader({ docId }: { docId: string }) {
         {doc && (
           <article
             ref={bodyRef}
-            className={"reader-body" + (sample && !sampleBreathed ? " reader-body-sample-breathing" : "")}
+            style={{ "--reader-font-size": `${typography.fontSize}px`, "--reader-line-height": typography.lineHeight,
+              "--reader-line-chars": typography.lineChars, "--reader-body-font": `var(--font-${typography.bodyFont}-cjk)`,
+              "--reader-gloss-font": `var(--font-${typography.glossFont}-cjk)` } as CSSProperties}
+            className={"reader-body reader-body-reader" + (sample && !sampleBreathed ? " reader-body-sample-breathing" : "")}
             data-measuring={measurement !== null || savedRegions === null || !fontsReady ? "true" : "false"}
             lang="zh-CN"
             onClick={handleBodyClick}
@@ -1751,8 +1894,15 @@ export default function Reader({ docId }: { docId: string }) {
       </main>
 
       <aside className="col col-right" aria-labelledby="settings-title">
-          <SettingsPanel glossShape={glossShape} onGlossShapeChange={changeGlossShape} />
+          <SettingsPanel glossShape={glossShape} onGlossShapeChange={changeGlossShape} typography={typography} onTypographyChange={changeTypography}
+            onTypographyGestureStart={startTypographyGesture} onTypographyGestureEnd={endTypographyGesture} />
       </aside>
+      {mobileTypographyOpen && <div ref={typographySheetRef} id="reader-typography-sheet" className="reader-typography-sheet"
+        data-reader-settings role="dialog" aria-labelledby="reader-typography-sheet-title">
+        <div className="reader-typography-sheet-header"><h2 id="reader-typography-sheet-title" tabIndex={-1}>阅读排版</h2>
+          <button type="button" aria-label="关闭阅读排版" onClick={() => setTypographySheet(false)}>关闭</button></div>
+        <ReaderTypographyControls value={typography} onChange={changeTypography} onGestureStart={startTypographyGesture} onGestureEnd={endTypographyGesture} mobile />
+      </div>}
       {contextMenu && (
         <ContextMenu
           point={contextMenu.point}
@@ -1799,18 +1949,30 @@ function panelGrowthAnchor(body: HTMLElement, panel: HTMLElement): CharAnchor | 
   return shouldAnchorPanelGrowth(panel.getBoundingClientRect().bottom) ? anchorAtViewportTop(body) : null;
 }
 
-function restoreCharAnchor(body: HTMLElement, anchor: CharAnchor): void {
+function restoreTypographyAnchor(body: HTMLElement, anchor: CharAnchor): void {
+  // Flush the document scroll range before measuring, and finish both scroll and residual translation before paint.
+  void document.scrollingElement?.scrollHeight;
+  if (charTop(body, anchor.paraIndex, anchor.offset) === anchor.viewportTop) return;
+  restorePanelAnchor(body, anchor);
+  void document.scrollingElement?.scrollHeight;
+  if (charTop(body, anchor.paraIndex, anchor.offset) !== anchor.viewportTop) restorePanelAnchor(body, anchor);
+}
+
+function restoreCharAnchor(body: HTMLElement, anchor: CharAnchor): number | null {
   body.style.translate = "";
   const top = charTop(body, anchor.paraIndex, anchor.offset);
-  if (top === null) return;
+  if (top === null) return null;
   const delta = anchorScrollDelta(anchor.viewportTop, top);
-  if (delta !== 0) window.scrollBy({ top: delta, behavior: "instant" });
+  const targetScrollY = window.scrollY + delta;
+  if (delta !== 0) window.scrollTo({ top: Math.max(0, targetScrollY), behavior: "instant" });
+  return targetScrollY;
 }
 
 function restorePanelAnchor(body: HTMLElement, anchor: CharAnchor): void {
-  restoreCharAnchor(body, anchor);
+  const targetScrollY = restoreCharAnchor(body, anchor);
   const top = charTop(body, anchor.paraIndex, anchor.offset);
-  if (top !== null) body.style.translate = `0 ${anchor.viewportTop - top}px`;
+  // At the top boundary preserve the signed deficit; translation only corrects subpixel rounding elsewhere.
+  if (top !== null) body.style.translate = `0 ${targetScrollY !== null && targetScrollY < 0 ? 0 : (anchor.viewportTop - top) % 1}px`;
 }
 
 /**
@@ -2278,30 +2440,24 @@ function anchorAtClick(target: HTMLElement, x: number, y: number): CharAnchor | 
 /**
  * 默认视口参照物：视口顶端第一个完整可见的字。撑开区内没有 .sentence，所以它永远不会被选作参照物。
  * 不用坐标反查（caretFromPoint）：参考点落在行距、段间距或撑开区外边距里时会取不到字，锚定就静默失效了。
- * 片段首行顶边随文档顺序单调不减（收起动画中下方元素整体上移同一距离，仍保持单调），用二分找起点。
+ * 按文档顺序扫描有可见字框的片段，同行跨句时仍选最早的真实字；手势开始时只选择一次。
  */
 function anchorAtViewportTop(body: HTMLElement): CharAnchor | null {
+  const viewport = window.visualViewport;
+  const visibleTop = viewport?.offsetTop ?? 0;
+  const sheet = document.querySelector<HTMLElement>(".reader-typography-sheet");
+  const visibleBottom = Math.min(visibleTop + (viewport?.height ?? window.innerHeight), sheet?.getBoundingClientRect().top ?? Infinity);
   const spans = body.querySelectorAll<HTMLElement>(".sentence");
-  let lo = 0;
-  let hi = spans.length - 1;
-  let start = 0;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (firstLineTop(spans[mid]) <= 0) {
-      start = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  for (let i = start; i < spans.length; i++) {
-    const span = spans[i];
+  for (const span of spans) {
+    const bounds = span.getBoundingClientRect();
+    if (bounds.bottom <= visibleTop) continue;
+    if (bounds.top >= visibleBottom) break;
     const node = span.firstChild;
     const container = span.closest<HTMLElement>("[data-para]");
     if (!(node instanceof Text) || !container) continue;
     for (let c = 0; c < node.length; c++) {
       const rect = rectOf(node, c);
-      if (rect && rect.top >= 0) {
+      if (rect && rect.top >= visibleTop && rect.bottom <= visibleBottom && node.data[c].trim()) {
         return { paraIndex: Number(container.dataset.para), offset: Number(span.dataset.offset) + c, viewportTop: rect.top };
       }
     }

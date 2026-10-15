@@ -103,6 +103,14 @@ function setup() {
   };
 }
 async function revealControls(c,width) {
+  if(width<768) {
+    if(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"))return;
+    const selector=await c.evaluate("document.querySelector('.reader-typography-floating-aa')?.dataset.visible==='true'?'.reader-typography-floating-aa':'.reader-typography-aa'");
+    const point=await evaluate(c,selector=>{const b=document.querySelector(selector),r=b.getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};},selector);
+    await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});
+    await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
+    await settle(c);assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Visible Aa opens shared sheet');return;
+  }
   await evaluate(c,width=>{const selector=width<768?'.reader-typography-aa':'.settings-typography-toggle',button=document.querySelector(selector);
     if(button.getAttribute('aria-expanded')!=='true')button.click();},width); await settle(c);
 }
@@ -231,12 +239,13 @@ async function coverageChecks(c,width) {
   await revealControls(c,width);await align(c,11);
   if(width<768){
     for(const kind of ['aa','outside','escape']){
+      if(kind==='aa'){await c.evaluate("window.dispatchEvent(new WheelEvent('wheel'));window.scrollTo({top:0,behavior:'instant'})");await settle(c);}
       await revealControls(c,width);const panels=await c.evaluate("[...document.querySelectorAll('.gloss-panel')].map(p=>p.dataset.sentenceIndex)");
       await evaluate(c,kind=>{window.__g19.events=[];if(kind==='aa')document.querySelector('.reader-typography-aa').click();
         else if(kind==='outside')document.querySelector('.reader-body').click();else document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));},kind);await settle(c);
       assert(await c.evaluate("!document.querySelector('.reader-typography-sheet')"),'mobile sheet closed '+kind);
       assert(JSON.stringify(await c.evaluate("[...document.querySelectorAll('.gloss-panel')].map(p=>p.dataset.sentenceIndex)"))===JSON.stringify(panels),'closing sheet retains gloss');
-      assert(await c.evaluate("document.activeElement===document.querySelector('.reader-typography-aa')"),'focus returned to Aa');
+      assert(await c.evaluate("document.activeElement===document.querySelector(document.querySelector('.reader-typography-floating-aa')?.dataset.visible==='true'?'.reader-typography-floating-aa':'.reader-typography-aa')"),'focus returned to Aa');
       assert((await c.evaluate('window.__g19.events')).filter(e=>['gloss_abort','gloss_dismiss_early'].includes(e.event)).length===0,'sheet close events');
     }
   }
@@ -331,7 +340,7 @@ async function actualOwnedImport(c,width) {
   await c.evaluate("(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key.startsWith('gloss:doc:')){const id=key.slice(10);set.call(this,'gloss:structure:'+id,JSON.stringify({version:1,prompt:'structure-v1',structure:'本地导入夹具结构。',savedAt:Date.now()}));window.__g19.importedId=id;}return set.call(this,key,value);};document.querySelector('.landing-secondary').click();})()");
   await waitFor(()=>c.evaluate("!!document.querySelector('input[type=file]')"),'file input');await c.call('DOM.enable');
   const doc=await c.call('DOM.getDocument'),input=await c.call('DOM.querySelector',{nodeId:doc.root.nodeId,selector:'input[type=file]'});
-  await c.call('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[resolve('C:/Users/23750/projects/gloss/test-fixtures/政治经济学批判-序言.docx')]});
+  await c.call('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[resolve(import.meta.dirname,'../test-fixtures/政治经济学批判-序言.docx')]});
   await waitFor(()=>c.evaluate("(()=>{if(location.pathname.startsWith('/read/'))return true;const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='开始阅读');b?.click();return false;})()"),'imported reader');await ready(c);
   const result=await c.evaluate("(()=>{const col=document.querySelector('.col-left');return{available:col.clientWidth-32,boxes:[document.querySelector('.reader-shelf-back'),document.querySelector('.mode-label'),...document.querySelectorAll('.mode-option'),document.querySelector('.feedback-button'),document.querySelector('.reader-typography-aa')].map(el=>{const r=el.getBoundingClientRect();return{text:el.textContent,font:getComputedStyle(el).fontSize,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width}}),imported:JSON.parse(localStorage.getItem('gloss:doc:'+location.pathname.split('/').at(-1))).meta.fileName}})()");
   assert(result.imported==='政治经济学批判-序言.docx','Real fixture imported',result);assert(result.boxes[0].text==='← 回到书架','Actual own book shelf link');
@@ -359,7 +368,7 @@ async function performanceHarness(c,profile) {
   const id=await c.evaluate("localStorage.getItem('gloss:g19-perf:doc')");assert(id,'Persistent performance document');
   await c.call('Page.navigate',{url:ORIGIN+'/read/'+id});await ready(c);
   await waitFor(()=>c.evaluate("performance.getEntriesByName('gloss:preload:end').length>0"),'cross-session preload');
-  await c.evaluate(await readFile(resolve('C:/Users/23750/projects/gloss/scripts/perf/page-measure.js'),'utf8'));
+  await c.evaluate(await readFile(resolve(import.meta.dirname,'perf/page-measure.js'),'utf8'));
   const preload=await c.evaluate('window.__glossPerf.preload()'),index=await c.evaluate("Number(localStorage.getItem('gloss:g19-perf:index'))"),samples=[];
   for(let i=0;i<43;i++) {
     await c.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");await settle(c);
@@ -409,7 +418,7 @@ async function run(width) {
     const absolute=resolve(profile);assert(absolute.startsWith(resolve(tmpdir(),persistent?'gloss-g19-perf-':'gloss-g19-edge-')),'Safe cleanup');if(!persistent)await rm(absolute,{recursive:true,force:true});
   }
 }
-export { Cdp, setup, ready, freePort, settle, revealControls, align, open, save, evaluate, ownedShelfCheck, measured };
+export { drag, change, checks, boundaryChecks, Cdp, setup, ready, freePort, settle, revealControls, align, open, save, evaluate, ownedShelfCheck, measured };
 if(process.env.G19_IMPORT_ONLY!=='1') {
   if(process.env.G19_PERF_MODE||process.env.G19_NEGATIVE_CONTROL==='1')await run(1280);else for(const width of WIDTHS)await run(width);
   console.log('G-19 typography checks passed');

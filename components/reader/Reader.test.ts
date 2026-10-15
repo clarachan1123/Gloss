@@ -16,7 +16,7 @@ import { loadSavedGlosses, saveExplanation } from "@/lib/storage";
 import { validateAnalyticsEvent } from "@/lib/analytics-events";
 import { markReaderEntry } from "@/lib/analytics-local";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import Reader, { Paragraph, allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+import Reader, { rectIntersectsViewport, Paragraph, allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
 import { skippedSummary } from "@/lib/parse/validate";
 import type { StoredDocument } from "@/lib/storage";
 import sampleContent from "@/public/samples/shan-yu-e.json";
@@ -1215,6 +1215,63 @@ describe("G-63 同段多开、并发与整段收起", () => {
     expect(events.slice(eventCount).filter(e => ["gloss_abort", "gloss_dismiss_early", "sentence_click"].includes(e.event))).toEqual([]);
     expect(runs.size).toBe(0);
   });
+  it("G-67 空 Observer 仍由滚动更新悬浮入口；关闭后焦点回当前入口且不收白话", async () => {
+    const previousWidth = Object.getOwnPropertyDescriptor(window, "innerWidth")!;
+    const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({
+      matches: query === "(max-width: 767.98px)", media: query, onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(() => true),
+      addListener: vi.fn(), removeListener: vi.fn(),
+    }) as MediaQueryList);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    try {
+      vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+      await mount(true); await click(0);
+      const top = container.querySelector<HTMLButtonElement>(".reader-typography-aa")!;
+      const floating = container.querySelector<HTMLButtonElement>(".reader-typography-floating-aa")!;
+      let bottom = -1;
+      vi.spyOn(top, "getBoundingClientRect").mockImplementation(() => ({ top: bottom - 24, bottom, left: 300, right: 330, width: 30, height: 24 } as DOMRect));
+      const frame = async () => { await act(async () => { window.dispatchEvent(new Event("scroll"));
+        await new Promise(resolve => requestAnimationFrame(resolve)); }); await flush(); };
+      await frame(); expect(floating.disabled).toBe(false); expect(floating.getAttribute("aria-hidden")).toBe("false");
+      await act(async () => floating.click()); await flush();
+      expect(floating.disabled).toBe(true); expect(floating.tabIndex).toBe(-1); expect(floating.hasAttribute("inert")).toBe(true);
+      await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))); await flush();
+      expect(document.activeElement).toBe(floating); expect(panels()).toEqual([0]);
+      bottom = 0.001; await frame(); expect(floating.disabled).toBe(true);
+      await act(async () => top.click()); await flush();
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭阅读排版"]')!.click()); await flush();
+      expect(document.activeElement).toBe(top); expect(panels()).toEqual([0]);
+    } finally { media.mockRestore(); Object.defineProperty(window, "innerWidth", previousWidth); }
+  });
+  it("G-67 桌面断点不创建顶部 Aa 观察器，悬浮入口始终不可点", async () => {
+    const previousWidth = Object.getOwnPropertyDescriptor(window, "innerWidth")!;
+    const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({
+      matches: query === "(min-width: 768px)", media: query, onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(() => true),
+      addListener: vi.fn(), removeListener: vi.fn(),
+    }) as MediaQueryList);
+    const options: (IntersectionObserverInit | undefined)[] = [], targets: Element[] = [];
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    try {
+      vi.stubGlobal("IntersectionObserver", class {
+        constructor(_callback: IntersectionObserverCallback, init?: IntersectionObserverInit) { options.push(init); }
+        observe(target: Element) { targets.push(target); }
+        unobserve() {} disconnect() {}
+      });
+      await mount(true);
+      const top = container.querySelector<HTMLButtonElement>(".reader-typography-aa")!;
+      const floating = container.querySelector<HTMLButtonElement>(".reader-typography-floating-aa")!;
+      vi.spyOn(top, "getBoundingClientRect").mockReturnValue({ top: -24, bottom: 0, left: 300, right: 330, width: 30, height: 24 } as DOMRect);
+      expect(floating.disabled).toBe(true);
+      await click(0);
+      await act(async () => { window.dispatchEvent(new Event("scroll")); window.dispatchEvent(new Event("resize"));
+        await new Promise(resolve => requestAnimationFrame(resolve)); }); await flush();
+      expect(floating.disabled).toBe(true); expect(floating.getAttribute("aria-hidden")).toBe("true");
+      expect(floating.tabIndex).toBe(-1); expect(floating.hasAttribute("inert")).toBe(true);
+      expect(targets.some(target => target.matches(".reader-typography-aa"))).toBe(false);
+      expect(options.some(init => init?.rootMargin === "0px" && init.threshold === 0)).toBe(false);
+    } finally { media.mockRestore(); Object.defineProperty(window, "innerWidth", previousWidth); }
+  });
   it("G-19 Aa 和面板 Esc 不收白话；手机面板暂停计时，关闭后续计", async () => {
     await mount(true); await click(0);
     await act(async () => container.querySelector<HTMLButtonElement>(".reader-typography-aa")!.click()); await flush();
@@ -1314,5 +1371,20 @@ describe("G-68 阅读位置补偿只处理文档坐标变化", () => {
     await resize();
     expect(window.scrollBy).toHaveBeenCalledExactlyOnceWith({ top: 64, behavior: "instant" });
     expect(viewportY).toBe(920);
+  });
+});
+
+
+describe("G-67 可见区域正面积相交", () => {
+  const viewport = { left: 10, top: 20, width: 375, height: 600 };
+  it("边界相接不可见，亚像素相交仍可见", () => {
+    expect(rectIntersectsViewport({ left: 20, right: 44, top: -4, bottom: 20 }, viewport)).toBe(false);
+    expect(rectIntersectsViewport({ left: 20, right: 44, top: -4, bottom: 20.001 }, viewport)).toBe(true);
+  });
+  it("同时考虑 visualViewport 的横向与纵向偏移", () => {
+    expect(rectIntersectsViewport({ left: 0, right: 10, top: 30, bottom: 54 }, viewport)).toBe(false);
+    expect(rectIntersectsViewport({ left: 385, right: 409, top: 30, bottom: 54 }, viewport)).toBe(false);
+    expect(rectIntersectsViewport({ left: 11, right: 35, top: 620, bottom: 644 }, viewport)).toBe(false);
+    expect(rectIntersectsViewport({ left: 11, right: 35, top: 619.5, bottom: 644 }, viewport)).toBe(true);
   });
 });

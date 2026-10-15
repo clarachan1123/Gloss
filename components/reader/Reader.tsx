@@ -250,6 +250,121 @@ export default function Reader({ docId }: { docId: string }) {
   const mobileTypographyOpenRef = useRef(false);
   const typographySheetRef = useRef<HTMLDivElement>(null);
   const typographyButtonRef = useRef<HTMLButtonElement>(null);
+  const [typographyButtonNode, setTypographyButtonNode] = useState<HTMLButtonElement | null>(null);
+  const attachTypographyButton = useCallback((button: HTMLButtonElement | null) => {
+    typographyButtonRef.current = button;
+    setTypographyButtonNode(button);
+  }, []);
+  const floatingTypographyButtonRef = useRef<HTMLButtonElement>(null);
+  const [floatingTypographyEligible, setFloatingTypographyEligible] = useState(false);
+  const floatingTypographyEligibleRef = useRef(false);
+  const restoreTypographyFocusRef = useRef(false);
+  const floatingTypographyShown = floatingTypographyEligible && !mobileTypographyOpen;
+  const syncFloatingTypographyInteractivity = useCallback((eligible: boolean) => {
+    const button = floatingTypographyButtonRef.current;
+    if (!button) return;
+    const active = eligible && !mobileTypographyOpenRef.current;
+    if (button.disabled === active) button.disabled = !active;
+    if (button.inert === active) button.inert = !active;
+    button.toggleAttribute("inert", !active);
+    const hidden = String(!active), pointerEvents = active ? "auto" : "none", tabIndex = active ? 0 : -1;
+    if (button.getAttribute("aria-hidden") !== hidden) button.setAttribute("aria-hidden", hidden);
+    if (button.tabIndex !== tabIndex) button.tabIndex = tabIndex;
+    if (button.style.pointerEvents !== pointerEvents) button.style.pointerEvents = pointerEvents;
+  }, []);
+  const attachFloatingTypographyButton = useCallback((button: HTMLButtonElement | null) => {
+    floatingTypographyButtonRef.current = button;
+    syncFloatingTypographyInteractivity(floatingTypographyEligibleRef.current);
+  }, [syncFloatingTypographyInteractivity]);
+
+  // Only the breakpoint subscription lives on desktop. Mobile geometry resources
+  // belong to the actual top button node, independent of all reading state.
+  useLayoutEffect(() => {
+    const button = typographyButtonNode;
+    if (!button) return;
+    const media = window.matchMedia?.("(max-width: 767.98px)");
+    const isMobile = () => media?.matches ?? window.innerWidth < 768;
+    let stopMobile: (() => void) | null = null;
+    const updateEligibility = (eligible: boolean, beforePaint = false) => {
+      // The hit target and accessibility state change before any React commit.
+      syncFloatingTypographyInteractivity(eligible);
+      if (eligible === floatingTypographyEligibleRef.current) return;
+      floatingTypographyEligibleRef.current = eligible;
+      if (beforePaint) flushSync(() => setFloatingTypographyEligible(eligible));
+      else setFloatingTypographyEligible(eligible);
+    };
+    const startMobile = (readImmediately: boolean) => {
+      let stopped = false, readByEvent = false;
+      let frame: number | null = null;
+      const viewport = window.visualViewport;
+      const measure = () => {
+        if (stopped) return;
+        if (!isMobile()) { updateEligibility(false, true); return; }
+        const left = viewport?.offsetLeft ?? 0, top = viewport?.offsetTop ?? 0;
+        const width = viewport?.width ?? window.innerWidth, height = viewport?.height ?? window.innerHeight;
+        const eligible = !rectIntersectsViewport(button.getBoundingClientRect(), { left, top, width, height });
+        const floating = floatingTypographyButtonRef.current;
+        if (floating) {
+          floating.style.setProperty("--floating-aa-x", `${left + width - window.innerWidth}px`);
+          floating.style.setProperty("--floating-aa-y", `${top + height - window.innerHeight}px`);
+        }
+        updateEligibility(eligible, true);
+      };
+      const tick = () => {
+        frame = null;
+        if (stopped) return;
+        // Scroll/resize already read this frame synchronously; do not read twice.
+        if (!readByEvent) measure();
+        readByEvent = false;
+        if (!stopped && isMobile()) frame = window.requestAnimationFrame(tick);
+      };
+      const schedule = () => { if (!stopped && frame === null) frame = window.requestAnimationFrame(tick); };
+      const viewportChanged = () => {
+        if (stopped) return;
+        if (!readByEvent) { readByEvent = true; measure(); }
+        schedule();
+      };
+      const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver(schedule,
+        { root: null, rootMargin: "0px", threshold: 0 });
+      observer?.observe(button);
+      const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+      resizeObserver?.observe(button);
+      window.addEventListener("scroll", viewportChanged, { passive: true });
+      window.addEventListener("resize", viewportChanged);
+      viewport?.addEventListener("scroll", viewportChanged, { passive: true });
+      viewport?.addEventListener("resize", viewportChanged);
+      if (readImmediately) viewportChanged();
+      else schedule();
+      return () => {
+        stopped = true;
+        if (frame !== null) cancelAnimationFrame(frame);
+        observer?.disconnect(); resizeObserver?.disconnect();
+        window.removeEventListener("scroll", viewportChanged); window.removeEventListener("resize", viewportChanged);
+        viewport?.removeEventListener("scroll", viewportChanged); viewport?.removeEventListener("resize", viewportChanged);
+      };
+    };
+    const syncBreakpoint = () => {
+      if (isMobile()) {
+        if (!stopMobile) stopMobile = startMobile(true);
+      } else {
+        stopMobile?.(); stopMobile = null;
+        updateEligibility(false, true);
+      }
+    };
+    updateEligibility(false);
+    if (isMobile()) stopMobile = startMobile(false);
+    media?.addEventListener("change", syncBreakpoint);
+    return () => { media?.removeEventListener("change", syncBreakpoint); stopMobile?.(); };
+  }, [typographyButtonNode, syncFloatingTypographyInteractivity]);
+
+  useLayoutEffect(() => {
+    if (mobileTypographyOpen || !restoreTypographyFocusRef.current) return;
+    restoreTypographyFocusRef.current = false;
+    const target = window.innerWidth >= 768
+      ? document.querySelector<HTMLButtonElement>(".settings-typography-toggle")
+      : floatingTypographyShown ? floatingTypographyButtonRef.current : typographyButtonRef.current;
+    target?.focus({ preventScroll: true });
+  }, [mobileTypographyOpen, floatingTypographyShown]);
   const hoveredGlossRef = useRef<HTMLElement | null>(null);
   const hoveredSentenceRef = useRef<number | null>(null);
 
@@ -1657,8 +1772,9 @@ export default function Reader({ docId }: { docId: string }) {
     if (open === mobileTypographyOpenRef.current) return;
     if (open) for (const attempt of readAttemptRef.current.values()) attempt.clock.stop(performance.now());
     mobileTypographyOpenRef.current = open;
+    syncFloatingTypographyInteractivity(floatingTypographyEligibleRef.current);
     setMobileTypographyOpen(open);
-    if (!open) typographyButtonRef.current?.focus({ preventScroll: true });
+    if (!open) restoreTypographyFocusRef.current = true;
   }
   useEffect(() => {
     if (!mobileTypographyOpen) return;
@@ -1760,7 +1876,7 @@ export default function Reader({ docId }: { docId: string }) {
           </div>
         </div>
 
-        <button type="button" ref={typographyButtonRef} className="reader-typography-aa" data-reader-settings
+        <button type="button" ref={attachTypographyButton} className="reader-typography-aa" data-reader-settings
           aria-label="阅读排版" aria-haspopup="dialog" aria-controls="reader-typography-sheet" aria-expanded={mobileTypographyOpen}
           onClick={() => setTypographySheet(!mobileTypographyOpenRef.current)}>Aa</button>
 
@@ -1900,6 +2016,10 @@ export default function Reader({ docId }: { docId: string }) {
           <SettingsPanel glossShape={glossShape} onGlossShapeChange={changeGlossShape} typography={typography} onTypographyChange={changeTypography}
             onTypographyGestureStart={startTypographyGesture} onTypographyGestureEnd={endTypographyGesture} />
       </aside>
+      <button type="button" ref={attachFloatingTypographyButton} className="reader-typography-floating-aa" data-reader-settings
+        data-visible={floatingTypographyShown}
+        aria-label="阅读排版" aria-haspopup="dialog" aria-controls="reader-typography-sheet" aria-expanded={mobileTypographyOpen}
+        onClick={event => { event.stopPropagation(); setTypographySheet(true); }}>Aa</button>
       {mobileTypographyOpen && <div ref={typographySheetRef} id="reader-typography-sheet" className="reader-typography-sheet"
         data-reader-settings role="dialog" aria-labelledby="reader-typography-sheet-title">
         <div className="reader-typography-sheet-header"><h2 id="reader-typography-sheet-title" tabIndex={-1}>阅读排版</h2>
@@ -2458,7 +2578,9 @@ function anchorAtViewportTop(body: HTMLElement): CharAnchor | null {
   const viewport = window.visualViewport;
   const visibleTop = viewport?.offsetTop ?? 0;
   const sheet = document.querySelector<HTMLElement>(".reader-typography-sheet");
-  const visibleBottom = Math.min(visibleTop + (viewport?.height ?? window.innerHeight), sheet?.getBoundingClientRect().top ?? Infinity);
+  const floating = document.querySelector<HTMLElement>('.reader-typography-floating-aa[data-visible="true"]');
+  const visibleBottom = Math.min(visibleTop + (viewport?.height ?? window.innerHeight), sheet?.getBoundingClientRect().top ?? Infinity,
+    floating?.getBoundingClientRect().top ?? Infinity);
   const spans = body.querySelectorAll<HTMLElement>(".sentence");
   for (const span of spans) {
     const bounds = span.getBoundingClientRect();
@@ -2544,4 +2666,11 @@ function prefersReducedMotion(): boolean {
 function hasTextSelection(): boolean {
   const selection = window.getSelection();
   return !!selection && !selection.isCollapsed && selection.toString().length > 0;
+}
+
+/** Touching an edge has no visible area; fractional positive intersections count. */
+export function rectIntersectsViewport(rect: { left: number; right: number; top: number; bottom: number },
+  viewport: { left: number; top: number; width: number; height: number }): boolean {
+  return Math.min(rect.right, viewport.left + viewport.width) > Math.max(rect.left, viewport.left) &&
+    Math.min(rect.bottom, viewport.top + viewport.height) > Math.max(rect.top, viewport.top);
 }

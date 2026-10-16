@@ -1228,3 +1228,91 @@ describe("G-63 同段多开、并发与整段收起", () => {
     expect(details("gloss_read_complete")).toContainEqual(expect.objectContaining({ sentenceIndex: 0 }));
   });
 });
+
+
+describe("G-68 阅读位置补偿只处理文档坐标变化", () => {
+  let container: HTMLDivElement, root: ReturnType<typeof createRoot>;
+  let viewportY: number, documentTop: number, bodyHeight: number;
+  let originalScrollY: PropertyDescriptor | undefined, originalFonts: PropertyDescriptor | undefined;
+  let observers: { callback: ResizeObserverCallback; targets: Element[]; active: boolean }[];
+
+  beforeEach(async () => {
+    viewportY = 0; documentTop = 100; bodyHeight = 2000; observers = [];
+    localStorage.clear();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    originalScrollY = Object.getOwnPropertyDescriptor(window, "scrollY");
+    originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(window, "scrollY", { configurable: true, get: () => viewportY });
+    Object.defineProperty(document, "fonts", { configurable: true, value: { ready: Promise.resolve() } });
+    vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+    vi.stubGlobal("ResizeObserver", class {
+      entry: (typeof observers)[number];
+      constructor(callback: ResizeObserverCallback) { this.entry = { callback, targets: [], active: true }; observers.push(this.entry); }
+      observe(target: Element) { this.entry.targets.push(target); }
+      disconnect() { this.entry.active = false; }
+    });
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    vi.spyOn(lineSplit, "measureSplit").mockReturnValue(null);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(() => bodyHeight);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(16, documentTop - viewportY, 600, 30.625));
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(() => {
+      const rect = new DOMRect(16, documentTop - viewportY, 600, 30.625);
+      return Object.assign([rect], { item: (index: number) => index === 0 ? rect : null }) as unknown as DOMRectList;
+    });
+    vi.spyOn(window, "scrollTo").mockImplementation((...args: unknown[]) => {
+      const value = args[0]; viewportY = typeof value === "object" && value !== null
+        ? Number((value as ScrollToOptions).top ?? 0) : Number(args[1] ?? 0);
+    });
+    vi.spyOn(window, "scrollBy").mockImplementation((...args: unknown[]) => {
+      const value = args[0]; viewportY += typeof value === "object" && value !== null
+        ? Number((value as ScrollToOptions).top ?? 0) : Number(args[1] ?? 0);
+    });
+    localStorage.setItem("gloss:analytics:optout", "1");
+    localStorage.setItem("gloss:doc:g68-unit", JSON.stringify({
+      version: 1, docId: "g68-unit", paragraphs: ["甲乙丙丁。戊己庚辛。"], headings: [], footnotes: [],
+      meta: { format: "txt", fileName: "G68.txt", charCount: 10 }, savedAt: 1,
+    }));
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => { root.render(createElement(Reader, { docId: "g68-unit" })); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(container.querySelector(".reader-body")?.getAttribute("data-measuring")).toBe("false");
+    vi.mocked(window.scrollBy).mockClear();
+  });
+
+  afterEach(async () => {
+    await act(async () => { root.unmount(); }); container.remove();
+    vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear();
+    if (originalScrollY) Object.defineProperty(window, "scrollY", originalScrollY); else Reflect.deleteProperty(window, "scrollY");
+    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts); else Reflect.deleteProperty(document, "fonts");
+  });
+
+  async function resize() {
+    const body = container.querySelector(".reader-body")!;
+    const observer = observers.find(entry => entry.active && entry.targets.includes(body));
+    expect(observer).toBeDefined();
+    await act(async () => { observer!.callback([], {} as ResizeObserver); });
+  }
+
+  it("下方增高与滚动同一任务发生时不抵消滚动，后续上方变化仍补偿且刷新基线", async () => {
+    bodyHeight += 919; viewportY = 856;
+    window.dispatchEvent(new Event("scroll"));
+    await resize();
+    expect(viewportY).toBe(856); expect(window.scrollBy).not.toHaveBeenCalled();
+    const before = container.querySelector(".sentence")!.getBoundingClientRect().top;
+    documentTop += 64; bodyHeight += 64; await resize();
+    expect(window.scrollBy).toHaveBeenCalledExactlyOnceWith({ top: 64, behavior: "instant" });
+    expect(container.querySelector(".sentence")!.getBoundingClientRect().top).toBe(before);
+    bodyHeight += 100; await resize();
+    expect(window.scrollBy).toHaveBeenCalledTimes(1);
+  });
+
+  it("上方布局变化与滚动同时发生时只补偿上方的 64px，不反向抵消读者滚动", async () => {
+    documentTop += 64; bodyHeight += 64; viewportY = 856;
+    window.dispatchEvent(new Event("scroll"));
+    await resize();
+    expect(window.scrollBy).toHaveBeenCalledExactlyOnceWith({ top: 64, behavior: "instant" });
+    expect(viewportY).toBe(920);
+  });
+});

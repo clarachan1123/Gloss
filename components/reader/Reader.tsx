@@ -155,6 +155,7 @@ interface Transaction {
 interface PositionAnchor {
   index: number;
   offset: number;
+  docTop: number;
   layout: string;
   measure: string;
 }
@@ -341,7 +342,7 @@ export default function Reader({ docId }: { docId: string }) {
   }, []);
   const contextMenuRef = useRef<ReaderContextMenu | null>(null);
   const suppressOutsideClickRef = useRef(false);
-  const positionRef = useRef<PositionAnchor>({ index: 0, offset: 0, layout: "", measure: "" });
+  const positionRef = useRef<PositionAnchor>({ index: 0, offset: 0, docTop: 0, layout: "", measure: "" });
   const transactionRef = useRef<Transaction | null>(null);
   const growthAnchorRef = useRef<{ index: number; panel: HTMLElement; anchor: CharAnchor; scrollY: number } | null>(null);
   const animationRef = useRef<Animation | null>(null);
@@ -791,6 +792,7 @@ export default function Reader({ docId }: { docId: string }) {
       scrollToSentence(body, initial);
       position.index = initial;
       position.offset = sentenceTop(body, initial);
+      position.docTop = position.offset + window.scrollY;
       position.layout = layoutKey(body);
       position.measure = layoutMeasureKey(body);
       restoredDocRef.current = docId;
@@ -798,6 +800,7 @@ export default function Reader({ docId }: { docId: string }) {
       const drift = sentenceTop(body, position.index) - position.offset;
       if (Math.abs(drift) > 1) window.scrollBy({ top: drift, behavior: "instant" });
       position.offset = sentenceTop(body, position.index);
+      position.docTop = position.offset + window.scrollY;
       position.layout = layoutKey(body);
       position.measure = layoutMeasureKey(body);
     }
@@ -850,11 +853,10 @@ export default function Reader({ docId }: { docId: string }) {
         setSavedRegions(null);
         return;
       }
-      current.layout = key;
-      current.measure = measure;
-      // 保持锚句在视口中的位置（不强行对齐到顶端）：窗口宽度、字体加载等布局变化都不带动正在读的内容
-      const drift = sentenceTop(body, current.index) - current.offset;
+      // Document coordinates exclude the reader's own scroll while a layout change is pending.
+      const drift = sentenceTop(body, current.index) + window.scrollY - current.docTop;
       if (Math.abs(drift) > 1) window.scrollBy({ top: drift, behavior: "instant" });
+      rememberPositionAnchor(body, current);
     });
 
     observer.observe(body);
@@ -1126,9 +1128,7 @@ export default function Reader({ docId }: { docId: string }) {
         restorePanelAnchor(body, transaction.anchor);
       }
     }
-    rememberTopSentence(body, positionRef.current);
-    positionRef.current.layout = layoutKey(body);
-    positionRef.current.measure = layoutMeasureKey(body);
+    rememberPositionAnchor(body, positionRef.current);
     if (typographyLayoutRef.current) typographyLayoutRef.current.scrollY = window.scrollY;
 
     if (pendingSavedJump !== null && !typographyLayoutRef.current) {
@@ -1248,7 +1248,10 @@ export default function Reader({ docId }: { docId: string }) {
     if (body && anchor) {
       const owner = typographyLayoutRef.current;
       if (owner?.anchor) restoreTypographyAnchor(body, owner.anchor);
-      else restorePanelAnchor(body, anchor);
+      else {
+        restorePanelAnchor(body, anchor);
+        if (!owner) rememberPositionAnchor(body, positionRef.current);
+      }
       if (owner) owner.scrollY = window.scrollY;
       if (growthAnchorRef.current?.anchor === anchor) growthAnchorRef.current.scrollY = window.scrollY;
     }
@@ -2379,9 +2382,17 @@ function topSentenceIndex(body: HTMLElement): number {
   return found === -1 ? 0 : Number(spans[found].dataset.index);
 }
 
+/** Complete the layout compensation before another observer can reuse the old baseline. */
+function rememberPositionAnchor(body: HTMLElement, position: PositionAnchor): void {
+  rememberTopSentence(body, position);
+  position.layout = layoutKey(body);
+  position.measure = layoutMeasureKey(body);
+}
+
 function rememberTopSentence(body: HTMLElement, position: PositionAnchor): void {
   position.index = topSentenceIndex(body);
   position.offset = sentenceTop(body, position.index);
+  position.docTop = position.offset + window.scrollY;
 }
 
 /** 段内第 offset 个字的视口纵坐标（段落可能已被拆成上下两半，按 data-para 一并查找） */

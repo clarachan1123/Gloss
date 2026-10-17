@@ -89,14 +89,13 @@ async function legacyChunk() {
   const directory = join(ROOT, ".next/static/chunks");
   for (const file of await readdir(directory)) {
     if (!file.endsWith(".js")) continue;
-    const source = await readFile(join(directory, file), "utf8"), start = source.indexOf("new ResizeObserver");
-    if (start < 0 || !source.includes("positionRestored")) continue;
-    const segment = source.slice(start, start + 5000);
+    const source = await readFile(join(directory, file), "utf8");
+    if (!source.includes("positionRestored")) continue;
     const formula = /([A-Za-z_$][\w$]*)\(([^()]*)\)\s*\+\s*window\.scrollY\s*-\s*([A-Za-z_$][\w$]*)\.docTop/g;
-    const matches = [...segment.matchAll(formula)];
+    const matches = [...source.matchAll(formula)];
     if (matches.length !== 1) continue;
-    const changed = segment.replace(formula, "$1($2)-$3.offset");
-    return { file, body: Buffer.from(source.slice(0, start) + changed + source.slice(start + segment.length)).toString("base64") };
+    const changed = source.replace(formula, "$1($2)-$3.offset");
+    return { file, body: Buffer.from(changed).toString("base64") };
   }
   throw Error("Legacy negative control did not find exactly one RO formula");
 }

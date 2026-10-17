@@ -100,11 +100,13 @@ async function cold(c,width,value){
   assert(record.transition==='0s','Initial transition enabled',record);console.log(JSON.stringify({width,coldStoredValue:value,expected,firstFrame:record.frames[0],sampledFrames:record.frames.length,paints:record.paints,transition:record.transition,passed:true}));
 }
 async function run(width){
+  async function singlePage(port,where){const pages=(await(await fetch('http://127.0.0.1:'+port+'/json')).json()).filter(t=>t.type==='page');if(pages.length!==1)throw Error('Only 1 page: '+where+' '+JSON.stringify(pages.map(t=>t.url)));}
   const profile=await mkdtemp(join(tmpdir(),'gloss-g19-theme-')),port=await freePort();
-  const edge=spawn(EDGE,['--headless=new','--disable-gpu','--no-sandbox','--remote-debugging-port='+port,'--remote-allow-origins=*','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check','about:blank'],{windowsHide:true,stdio:'ignore'});
+  const edge=spawn(EDGE,['--headless=new','--disable-sync','--disable-gpu','--no-sandbox','--remote-debugging-port='+port,'--remote-allow-origins=*','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check','about:blank'],{windowsHide:true,stdio:'ignore'});
   let c;const api=[],warnings=[];
   try{
     let target;for(let i=0;i<200;i++){try{target=(await(await fetch('http://127.0.0.1:'+port+'/json')).json()).find(t=>t.type==='page');if(target)break;}catch{}await pause(100);}assert(target,'Edge startup');
+    await singlePage(port,'start');
     c=new Cdp(target.webSocketDebuggerUrl);c.socket.on('message',data=>{const m=JSON.parse(data);
       if(m.method==='Network.requestWillBeSent'&&new URL(m.params.request.url).pathname.startsWith('/api/'))api.push(m.params.request.url);
       if(m.method==='Runtime.consoleAPICalled'||m.method==='Runtime.exceptionThrown'||m.method==='Log.entryAdded')if(/hydrat|didn't match|server rendered|Minified React error #(418|419|421|422|423|424|425)/i.test(JSON.stringify(m.params)))warnings.push(m.params);});
@@ -138,6 +140,7 @@ async function run(width){
         await prepare(c,width);await choose(c,width,from);
         const before=await c.evaluate("[...document.querySelectorAll('.gloss-panel')].map(p=>p.dataset.sentenceIndex)");
         await c.evaluate("window.__themeSwitchColors=[];window.__themeColorSampling=true;function sampleColors(){if(!window.__themeColorSampling)return;window.__themeSwitchColors.push(getComputedStyle(document.documentElement).getPropertyValue('--paper-main').trim());requestAnimationFrame(sampleColors)}requestAnimationFrame(sampleColors)");
+        await singlePage(port,'theme:'+from+'>'+to);
         const sample=await measured(c,width,'theme:'+from+'>'+to,()=>choose(c,width,to));
         const transitionColors=await c.evaluate("window.__themeColorSampling=false;[...new Set(window.__themeSwitchColors)]");
         assert(transitionColors.length>2,'No intermediate transition colors',transitionColors);console.log(JSON.stringify({width,direction:from+'>'+to,transitionColors}));
@@ -156,7 +159,7 @@ async function run(width){
       const reduced=await c.evaluate("({root:getComputedStyle(document.documentElement).transitionDuration,sentence:getComputedStyle(document.querySelector('.sentence')).transitionDuration})");assert(reduced.root==='0s'&&reduced.sentence==='0s','Reduced motion transition',reduced);
       console.log(JSON.stringify({width,refresh:true,otherBook:true,reducedMotionTransition:reduced}));
     }
-    assert(warnings.length===0,'Hydration warnings',warnings);assert(api.length===0,'Browser /api/ requests',api);console.log(JSON.stringify({width,apiRequests:api.length,hydrationWarnings:warnings.length,passed:true}));
+    assert(warnings.length===0,'Hydration warnings',warnings);assert(api.length===0,'Browser /api/ requests',api);await singlePage(port,'end');console.log(JSON.stringify({width,apiRequests:api.length,hydrationWarnings:warnings.length,passed:true}));
   }catch(e){console.log(JSON.stringify({width,stopped:true,error:e.message,apiRequests:api.length,warnings}));throw e;}
   finally{c?.close();edge.kill();if(edge.exitCode===null)await Promise.race([new Promise(r=>edge.once('exit',r)),pause(5000)]);assert(resolve(profile).startsWith(resolve(tmpdir(),'gloss-g19-theme-')),'Unsafe profile');await rm(profile,{recursive:true,force:true});}
 }

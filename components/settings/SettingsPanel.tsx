@@ -1,7 +1,7 @@
 import { useEffect, useId, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { clearAllGlossCache } from "@/lib/cache";
 import { DEFAULT_READER_TYPOGRAPHY, TYPOGRAPHY_RANGES, type ReaderTypography } from "@/lib/reader-typography";
-import { THEME_OPTIONS, readerThemeSnapshot, setReaderTheme, subscribeReaderTheme } from "@/lib/reader-theme";
+import { THEME_OPTIONS, APPEARANCE_OPTIONS, readerThemeSnapshot, readerAppearanceSnapshot, effectiveThemeSnapshot, setReaderTheme, setReaderAppearance, subscribeReaderTheme } from "@/lib/reader-theme";
 
 const SETTINGS = ["呈现模式", "导出形态"];
 const CONFIRM_MS = 5_000;
@@ -69,6 +69,7 @@ export default function SettingsPanel({
           {expanded && <div id={typographyId}><ReaderTypographyControls value={typography} onChange={onTypographyChange}
             onGestureStart={onTypographyGestureStart} onGestureEnd={onTypographyGestureEnd} /></div>}
         </li>
+        <li className="settings-appearance" data-reader-settings><ReaderAppearanceControls /></li>
         <li className="settings-theme" data-reader-settings><ReaderThemeControls /></li>
         {SETTINGS.map((item) => (
           <li key={item}>{item}</li>
@@ -84,15 +85,28 @@ export default function SettingsPanel({
   );
 }
 
+export function ReaderAppearanceControls() {
+  const id = useId();
+  const appearance = useSyncExternalStore(subscribeReaderTheme, readerAppearanceSnapshot, () => "system");
+  return <fieldset className="reader-theme-options reader-appearance-options" data-reader-settings>
+    <legend>外观</legend>
+    {APPEARANCE_OPTIONS.map(option => <label key={option.value}>
+      <input type="radio" name={`${id}-appearance`} data-reader-appearance={option.value} value={option.value}
+        checked={appearance === option.value} onChange={() => setReaderAppearance(option.value)} />{option.label}
+    </label>)}
+  </fieldset>;
+}
+
 export function ReaderThemeControls() {
   const id = useId();
   const theme = useSyncExternalStore(subscribeReaderTheme, readerThemeSnapshot, () => "parchment");
-  return <fieldset className="reader-theme-options" data-reader-settings>
-    <legend>纸面底色</legend>
+  const effective = useSyncExternalStore(subscribeReaderTheme, effectiveThemeSnapshot, () => "parchment");
+  return <fieldset className="reader-theme-options reader-paper-options" hidden={effective === "dark"} data-reader-settings>
+    <legend>底色</legend>
     {THEME_OPTIONS.map(option => <label key={option.value}>
       <input type="radio" name={`${id}-theme`} data-reader-theme={option.value} value={option.value}
         checked={theme === option.value} onChange={() => setReaderTheme(option.value)} />
-      <span className="reader-theme-swatch" aria-hidden="true" style={{ backgroundColor: option.paper }} />{option.label}
+      <span className="reader-theme-swatch" aria-hidden="true" style={{ backgroundColor: `var(--swatch-${option.value})` }} />{option.label}
     </label>)}
   </fieldset>;
 }

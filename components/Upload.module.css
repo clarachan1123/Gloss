@@ -10,7 +10,7 @@
 .fileLabel {
   display: block;
   padding: 16px;
-  border: 1px dashed var(--rule);
+  border: 1px dashed var(--upload-border);
   border-radius: 4px;
   background: var(--paper-side);
   color: var(--ink);
@@ -31,9 +31,9 @@
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--rule);
+  border: 1px solid var(--control-border);
   border-radius: 4px;
-  background: var(--paper-main);
+  background: var(--input-bg);
   color: var(--ink);
   font-family: var(--font-serif-cjk);
   font-size: 15px;
@@ -44,7 +44,7 @@
 .button {
   align-self: flex-start;
   padding: 4px 12px;
-  border: 1px solid var(--rule);
+  border: 1px solid var(--control-border);
   border-radius: 4px;
   background: var(--paper-side);
   color: var(--ink);
@@ -64,3 +64,7 @@
   color: var(--gloss);
   font-size: 14px;
 }
+
+:global([data-theme="dark"]) .paste::placeholder { color: var(--placeholder); opacity: 1; }
+:global([data-theme="dark"]) .paste:focus { border-color: var(--ink); }
+:global([data-theme="dark"]) .paste:focus-visible, :global([data-theme="dark"]) .fileInput:focus-visible, :global([data-theme="dark"]) .button:focus-visible { outline-color: var(--hover); }

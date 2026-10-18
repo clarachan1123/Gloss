@@ -114,7 +114,8 @@ export function deltaE00(hex1: string, hex2: string): number {
 /** 悬停色与术语色至少要差这么多（2026-09-18 选悬停色时的约束） */
 const MIN_HOVER_TERM_DELTA_E = 10;
 
-const THEMES = ["parchment", "moon-white", "eye-green"] as const;
+const LIGHT_THEMES = ["parchment", "moon-white", "eye-green"];
+const THEMES = [...LIGHT_THEMES, "dark"] as const;
 
 describe("三套主题的对比度", () => {
   it.each(THEMES)("%s：G-66 正文与底色对比度在 [7, 12]", (theme) => {
@@ -140,7 +141,7 @@ describe("三套主题的对比度", () => {
     expect(deltaE00(c["--hover"], c["--term"])).toBeGreaterThanOrEqual(MIN_HOVER_TERM_DELTA_E);
   });
 
-  it.each(THEMES)("%s：悬停色比正文墨色更显眼（色差大于换色前的悬停色）", (theme) => {
+  it.each(LIGHT_THEMES)("%s：悬停色比正文墨色更显眼（色差大于换色前的悬停色）", (theme) => {
     const c = themeColors(theme);
     // 换色前的悬停色（羊皮纸 / 月白 #3F4B53，护眼绿 #37505A）与墨色的色差约 14.5–15.1；C 档要比它大
     const before = theme === "eye-green" ? "#37505A" : "#3F4B53";
@@ -179,7 +180,7 @@ describe("三套主题的对比度", () => {
         ` | 术语vs白话 ${pair("--term", "--gloss")}`
       );
     });
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4);
     console.log(rows.join("\n"));
   });
 });
@@ -264,7 +265,8 @@ describe("G-19 完整主题", () => {
       expect(contrast(c[role], c["--paper-main"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
     for (const role of ["--ink", "--gloss", "--hover"] as const)
       expect(contrast(c[role], c["--paper-side"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
-    expect(luminance(c["--paper-main"])).toBeGreaterThan(luminance(c["--paper-side"]));
+    if (theme === "dark") expect(luminance(c["--paper-main"])).toBeLessThan(luminance(c["--paper-side"]));
+    else expect(luminance(c["--paper-main"])).toBeGreaterThan(luminance(c["--paper-side"]));
   });
   it.each(THEMES)("%s：层板五项均在本主题定义", theme => {
     const start = CSS.indexOf(`[data-theme="${theme}"]`), block = CSS.slice(start, CSS.indexOf("}", start));

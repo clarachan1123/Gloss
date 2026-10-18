@@ -2,10 +2,13 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { startReaderThemeSync, setReaderAppearance } from "@/lib/reader-theme";
 import SettingsPanel, { ReaderTypographyControls } from "./SettingsPanel";
 import { DEFAULT_READER_TYPOGRAPHY as defaults } from "@/lib/reader-typography";
-afterEach(() => { vi.unstubAllGlobals(); });
+let stop: () => void;
+beforeEach(() => { localStorage.clear(); stop = startReaderThemeSync(); });
+afterEach(() => { stop(); vi.unstubAllGlobals(); });
 it("desktop disclosure is initially collapsed and opens in the list", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const host = document.createElement("div"), root = createRoot(host);
@@ -64,7 +67,7 @@ it("theme radios follow the disclosure outside it, and typography reset leaves t
   const host = document.createElement("div"), root = createRoot(host);
   try {
     await act(async () => root.render(createElement(SettingsPanel, { glossShape: "inline", onGlossShapeChange: vi.fn(), typography: { ...defaults }, onTypographyChange: vi.fn() })));
-    expect(host.querySelector(".settings-theme")?.previousElementSibling?.className).toBe("settings-typography");
+    expect(host.querySelector(".settings-theme")?.previousElementSibling?.className).toBe("settings-appearance");
     expect(host.querySelectorAll("[data-reader-theme]")).toHaveLength(3);
     expect(host.querySelectorAll('.reader-theme-swatch[aria-hidden="true"]')).toHaveLength(3);
     await act(async () => host.querySelector<HTMLInputElement>('[data-reader-theme="moon-white"]')!.click());
@@ -72,4 +75,21 @@ it("theme radios follow the disclosure outside it, and typography reset leaves t
     await act(async () => host.querySelector<HTMLButtonElement>(".reader-typography-reset")!.click());
     expect(document.documentElement.dataset.theme).toBe("moon-white");
   } finally { await act(async () => root.unmount()); localStorage.removeItem("gloss:settings:theme"); }
+});
+
+it("外观在底色前，深色隐藏底色但保留排版展开与选择", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const host = document.createElement("div"), root = createRoot(host);
+  try {
+    await act(async () => root.render(createElement(SettingsPanel, { glossShape: "inline", onGlossShapeChange: vi.fn(), typography: { ...defaults }, onTypographyChange: vi.fn() })));
+    expect([...host.querySelectorAll("[data-reader-appearance]")].map(el => el.parentElement!.textContent)).toEqual(["跟随系统", "浅色", "深色"]);
+    expect(host.querySelector(".reader-paper-options legend")!.textContent).toBe("底色");
+    await act(async () => host.querySelector<HTMLButtonElement>(".settings-typography-toggle")!.click());
+    await act(async () => host.querySelector<HTMLInputElement>('[data-reader-appearance="dark"]')!.click());
+    expect(host.querySelector<HTMLElement>(".reader-paper-options")!.hidden).toBe(true);
+    expect(host.querySelector("input[type=range]")).not.toBeNull();
+    expect(host.querySelector<HTMLInputElement>('[data-reader-appearance="dark"]')!.checked).toBe(true);
+    await act(async () => setReaderAppearance("light"));
+    expect(host.querySelector<HTMLElement>(".reader-paper-options")!.hidden).toBe(false);
+  } finally { await act(async () => root.unmount()); }
 });

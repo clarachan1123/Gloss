@@ -160,11 +160,11 @@ export default function FeedbackButton({ placement = "inline" }: { placement?: "
       <p>Gloss 还在测试，很需要你的意见。</p>
       {status === "success" ? <p role="status">已收到，谢谢！</p> : <div className="feedback-form">
         <textarea aria-label="意见" placeholder="哪里不好用、哪句白话不对，直接写在这里" value={body} onChange={event => setBody(event.target.value)} disabled={status === "sending"} />
-        {bodyLength > FEEDBACK_BODY_MAX && <p role="status">超过 1000 字了，删一些再发</p>}
+        {bodyLength > FEEDBACK_BODY_MAX && <p className="feedback-error" role="status">超过 1000 字了，删一些再发</p>}
         <input type="text" aria-label="联系方式（选填）" placeholder="选填：想让我回复的话，留个微信或邮箱" value={contact} onChange={event => setContact(event.target.value)} disabled={status === "sending"} />
-        {contactLength > FEEDBACK_CONTACT_MAX && <p role="status">联系方式太长了</p>}
+        {contactLength > FEEDBACK_CONTACT_MAX && <p className="feedback-error" role="status">联系方式太长了</p>}
         <button type="button" className="feedback-send" disabled={invalid || status === "sending"} onClick={() => void send()}>{status === "sending" ? "发送中…" : "发送"}</button>
-        {status === "error" && <p role="status">没发出去，可以稍后再试，或加微信 Claraiing</p>}
+        {status === "error" && <p className="feedback-error" role="status">没发出去，可以稍后再试，或加微信 Claraiing</p>}
       </div>}
       <p className="feedback-contact">内容只发给开发者，不会公开。想直接聊，非常欢迎加微信：<span ref={accountRef}>Claraiing</span> <button type="button" className="feedback-copy" onClick={() => void copy()}>{copyState === "copied" ? "已复制" : "复制"}</button></p>
       {copyState === "manual" && <p role="status">请手动复制</p>}

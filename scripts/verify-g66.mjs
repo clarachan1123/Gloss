@@ -316,7 +316,8 @@ async function run(origin, width, branch) {
     const version = await (await fetch("http://127.0.0.1:" + port + "/json/version")).json();
     cdp = new Cdp(target.webSocketDebuggerUrl); browser = new Cdp(version.webSocketDebuggerUrl);
     cdp.socket.on("message", data => { const m = JSON.parse(data); if (m.method === "Network.requestWillBeSent" && new URL(m.params.request.url).pathname.startsWith("/api/")) api.push(m.params.request.url); });
-    await cdp.call("Page.enable"); await cdp.call("Runtime.enable"); await cdp.call("Network.enable");
+    await cdp.call("Page.enable");
+    await cdp.call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] }); await cdp.call("Runtime.enable"); await cdp.call("Network.enable");
     await cdp.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
     await cdp.call("Page.addScriptToEvaluateOnNewDocument", { source: "(" + setup.toString() + ")();" });
     await singlePage(browser, target.id);

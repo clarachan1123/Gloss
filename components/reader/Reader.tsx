@@ -20,7 +20,7 @@ import {
 } from "react";
 import ContextMenu, { type ContextMenuPoint } from "@/components/reader/ContextMenu";
 import Notice from "@/components/Notice";
-import SettingsPanel, { ReaderTypographyControls, ReaderThemeControls } from "@/components/settings/SettingsPanel";
+import SettingsPanel, { ReaderTypographyControls, ReaderThemeControls, ReaderAppearanceControls } from "@/components/settings/SettingsPanel";
 import { DEFAULT_READER_TYPOGRAPHY, readReaderTypography, validateReaderTypography, writeReaderTypography, type ReaderTypography } from "@/lib/reader-typography";
 import {
   lookupPreloadedGloss,
@@ -2034,6 +2034,7 @@ export default function Reader({ docId }: { docId: string }) {
         <div className="reader-typography-sheet-header"><h2 id="reader-typography-sheet-title" tabIndex={-1}>阅读排版</h2>
           <button type="button" aria-label="关闭阅读排版" onClick={() => setTypographySheet(false)}>关闭</button></div>
         <ReaderTypographyControls value={typography} onChange={changeTypography} onGestureStart={startTypographyGesture} onGestureEnd={endTypographyGesture} mobile />
+        <ReaderAppearanceControls />
         <ReaderThemeControls />
       </div>}
       {contextMenu && (

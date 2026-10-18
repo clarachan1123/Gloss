@@ -209,3 +209,7 @@
 @media (prefers-reduced-motion: reduce) {
   .landing-demo-step, .landing-demo-step-number { transition: none; }
 }
+
+.landing-secondary { border-color: var(--secondary-border); }
+[data-theme="dark"] .landing-primary:hover { background: var(--hover); }
+[data-theme="dark"] .landing-primary:focus-visible, [data-theme="dark"] .landing-secondary:focus-visible { outline-color: var(--hover); }

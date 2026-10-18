@@ -34,6 +34,26 @@
   --shelf-ledge-bottom: #DDD2B1;
   --shelf-ledge-edge: #D9D1B5;
   --shelf-ledge-shadow: #4B3D1E;
+  --input-bg: var(--paper-main);
+  --placeholder: var(--gloss);
+  --control-border: var(--rule);
+  --secondary-border: var(--ink);
+  --button-hover: var(--gloss);
+  --import-border: #C4C7C7;
+  --upload-border: var(--rule);
+  --overlay-remove: rgba(33,33,33,.18);
+  --overlay-import: color-mix(in srgb, var(--ink) 28%, transparent);
+  --shadow-context: color-mix(in srgb, var(--ink) 18%, transparent);
+  --shadow-import: color-mix(in srgb, var(--ink) 32%, transparent);
+  --surface-highlight: #FFFFFF;
+  --text-error: var(--ink);
+  --focus-strong: var(--ink);
+  --shadow-continue: rgba(0,0,0,.22);
+  --shadow-spine: rgba(0,0,0,.24);
+  --shadow-cover: rgba(0,0,0,.18);
+  --swatch-parchment: #F8F6F0;
+  --swatch-moon-white: #F5F5F7;
+  --swatch-eye-green: #EDF2EA;
 }
 
 /* 月白 */
@@ -52,6 +72,26 @@
   --shelf-ledge-bottom: #CECED7;
   --shelf-ledge-edge: #CDCDD4;
   --shelf-ledge-shadow: #3B3B43;
+  --input-bg: var(--paper-main);
+  --placeholder: var(--gloss);
+  --control-border: var(--rule);
+  --secondary-border: var(--ink);
+  --button-hover: var(--gloss);
+  --import-border: #C4C7C7;
+  --upload-border: var(--rule);
+  --overlay-remove: rgba(33,33,33,.18);
+  --overlay-import: color-mix(in srgb, var(--ink) 28%, transparent);
+  --shadow-context: color-mix(in srgb, var(--ink) 18%, transparent);
+  --shadow-import: color-mix(in srgb, var(--ink) 32%, transparent);
+  --surface-highlight: #FFFFFF;
+  --text-error: var(--ink);
+  --focus-strong: var(--ink);
+  --shadow-continue: rgba(0,0,0,.22);
+  --shadow-spine: rgba(0,0,0,.24);
+  --shadow-cover: rgba(0,0,0,.18);
+  --swatch-parchment: #F8F6F0;
+  --swatch-moon-white: #F5F5F7;
+  --swatch-eye-green: #EDF2EA;
 }
 
 /* 护眼绿 */
@@ -70,6 +110,66 @@
   --shelf-ledge-bottom: #C1D0BA;
   --shelf-ledge-edge: #C2CEBC;
   --shelf-ledge-shadow: #2F3D29;
+  --input-bg: var(--paper-main);
+  --placeholder: var(--gloss);
+  --control-border: var(--rule);
+  --secondary-border: var(--ink);
+  --button-hover: var(--gloss);
+  --import-border: #C4C7C7;
+  --upload-border: var(--rule);
+  --overlay-remove: rgba(33,33,33,.18);
+  --overlay-import: color-mix(in srgb, var(--ink) 28%, transparent);
+  --shadow-context: color-mix(in srgb, var(--ink) 18%, transparent);
+  --shadow-import: color-mix(in srgb, var(--ink) 32%, transparent);
+  --surface-highlight: #FFFFFF;
+  --text-error: var(--ink);
+  --focus-strong: var(--ink);
+  --shadow-continue: rgba(0,0,0,.22);
+  --shadow-spine: rgba(0,0,0,.24);
+  --shadow-cover: rgba(0,0,0,.18);
+  --swatch-parchment: #F8F6F0;
+  --swatch-moon-white: #F5F5F7;
+  --swatch-eye-green: #EDF2EA;
+}
+
+
+/* 深色有意以较暗中栏、较亮侧栏分层。层板形状和混合率保持原样。 */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --paper-main: #1B1917;
+  --paper-side: #252220;
+  --ink: #E4DED3;
+  --text-body: #D6CFC3;
+  --gloss: #B0A799;
+  --saved-inline: #A39A8C;
+  --rule: #3B3631;
+  --term: #8DB0D4;
+  --hover: #C4DAF0;
+  --shelf-ledge-top: #5E4D3A;
+  --shelf-ledge-mid: #4A3A2A;
+  --shelf-ledge-bottom: #3A2D20;
+  --shelf-ledge-edge: #4F4030;
+  --shelf-ledge-shadow: #463219;
+  --input-bg: var(--paper-side);
+  --placeholder: #8F877B;
+  --control-border: #4A443D;
+  --secondary-border: #4A443D;
+  --button-hover: var(--hover);
+  --import-border: #5A5349;
+  --upload-border: #5A5349;
+  --overlay-remove: rgba(0,0,0,.55);
+  --overlay-import: rgba(0,0,0,.55);
+  --shadow-context: rgba(0,0,0,.18);
+  --shadow-import: rgba(0,0,0,.32);
+  --surface-highlight: var(--paper-side);
+  --text-error: #E8958C;
+  --focus-strong: var(--hover);
+  --shadow-continue: rgba(0,0,0,.22);
+  --shadow-spine: rgba(0,0,0,.24);
+  --shadow-cover: rgba(0,0,0,.18);
+  --swatch-parchment: #F8F6F0;
+  --swatch-moon-white: #F5F5F7;
+  --swatch-eye-green: #EDF2EA;
 }
 
 /*
@@ -116,7 +216,8 @@
 /* Only explicit user switches transition. Loading a saved theme never enables this selector. */
 html[data-theme-transition] {
   transition-property: --paper-main, --paper-side, --ink, --text-body, --gloss, --saved-inline, --rule,
-    --term, --hover, --shelf-ledge-top, --shelf-ledge-mid, --shelf-ledge-bottom, --shelf-ledge-edge, --shelf-ledge-shadow;
+    --term, --hover, --shelf-ledge-top, --shelf-ledge-mid, --shelf-ledge-bottom, --shelf-ledge-edge, --shelf-ledge-shadow,
+    --input-bg, --placeholder, --control-border, --secondary-border, --button-hover, --import-border, --upload-border, --overlay-remove, --overlay-import, --shadow-context, --shadow-import, --surface-highlight, --text-error, --focus-strong, --shadow-continue, --shadow-spine, --shadow-cover, --swatch-parchment, --swatch-moon-white, --swatch-eye-green;
   transition-duration: 180ms;
   transition-timing-function: ease;
 }
@@ -124,3 +225,25 @@ html[data-theme-transition] {
   html[data-theme-transition] { transition-duration: 0s; }
   html[data-theme-transition] *, html[data-theme-transition] *::before, html[data-theme-transition] *::after { transition-duration: 0s !important; }
 }
+
+/* 衍生角色也插值；浅色数值保持现有界面，首屏不启用过渡。 */
+@property --input-bg { syntax: "<color>"; inherits: true; initial-value: #F8F6F0; }
+@property --placeholder { syntax: "<color>"; inherits: true; initial-value: #5D5750; }
+@property --control-border { syntax: "<color>"; inherits: true; initial-value: #E5DFC8; }
+@property --secondary-border { syntax: "<color>"; inherits: true; initial-value: #212121; }
+@property --button-hover { syntax: "<color>"; inherits: true; initial-value: #5D5750; }
+@property --import-border { syntax: "<color>"; inherits: true; initial-value: #C4C7C7; }
+@property --upload-border { syntax: "<color>"; inherits: true; initial-value: #E5DFC8; }
+@property --overlay-remove { syntax: "<color>"; inherits: true; initial-value: rgba(33,33,33,.18); }
+@property --overlay-import { syntax: "<color>"; inherits: true; initial-value: rgba(33,33,33,.28); }
+@property --shadow-context { syntax: "<color>"; inherits: true; initial-value: rgba(33,33,33,.18); }
+@property --shadow-import { syntax: "<color>"; inherits: true; initial-value: rgba(33,33,33,.32); }
+@property --surface-highlight { syntax: "<color>"; inherits: true; initial-value: #FFFFFF; }
+@property --text-error { syntax: "<color>"; inherits: true; initial-value: #212121; }
+@property --focus-strong { syntax: "<color>"; inherits: true; initial-value: #212121; }
+@property --shadow-continue { syntax: "<color>"; inherits: true; initial-value: rgba(0,0,0,.22); }
+@property --shadow-spine { syntax: "<color>"; inherits: true; initial-value: rgba(0,0,0,.24); }
+@property --shadow-cover { syntax: "<color>"; inherits: true; initial-value: rgba(0,0,0,.18); }
+@property --swatch-parchment { syntax: "<color>"; inherits: true; initial-value: #F8F6F0; }
+@property --swatch-moon-white { syntax: "<color>"; inherits: true; initial-value: #F5F5F7; }
+@property --swatch-eye-green { syntax: "<color>"; inherits: true; initial-value: #EDF2EA; }

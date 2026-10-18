@@ -1243,6 +1243,39 @@ describe("G-63 同段多开、并发与整段收起", () => {
       expect(document.activeElement).toBe(top); expect(panels()).toEqual([0]);
     } finally { media.mockRestore(); Object.defineProperty(window, "innerWidth", previousWidth); }
   });
+  it("G-67 一次滚动只续跑有限帧，几何稳定十帧后不再续约", async () => {
+    const previousWidth = Object.getOwnPropertyDescriptor(window, "innerWidth")!;
+    const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({
+      matches: query === "(max-width: 767.98px)", media: query, onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(() => true),
+      addListener: vi.fn(), removeListener: vi.fn(),
+    }) as MediaQueryList);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    const queued = new Map<number, FrameRequestCallback>(); let nextFrame = 0, callbacks = 0;
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => {
+      queued.set(++nextFrame, callback); return nextFrame;
+    });
+    const cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { queued.delete(id); });
+    const advance = async (frames: number) => { for (let i = 0; i < frames; i++) {
+      const batch = [...queued.values()]; queued.clear();
+      await act(async () => { for (const callback of batch) { callbacks++; callback(now += 16); } }); await flush();
+    } };
+    try {
+      await mount(true); await advance(20); expect(queued.size).toBe(0);
+      const top = container.querySelector<HTMLButtonElement>(".reader-typography-aa")!;
+      vi.spyOn(top, "getBoundingClientRect").mockReturnValue({ top: -25, bottom: -1, left: 300, right: 330, width: 30, height: 24 } as DOMRect);
+      const before = callbacks;
+      await act(async () => { window.dispatchEvent(new Event("scroll")); });
+      expect(container.querySelector<HTMLButtonElement>(".reader-typography-floating-aa")!.disabled).toBe(false);
+      expect(queued.size).toBeGreaterThan(0); await advance(20);
+      expect(callbacks - before).toBeGreaterThan(0); expect(callbacks - before).toBeLessThanOrEqual(11);
+      expect(queued.size).toBe(0); const stopped = callbacks; await advance(40);
+      expect(callbacks).toBe(stopped); expect(queued.size).toBe(0);
+    } finally {
+      raf.mockRestore(); cancel.mockRestore(); media.mockRestore();
+      Object.defineProperty(window, "innerWidth", previousWidth);
+    }
+  });
   it("G-67 桌面断点不创建顶部 Aa 观察器，悬浮入口始终不可点", async () => {
     const previousWidth = Object.getOwnPropertyDescriptor(window, "innerWidth")!;
     const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({

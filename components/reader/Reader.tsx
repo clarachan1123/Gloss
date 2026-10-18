@@ -295,14 +295,17 @@ export default function Reader({ docId }: { docId: string }) {
     };
     const startMobile = (readImmediately: boolean) => {
       let stopped = false, readByEvent = false;
-      let frame: number | null = null;
+      let frame: number | null = null, stableFrames = 0;
+      let inputs: number[] | null = null, previousInputs: number[] | null = null;
       const viewport = window.visualViewport;
       const measure = () => {
         if (stopped) return;
         if (!isMobile()) { updateEligibility(false, true); return; }
         const left = viewport?.offsetLeft ?? 0, top = viewport?.offsetTop ?? 0;
         const width = viewport?.width ?? window.innerWidth, height = viewport?.height ?? window.innerHeight;
-        const eligible = !rectIntersectsViewport(button.getBoundingClientRect(), { left, top, width, height });
+        const rect = button.getBoundingClientRect();
+        inputs = [rect.left, rect.top, rect.right, rect.bottom, left, top, width, height];
+        const eligible = !rectIntersectsViewport(rect, { left, top, width, height });
         const floating = floatingTypographyButtonRef.current;
         if (floating) {
           floating.style.setProperty("--floating-aa-x", `${left + width - window.innerWidth}px`);
@@ -316,9 +319,15 @@ export default function Reader({ docId }: { docId: string }) {
         // Scroll/resize already read this frame synchronously; do not read twice.
         if (!readByEvent) measure();
         readByEvent = false;
-        if (!stopped && isMobile()) frame = window.requestAnimationFrame(tick);
+        stableFrames = inputs && previousInputs && inputs.every((value, index) => value === previousInputs![index])
+          ? stableFrames + 1 : 0;
+        previousInputs = inputs;
+        if (!stopped && isMobile() && stableFrames < 10) frame = window.requestAnimationFrame(tick);
       };
-      const schedule = () => { if (!stopped && frame === null) frame = window.requestAnimationFrame(tick); };
+      const schedule = () => {
+        stableFrames = 0;
+        if (!stopped && frame === null) frame = window.requestAnimationFrame(tick);
+      };
       const viewportChanged = () => {
         if (stopped) return;
         if (!readByEvent) { readByEvent = true; measure(); }

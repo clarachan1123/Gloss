@@ -65,11 +65,28 @@ async function visibility(c,width,theme){
   assert(geometry.transition==='0.12s','120ms transition',geometry);
   console.log(JSON.stringify({width,theme,visibility:geometry}));
 }
+function countAppRaf(){
+  const raf=window.requestAnimationFrame.bind(window);window.__g67AppRaf=0;
+  window.requestAnimationFrame=function(callback){if(new Error().stack?.includes('/_next/static/chunks/'))window.__g67AppRaf++;return raf(callback);};
+}
+async function idle(c,width,theme){
+  const counts=[];
+  for(const visible of [true,false]){
+    await c.evaluate('window.__g67AppRaf=0');await scroll(c,visible?1500:0);await frames(c,60);
+    const afterScroll=await c.evaluate('(()=>{const count=window.__g67AppRaf;window.__g67AppRaf=0;return count})()');
+    assert(afterScroll>0,'App rAF counter observed this scroll before reset',{width,theme,visible,afterScroll});
+    const result=await evaluate(c,visible=>new Promise(resolve=>{let n=0,unchanged=true;function tick(){unchanged=unchanged&&(document.querySelector('.reader-typography-floating-aa').dataset.visible===String(visible));if(++n>=120)resolve({appRaf:window.__g67AppRaf,unchanged});else requestAnimationFrame(tick);}requestAnimationFrame(tick);}),visible);
+    counts.push({visible,afterScroll,...result});
+    assert(result.appRaf===0&&result.unchanged,'Idle schedules no app rAF and retains visibility',{width,theme,visible,...result});
+  }
+  console.log(JSON.stringify({width,theme,idle:counts}));
+}
 async function zeroDisplacement(c,width){await assertFields(c);
   await align(c,11);await c.evaluate("window.dispatchEvent(new WheelEvent('wheel'))");
   const result=await measured(c,width,'G67-toggle-strict-xy',async()=>{
     await evaluate(c,async()=>{const top=document.querySelector('.reader-typography-aa');for(let i=0;i<4;i++){
-      top.style.translate=i%2?'':'0 '+(scrollY+100)+'px';await new Promise(r=>{let n=0;function tick(){if(++n>=65)r();else requestAnimationFrame(tick);}requestAnimationFrame(tick);});}top.style.translate='';});
+      // Real position changes emit scroll/viewport events; pair synthetic translate with scroll.
+      top.style.translate=i%2?'':'0 '+(scrollY+100)+'px';window.dispatchEvent(new Event('scroll'));await new Promise(r=>{let n=0;function tick(){if(++n>=65)r();else requestAnimationFrame(tick);}requestAnimationFrame(tick);});}top.style.translate='';window.dispatchEvent(new Event('scroll'));});
   });
   assert(await c.evaluate('window.__g19.trace.frames.every(f=>f.dx===0&&f.dy===0)'),'Strict x/y zero');
   await c.evaluate('window.__g67.maxDelta='+result.maxAbsDelta);
@@ -156,10 +173,10 @@ async function run(width,theme){
     c.socket.on('message',data=>{const m=JSON.parse(data);if(m.method==='Network.requestWillBeSent'&&new URL(m.params.request.url).pathname.startsWith('/api/'))api.push(m.params.request.url);});
     await c.call('Page.enable');await c.call('Runtime.enable');await c.call('Network.enable');
     await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});await c.call('Emulation.setFocusEmulationEnabled',{enabled:true});
-    await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`(${setup.toString()})();localStorage.setItem('gloss:settings:theme',${JSON.stringify(theme)});`});
+    await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`(${countAppRaf.toString()})();(${setup.toString()})();localStorage.setItem('gloss:settings:theme',${JSON.stringify(theme)});`});
     await c.call('Page.navigate',{url:ORIGIN+'/read/sample'});await c.call('Page.bringToFront');await ready(c);
     await c.evaluate(`(${monitor.toString()})()`);
-    if(width<768){await visibility(c,width,theme);await zeroDisplacement(c,width);await typography(c,width);await overlays(c,width);await clock(c,width);await reduced(c);}
+    if(width<768){await visibility(c,width,theme);await idle(c,width,theme);await zeroDisplacement(c,width);await typography(c,width);await overlays(c,width);await clock(c,width);await reduced(c);}
     else{await scroll(c,1500);assert(await c.evaluate("getComputedStyle(document.querySelector('.reader-typography-floating-aa')).display==='none'"),'No desktop floating Aa');}
     await frames(c);await single();assert(api.length===0,'Zero API requests',api);
     const result=await assertMonitor(c);const extra=await c.evaluate('({maxDelta:__g67.maxDelta,negative:__g67.negative})');

@@ -19,14 +19,10 @@ body {
   font-family: var(--font-serif-cjk);
 }
 
-/*
- * 中栏 ≤750px；两侧栏宽度为默认值，待视觉稿校准。
- * 侧栏最小宽度：左 184px 容纳说明文字及其下一行的「显示 / 收起」，右 140px 容纳设置项；
- * 这样 1024px 视口（PRD 主场景下限）下中栏仍有约 700px，放得下 32em（560px）的正文。
- */
+/* 桌面工具轨固定 88px，正文按每行字数在中栏居中。 */
 .shell {
   display: grid;
-  grid-template-columns: minmax(184px, 1fr) minmax(0, 750px) minmax(200px, 1fr);
+  grid-template-columns: minmax(184px, 264px) minmax(0, 1fr) 88px;
   min-height: 100vh;
 }
 
@@ -726,3 +722,25 @@ body {
 
 .reader-paper-options[hidden] { display: none; }
 .reader-typography-sheet > .reader-appearance-options { margin-top: 14px; }
+
+/* 仅桌面工具轨与非模态排版浮层；手机设置保持既有布局。 */
+@media (min-width: 768px) {
+  .col-right { padding: 24px 0; }
+  .reader-tool-rail { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+  .reader-tool { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 0; border: 0; background: transparent; color: var(--ink); font-family: var(--font-serif-cjk); font-size: 11px; line-height: 1.5; }
+  button.reader-tool { cursor: pointer; }
+  .reader-tool-aa { font: 22px/1.2 var(--font-display); }
+  .reader-tool[hidden] { display: none; }
+  .reader-tool-swatch { box-sizing: border-box; width: 22px; height: 22px; padding: 0; border: 1px solid var(--rule); border-radius: 50%; cursor: pointer; }
+  .reader-tool-swatch[aria-pressed="true"] { border: 2px solid var(--ink); }
+  .reader-tool:focus-visible, .reader-tool-swatch:focus-visible { outline: 2px solid var(--hover); outline-offset: 3px; }
+}
+.reader-typography-popover { position: fixed; z-index: 90; box-sizing: border-box; width: 320px; max-height: calc(100dvh - 16px); overflow-y: auto; padding: 16px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper-main); color: var(--ink); box-shadow: 0 8px 24px var(--shadow-import); }
+.reader-popover-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.reader-popover-header h2 { margin: 0; font-size: 14px; }
+.reader-typography-popover .settings-cache-action { flex-wrap: wrap; justify-content: space-between; font-size: 12px; }
+.reader-typography-popover .settings-cache-result { width: 100%; text-align: right; }
+@media (max-width: 767.98px) { .reader-typography-popover { display: none; } }
+
+.reader-tool > span:last-child { color: var(--gloss); }
+.reader-typography-popover .settings-cache-action > span { color: var(--gloss); }

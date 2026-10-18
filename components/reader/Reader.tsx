@@ -2021,7 +2021,7 @@ export default function Reader({ docId }: { docId: string }) {
         )}
       </main>
 
-      <aside className="col col-right" aria-labelledby="settings-title">
+      <aside className="col col-right" aria-label="阅读设置">
           <SettingsPanel glossShape={glossShape} onGlossShapeChange={changeGlossShape} typography={typography} onTypographyChange={changeTypography}
             onTypographyGestureStart={startTypographyGesture} onTypographyGestureEnd={endTypographyGesture} />
       </aside>
@@ -2584,13 +2584,14 @@ function anchorAtClick(target: HTMLElement, x: number, y: number): CharAnchor | 
  * 不用坐标反查（caretFromPoint）：参考点落在行距、段间距或撑开区外边距里时会取不到字，锚定就静默失效了。
  * 按文档顺序扫描有可见字框的片段，同行跨句时仍选最早的真实字；手势开始时只选择一次。
  */
-function anchorAtViewportTop(body: HTMLElement): CharAnchor | null {
+export function anchorAtViewportTop(body: HTMLElement): CharAnchor | null {
   const viewport = window.visualViewport;
   const visibleTop = viewport?.offsetTop ?? 0;
   const sheet = document.querySelector<HTMLElement>(".reader-typography-sheet");
   const floating = document.querySelector<HTMLElement>('.reader-typography-floating-aa[data-visible="true"]');
   const visibleBottom = Math.min(visibleTop + (viewport?.height ?? window.innerHeight), sheet?.getBoundingClientRect().top ?? Infinity,
     floating?.getBoundingClientRect().top ?? Infinity);
+  const popover = document.querySelector<HTMLElement>(".reader-typography-popover")?.getBoundingClientRect();
   const spans = body.querySelectorAll<HTMLElement>(".sentence");
   for (const span of spans) {
     const bounds = span.getBoundingClientRect();
@@ -2601,7 +2602,8 @@ function anchorAtViewportTop(body: HTMLElement): CharAnchor | null {
     if (!(node instanceof Text) || !container) continue;
     for (let c = 0; c < node.length; c++) {
       const rect = rectOf(node, c);
-      if (rect && rect.top >= visibleTop && rect.bottom <= visibleBottom && node.data[c].trim()) {
+      if (rect && rect.top >= visibleTop && rect.bottom <= visibleBottom && node.data[c].trim() &&
+        (!popover || Math.min(rect.right, popover.right) <= Math.max(rect.left, popover.left) || Math.min(rect.bottom, popover.bottom) <= Math.max(rect.top, popover.top))) {
         return { paraIndex: Number(container.dataset.para), offset: Number(span.dataset.offset) + c, viewportTop: rect.top };
       }
     }

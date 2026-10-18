@@ -99,6 +99,9 @@ async function reload(cdp) { await cdp.call("Page.reload"); await ready(cdp); }
 async function close(cdp) { await cdp.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"); await settle(cdp); }
 async function choose(cdp, selector, label) {
   await evaluate(cdp, (selector, label) => {
+    const cycle = document.querySelector(".reader-shape-cycle");
+    if (selector.includes("白话显示形态") && cycle) { const name = label === "inline 小字" ? "小字" : label;
+      if (!cycle.getAttribute("aria-label").includes(`：${name}，`)) cycle.click(); return; }
     const button = [...document.querySelectorAll(selector)].find(b => b.textContent.trim() === label);
     if (!button || button.disabled) throw Error("Missing enabled button " + label);
     button.click();

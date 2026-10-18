@@ -60,7 +60,7 @@ function setup() {
   };
   window.__g19.reference = () => {
     const bottom = Math.min(innerHeight, document.querySelector('.reader-typography-sheet')?.getBoundingClientRect().top ?? Infinity);
-    const c=window.__g19.glyphs().find(c=>c.char.trim()&&c.y>=0&&c.bottom<=bottom); if(!c)throw Error('No visible original glyph'); return c;
+    const c=window.__g19.glyphs().find(c=>c.char.trim()&&c.y>=0&&c.bottom<=bottom&&(()=>{const p=document.querySelector('.reader-typography-popover')?.getBoundingClientRect(),r=window.__g19.rect(c.key);return !p||Math.min(r.x+r.width,p.right)<=Math.max(r.x,p.left)||Math.min(r.y+r.height,p.bottom)<=Math.max(r.y,p.top)})()); if(!c)throw Error('No visible original glyph'); return c;
   };
   const scrollTo=window.scrollTo;
   window.scrollTo=function(...args){const trace=window.__g19.trace;
@@ -118,7 +118,7 @@ async function align(c,index=11) {
   await evaluate(c,index=>{const glyph=window.__g19.glyphs().find(g=>g.index===index&&g.char.trim());window.scrollTo({top:scrollY+glyph.y-36,behavior:'instant'});},index); await settle(c);
 }
 async function change(c,key,value) {
-  await evaluate(c,(key,value)=>{const prefix=innerWidth<768?'.reader-typography-sheet':'.col-right';
+  await evaluate(c,(key,value)=>{const prefix=innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover';
     const input=document.querySelector(`${prefix} input[data-typography="${key}"]${typeof value==='string'?`[value="${value}"]`:''}`);
     if(!input)throw Error('Missing typography input '+key); if(input.type==='radio')input.click();
     else {const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(input,String(value));input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));}},key,value);
@@ -139,7 +139,7 @@ async function measured(c,width,label,operation,negative=false,key=null,allowTop
   const result=await c.evaluate('window.__g19.end()');checkRow(width,result,negative);return result;
 }
 async function drag(c,key='fontSize') {
-  const r=await evaluate(c,key=>{const prefix=innerWidth<768?'.reader-typography-sheet':'.col-right',el=document.querySelector(`${prefix} input[data-typography="${key}"]`);
+  const r=await evaluate(c,key=>{const prefix=innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover',el=document.querySelector(`${prefix} input[data-typography="${key}"]`);
     const r=el.getBoundingClientRect();return{x:r.left+8,y:r.top+r.height/2,width:r.width-16};},key);
   await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:r.x,y:r.y});
   await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x:r.x,y:r.y});
@@ -155,6 +155,7 @@ async function samplerSelfCheck(c,width) {
   assert(result.every(r=>r.before===r.after),'Sampler callbacks leaked between scenes',result);console.log(JSON.stringify({width,samplerSelfCheck:result}));
 }
 async function open(c,index) {
+  if(await c.evaluate("!!document.querySelector('.reader-typography-popover')")){await c.evaluate("document.querySelector('.settings-typography-toggle').click()");await settle(c);}
   await align(c,index);
   await evaluate(c,index=>{const span=document.querySelector(`.sentence[data-index="${index}"]`),r=span.getClientRects()[0];span.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:r.left+1,clientY:r.top+1}));},index); await settle(c);
 }
@@ -173,13 +174,13 @@ async function layoutChecks(c,width) {
       if(Math.max(...boxes.map(b=>b.top))-Math.min(...boxes.map(b=>b.top))>2)throw Error('STOP: top row not one row '+JSON.stringify(boxes));
       if(getComputedStyle(right).display!=='none')throw Error('mobile right visible');return boxes;
     }
-    if(rect(right).width<200)throw Error('right minimum');if(getComputedStyle(aa).display!=='none')throw Error('desktop Aa visible');return{grid:getComputedStyle(document.querySelector('.shell')).gridTemplateColumns};
+    if(Math.abs(rect(right).width-88)>1)throw Error('right rail width');if(getComputedStyle(aa).display!=='none')throw Error('desktop Aa visible');return{grid:getComputedStyle(document.querySelector('.shell')).gridTemplateColumns};
   },width);console.log(JSON.stringify({width,layout}));
 }
 async function checks(c,width) {
   await layoutChecks(c,width);
   await revealControls(c,width);
-  await evaluate(c,width=>{const scope=document.querySelector(width<768?'.reader-typography-sheet':'.col-right');
+  await evaluate(c,width=>{const scope=document.querySelector(width<768?'.reader-typography-sheet':'.reader-typography-popover');
     if(scope.querySelectorAll('input[type=range]').length!==(width<768?2:3))throw Error('range count');
     for(const el of scope.querySelectorAll('input[type=range]'))if(el.nextElementSibling.getBoundingClientRect().top<=el.getBoundingClientRect().bottom)throw Error('band overlaps knob bounds');
     if(width<768&&scope.getBoundingClientRect().height>innerHeight*.5)throw Error('sheet taller than half');
@@ -192,12 +193,12 @@ async function checks(c,width) {
   await measured(c,width,'empty:continuous-lineHeight',()=>drag(c,'lineHeight'));
   if(width>=768)await measured(c,width,'empty:continuous-lineChars',()=>drag(c,'lineChars'));
   await measured(c,width,'empty:keyboard-step',async()=>{
-    await evaluate(c,()=>document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.col-right'} [data-typography="fontSize"]`).focus({preventScroll:true}));
+    await evaluate(c,()=>document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover'} [data-typography="fontSize"]`).focus({preventScroll:true}));
     for(let i=0;i<3;i++){if(await c.evaluate('window.__g19.trace.firstFailure!==null'))break;
       await c.call('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37});
       await c.call('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37});await sleep(100);}
   });
-  await measured(c,width,'reset',async()=>{await evaluate(c,()=>document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.col-right'} .reader-typography-reset`).click());await settle(c);});
+  await measured(c,width,'reset',async()=>{await evaluate(c,()=>document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover'} .reader-typography-reset`).click());await settle(c);});
   assert(await c.evaluate(`localStorage.getItem(${JSON.stringify(KEY)})`)===JSON.stringify(DEFAULTS),'restore all five');
   if(width<768){await c.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");await settle(c);}
   await save(c,5);await open(c,6);await settle(c);await revealControls(c,width);await align(c,8);
@@ -251,7 +252,7 @@ async function coverageChecks(c,width) {
   }
   const narrow={...DEFAULTS,lineChars:20};await evaluate(c,(key,value)=>localStorage.setItem(key,JSON.stringify(value)),KEY,narrow);await reload(c);
   assert(await c.evaluate("getComputedStyle(document.querySelector('.reader-body')).maxWidth")==='350px','stored hidden lineChars applies');
-  await revealControls(c,width);await c.evaluate("document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.col-right'} .reader-typography-reset`).click()");await settle(c);
+  await revealControls(c,width);await c.evaluate("document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover'} .reader-typography-reset`).click()");await settle(c);
   assert(await c.evaluate(`localStorage.getItem(${JSON.stringify(KEY)})`)===JSON.stringify(DEFAULTS),'reset restores hidden field');
   await change(c,'fontSize',20);
   await c.call('Page.navigate',{url:ORIGIN+'/read/g19-owned'});
@@ -303,6 +304,7 @@ async function negativeControl(c,width) {
   await c.evaluate('window.__g19.disable.disconnect();window.scrollBy=window.__g19.scrollBy;window.scrollTo=window.__g19.scrollTo');
 }
 async function d13Sample(c,width,index,label) {
+  if(await c.evaluate("!!document.querySelector('.reader-typography-popover')")){await c.evaluate("document.querySelector('.settings-typography-toggle').click()");await settle(c);}
   const glyph=await evaluate(c,index=>window.__g19.glyphs().find(g=>g.index===index&&g.char.trim()),index);
   return measured(c,width,label,()=>evaluate(c,glyph=>{const r=window.__g19.rect(glyph.key),offset=Number(glyph.key.split(':')[1]);
     const span=[...document.querySelectorAll(`.sentence[data-index="${glyph.index}"]`)].find(s=>Number(s.dataset.offset)<=offset&&Number(s.dataset.offset)+s.textContent.length>offset);

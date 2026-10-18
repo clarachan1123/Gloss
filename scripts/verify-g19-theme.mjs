@@ -42,8 +42,8 @@ async function colors(c,theme,from,page,width){
       check('中栏','.col-main','backgroundColor','--paper-main');check('侧栏','.col-right','backgroundColor','--paper-side');
       check('正文','.reader-body','color','--text-body');check('白话','.gloss-panel:not(.gloss-panel-saved)','color','--gloss');
       check('已留下白话','.gloss-panel-saved','color','--saved-inline');check('术语','.gloss-term','color','--term');
-      check('分隔线','.col-right','borderLeftColor','--rule');check('设置面板','.settings-skeleton li','color','--gloss');
-      check('主题控件','.reader-theme-options','color','--ink');check('反馈按钮底色','.feedback-button','backgroundColor','--ink');
+      check('分隔线','.col-right','borderLeftColor','--rule');check('设置面板','.reader-tool > span:last-child','color','--gloss');
+      check('主题控件','.reader-paper-options','color','--ink');check('反馈按钮底色','.feedback-button','backgroundColor','--ink');
       check('反馈按钮文字','.feedback-button','color','--paper-main');
       if(width<768){check('Aa面板','.reader-typography-sheet','backgroundColor','--paper-side');check('Aa按钮边框','.reader-typography-aa','borderTopColor','--rule');}
     }else if(page==='shelf'){
@@ -119,25 +119,27 @@ async function expectRoles(c, theme, cases, label) {
   assert(result.every(r=>r.passed),'Role token mismatch '+label,result.filter(r=>!r.passed));
 }
 async function appearance(c,width,value){
-  await evaluate(c,(width,value)=>document.querySelector(`${width<768?'.reader-typography-sheet':'.col-right'} [data-reader-appearance="${value}"]`).click(),width,value);
+  if(width<768)await evaluate(c,value=>document.querySelector(`.reader-typography-sheet [data-reader-appearance="${value}"]`).click(),value);
+  else for(let i=0;i<3&&await c.evaluate("localStorage.getItem('gloss:settings:appearance')||'system'")!==value;i++)await c.evaluate("document.querySelector('.reader-appearance-cycle').click()");
   await settle(c);
 }
 async function paperVisibility(c,width,dark){
   const selector=`${width<768?'.reader-typography-sheet':'.col-right'} .reader-paper-options`;
-  const state=await evaluate(c,selector=>{const group=document.querySelector(selector),input=group.querySelector('input');return{hidden:group.hidden,display:getComputedStyle(group).display,rects:input.getClientRects().length};},selector);
+  const state=await evaluate(c,selector=>{const group=document.querySelector(selector),input=group.querySelector('input,button');return{hidden:group.hidden,display:getComputedStyle(group).display,rects:input.getClientRects().length};},selector);
   assert(state.hidden===dark&&(!dark||state.display==='none'&&state.rects===0),'Bottom group visibility',state);
   const {root}=await c.call('DOM.getDocument');const {nodeId}=await c.call('DOM.querySelector',{nodeId:root.nodeId,selector});
   const {nodes}=await c.call('Accessibility.getPartialAXTree',{nodeId,fetchRelatives:false});
   assert(nodes.length>0&&nodes[0].ignored===dark,'Bottom group AX visibility',{dark,nodes});extraChecks+=2;
-  if(dark){const noFocus=await evaluate(c,selector=>{const input=document.querySelector(selector+' input');input.focus({preventScroll:true});return document.activeElement!==input;},selector);assert(noFocus,'Hidden bottom group cannot focus');extraChecks++;}
+  if(dark){const noFocus=await evaluate(c,selector=>{const input=document.querySelector(selector+' :is(input,button)');input.focus({preventScroll:true});return document.activeElement!==input;},selector);assert(noFocus,'Hidden bottom group cannot focus');extraChecks++;}
 }
 async function surfaceChecks(c,width,theme){
   await c.call('Page.navigate',{url:ORIGIN+'/read/sample'});await ready(c);await prepare(c,width);await appearance(c,width,theme==='dark'?'dark':'light');
   if(theme!=='dark')await choose(c,width,theme);
-  await expectRoles(c,theme,[['正文','.reader-body','color','--text-body'],['主底','.col-main','backgroundColor','--paper-main'],['侧底','.col-right','backgroundColor','--paper-side'],['术语','.gloss-term','color','--term'],['描边','.settings-cache-button','borderTopColor','--control-border']],'reader');
+  await expectRoles(c,theme,[['正文','.reader-body','color','--text-body'],['主底','.col-main','backgroundColor','--paper-main'],['侧底','.col-right','backgroundColor','--paper-side'],['术语','.gloss-term','color','--term'],['描边',width<768?'.reader-typography-sheet .reader-typography-reset':'.settings-cache-button','borderTopColor','--control-border']],'reader');
   await hover(c,width,theme,theme);originalChecks--;
   await paperVisibility(c,width,theme==='dark');
   if(width<768) {await c.evaluate("document.querySelector('[aria-label=\"关闭阅读排版\"]').click()");await settle(c);}
+  if(await c.evaluate("!!document.querySelector('.reader-typography-popover')"))await c.evaluate("document.querySelector('.settings-typography-toggle').click()");
   await c.evaluate("document.querySelector('.feedback-button').click()");await wait(c,"!!document.querySelector('.feedback-card textarea')");
   await expectRoles(c,theme,[['卡片','.feedback-card','backgroundColor','--paper-main'],['输入','.feedback-form textarea','backgroundColor','--input-bg'],['占位','.feedback-form textarea','color','--placeholder','::placeholder'],['主按钮','.feedback-send','backgroundColor','--ink'],['主按钮字','.feedback-send','color','--paper-main']],'feedback');
   await evaluate(c,()=>{const t=document.querySelector('.feedback-form textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'甲'.repeat(1001));t.dispatchEvent(new Event('input',{bubbles:true}));});await settle(c);
@@ -236,6 +238,7 @@ async function measuredTheme2c(c,width,label,operation){
   return result;
 }
 async function negativeTheme2c(c,width,group){
+  if(width>=768)await appearance(c,width,group==='A'?'light':'dark');
   const label='appearance-stream:negative-'+group;await ensureGroupA(c,width,label);
   const result=await evaluate(c,group=>new Promise(resolve=>requestAnimationFrame(()=>{
     const before=__theme2c.snapshot(),clicked=document.querySelector('.sentence[data-index="6"]').closest('.reader-paragraph');
@@ -244,7 +247,7 @@ async function negativeTheme2c(c,width,group){
     const targetKeys=before.glyphs.filter(g=>paragraph.contains(document.querySelector(`.sentence[data-index="${g.index}"]`))).map(g=>g.key);
     if(group==='B'&&!targetKeys.length)throw Error('Negative B paragraph has no visible glyph');
     const old=paragraph.style.marginTop;
-    document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.col-right'} [data-reader-appearance="${group==='A'?'dark':'light'}"]`).click();
+    if(innerWidth<768)document.querySelector(`.reader-typography-sheet [data-reader-appearance="${group==='A'?'dark':'light'}"]`).click();else document.querySelector('.reader-appearance-cycle').click();
     paragraph.style.marginTop=(parseFloat(getComputedStyle(paragraph).marginTop)+10)+'px';const after=__theme2c.snapshot(),comparison=__theme2c.compare(before,after);
     paragraph.style.marginTop=old;
     const failure=comparison.rows.find(r=>r.group===group&&!r.passed);
@@ -375,7 +378,7 @@ async function run(width){
         await colors(c,to,from,'reader',width);await hover(c,width,to,from);
         const duration=await c.evaluate('getComputedStyle(document.documentElement).transitionDuration');assert(duration==='0.18s','Missing switch transition',duration);
         if(width<768)assert(await c.evaluate("document.querySelector('.reader-typography-sheet').getBoundingClientRect().height<=450"),'Mobile theme sheet exceeds half');
-        await c.evaluate("document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.col-right'} .reader-typography-reset`).click()");await settle(c);
+        await c.evaluate("document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover'} .reader-typography-reset`).click()");await settle(c);
         assert(await c.evaluate('document.documentElement.dataset.theme')===to,'Typography reset changed theme');
         console.log(JSON.stringify({width,checkpoint:'page-colors',direction:from+'>'+to}));await pages(c,width,from,to);
       }

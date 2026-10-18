@@ -290,7 +290,7 @@ async function checkSentenceHover(cdp, width, index) {
   return {checks:targets.length,maxX,maxY};
 }
 async function clickButton(cdp,scope,label){
-  await cdp.evaluate(`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(scope)}+' button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw new Error('Missing enabled button '+${JSON.stringify(label)});b.click();})()`,false,'click:button:'+label);await settled(cdp);
+  await cdp.evaluate(`(()=>{const cycle=document.querySelector(".reader-shape-cycle");if(${JSON.stringify(scope)}.includes("白话显示形态")&&cycle){if(!cycle.ariaLabel.includes("："+${JSON.stringify(label)}+"，"))cycle.click();return;}const b=[...document.querySelectorAll(${JSON.stringify(scope)}+' button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw new Error('Missing enabled button '+${JSON.stringify(label)});b.click();})()`,false,'click:button:'+label);await settled(cdp);
 }
 async function reload(cdp){await cdp.call('Page.reload',{},'reader:refresh');await waitForValue(()=>cdp.evaluate("document.readyState==='complete'&&!!window.__g59",false,'wait:refresh'),'refresh');await readyReader(cdp);}
 async function gutterMetrics(cdp) {

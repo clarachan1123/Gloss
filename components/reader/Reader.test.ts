@@ -16,7 +16,7 @@ import { loadSavedGlosses, saveExplanation } from "@/lib/storage";
 import { validateAnalyticsEvent } from "@/lib/analytics-events";
 import { markReaderEntry } from "@/lib/analytics-local";
 import { IDLE_EXPLAIN_VIEW } from "./GlossPanel";
-import Reader, { rectIntersectsViewport, Paragraph, allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
+import Reader, { anchorAtViewportTop, rectIntersectsViewport, Paragraph, allObservedTargetsOutside, anchorScrollDelta, buildExplainInput, buildSavedMarkersByParagraph, buildSavedRegionsByParagraph, cropExplainContext, documentStats, groupRegions, paragraphOriginalFragments, prepareReadableDocument, readGlossShape, readReadingMode, retainGlossAfterUnsave, selectVisibleSavedRegions, shouldAnchorPanelGrowth, splitFragmentClassName, takeCodePointsFromEnd, type Region } from "./Reader";
 import { skippedSummary } from "@/lib/parse/validate";
 import type { StoredDocument } from "@/lib/storage";
 import sampleContent from "@/public/samples/shan-yu-e.json";
@@ -1206,7 +1206,7 @@ describe("G-63 同段多开、并发与整段收起", () => {
     await mount(true, true); await click(1);
     await act(async () => { container.querySelector<HTMLButtonElement>(".settings-typography-toggle")!.click(); });
     const before = panels(), source = original(), eventCount = events.length;
-    await act(async () => { container.querySelector<HTMLInputElement>('.col-right [data-typography="bodyFont"][value="serif"]')!.click();
+    await act(async () => { document.querySelector<HTMLInputElement>('.reader-typography-popover [data-typography="bodyFont"][value="serif"]')!.click();
       await new Promise(resolve => requestAnimationFrame(() => resolve(null))); });
     await flush();
     expect(panels()).toEqual(before); expect(original()).toBe(source);
@@ -1419,5 +1419,24 @@ describe("G-67 可见区域正面积相交", () => {
     expect(rectIntersectsViewport({ left: 385, right: 409, top: 30, bottom: 54 }, viewport)).toBe(false);
     expect(rectIntersectsViewport({ left: 11, right: 35, top: 620, bottom: 644 }, viewport)).toBe(false);
     expect(rectIntersectsViewport({ left: 11, right: 35, top: 619.5, bottom: 644 }, viewport)).toBe(true);
+  });
+});
+
+describe("G-19c 浮层遮挡的参照字", () => {
+  it("跳过相交字；全部遮挡时返回既有空参照兜底", () => {
+    const body = document.createElement("div"), panel = document.createElement("div"); panel.className = "reader-typography-popover";
+    body.innerHTML = '<div data-para="0"><span class="sentence" data-offset="0">甲乙</span></div>'; document.body.append(body, panel);
+    const span = body.querySelector<HTMLElement>("span")!; const range = document.createRange();
+    const rect = (left: number) => ({ left, right: left + 10, top: 20, bottom: 40, width: 10, height: 20, x: left, y: 20, toJSON() {} });
+    let offset = 0; vi.spyOn(document, "createRange").mockReturnValue(range);
+    vi.spyOn(range, "setStart").mockImplementation((_node, value) => { offset = value; });
+    vi.spyOn(range, "getClientRects").mockImplementation(() => [rect(offset * 20)] as unknown as DOMRectList);
+    vi.spyOn(span, "getBoundingClientRect").mockReturnValue({ ...rect(0), right: 30 });
+    vi.spyOn(panel, "getBoundingClientRect").mockReturnValue(rect(0));
+    try {
+      expect(anchorAtViewportTop(body)?.offset).toBe(1);
+      vi.mocked(panel.getBoundingClientRect).mockReturnValue({ ...rect(0), right: 50 });
+      expect(anchorAtViewportTop(body)).toBeNull();
+    } finally { body.remove(); panel.remove(); vi.restoreAllMocks(); }
   });
 });

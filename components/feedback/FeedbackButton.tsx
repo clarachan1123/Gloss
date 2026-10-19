@@ -4,7 +4,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 import { FEEDBACK_BODY_MAX, FEEDBACK_CONTACT_MAX, feedbackLength } from "@/lib/feedback";
 
-export default function FeedbackButton({ placement = "inline" }: { placement?: "reader" | "shelf" | "inline" }) {
+export default function FeedbackButton({ placement = "inline", openRequest = 0, returnFocus }: {
+  placement?: "reader" | "shelf" | "inline"; openRequest?: number; returnFocus?: () => HTMLElement | null;
+}) {
   const [open, setOpen] = useState(false);
   const [copyState, setCopyState] = useState<"ready" | "copied" | "manual">("ready");
   const [body, setBody] = useState("");
@@ -24,9 +26,10 @@ export default function FeedbackButton({ placement = "inline" }: { placement?: "
     setOpen(false);
     setCopyState("ready");
     setStatus(value => value === "success" ? "idle" : value);
-    buttonRef.current?.focus({ preventScroll: true });
-  }, []);
+    (returnFocus?.() ?? buttonRef.current)?.focus({ preventScroll: true });
+  }, [returnFocus]);
 
+  useEffect(() => { if (openRequest > 0) { setStatus(value => value === "success" ? "idle" : value); setOpen(true); } }, [openRequest]);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -40,7 +43,7 @@ export default function FeedbackButton({ placement = "inline" }: { placement?: "
   useLayoutEffect(() => {
     if (!open) return;
     const place = () => {
-      const button = buttonRef.current?.getBoundingClientRect();
+      const button = (returnFocus?.() ?? buttonRef.current)?.getBoundingClientRect();
       const card = cardRef.current;
       if (!button || !card) return;
       const bounds = card.getBoundingClientRect();

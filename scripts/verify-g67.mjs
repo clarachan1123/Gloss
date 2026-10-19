@@ -32,7 +32,7 @@ function monitor(){
       const active=el=>{const style=getComputedStyle(el);return style.display!=='none'&&style.visibility!=='hidden'&&style.pointerEvents!=='none'&&!el.disabled&&!el.inert&&rectVisible(el);};
       const count=Number(active(top))+Number(active(floating));state.maxClickable=Math.max(state.maxClickable,count);
       if(count>1)state.failures.push('two clickable Aa');
-      const should=innerWidth<768&&!rectVisible(top)&&!document.querySelector('.reader-typography-sheet');
+      const should=false; if(innerWidth<768&&!rectVisible(top))state.failures.push('sticky top Aa outside viewport');
       if((floating.dataset.visible==='true')!==should)state.failures.push('geometry/state mismatch');
       if(floating.dataset.visible!=='true'&&(!floating.disabled||!floating.inert||floating.tabIndex!==-1||floating.getAttribute('aria-hidden')!=='true'||getComputedStyle(floating).pointerEvents!=='none'))state.failures.push('hidden entry active');
       const b=document.querySelector('.reader-body'),tr=getComputedStyle(b).translate;
@@ -50,15 +50,15 @@ async function visibility(c,width,theme){
   const edge=bounds.edge,partial=edge-bounds.height/2;
   await scroll(c,partial);
   const partialRatio=await c.evaluate("(()=>{const r=document.querySelector('.reader-typography-aa').getBoundingClientRect(),v=visualViewport;return Math.max(0,Math.min(r.bottom,(v?.offsetTop??0)+(v?.height??innerHeight))-Math.max(r.top,v?.offsetTop??0))/r.height})()");
-  assert(partialRatio>0&&partialRatio<1,'Partial scenario has actual positive partial intersection',partialRatio);console.log(JSON.stringify({width,theme,partialRatio}));assert(await c.evaluate("document.querySelector('.reader-typography-floating-aa').disabled"),'Partial top hides floating');
-  await scroll(c,edge+.5);assert(await c.evaluate("!document.querySelector('.reader-typography-floating-aa').disabled"),'Fully outside shows floating');
+  assert(partialRatio===1,'Sticky top remains fully inside viewport',partialRatio);console.log(JSON.stringify({width,theme,partialRatio}));assert(await c.evaluate("document.querySelector('.reader-typography-floating-aa').disabled"),'Partial top hides floating');
+  await scroll(c,edge+.5);assert(await c.evaluate("document.querySelector('.reader-typography-floating-aa').disabled"),'Scrolling retains hidden floating');
   await scroll(c,partial);assert(await c.evaluate("document.querySelector('.reader-typography-floating-aa').disabled"),'Return hides floating');
   for(let i=0;i<10;i++){await scroll(c,edge+2);await scroll(c,edge-2);}
   await evaluate(c,async edge=>{for(let y=edge-8;y<=edge+8;y+=.5){window.scrollTo({top:y,behavior:'instant'});await new Promise(r=>requestAnimationFrame(r));}},edge);
   await scroll(c,1500);await scroll(c,0);await scroll(c,2500);await scroll(c,0);
   await assertMonitor(c);await c.evaluate('cancelAnimationFrame(__g67.raf)');
   await align(c,11);await c.call('Page.reload');await ready(c); // the stored reader position is restored on entry
-  assert(await c.evaluate("scrollY>100&&!document.querySelector('.reader-typography-floating-aa').disabled"),'Deep entry restored');
+  assert(await c.evaluate("scrollY>100&&document.querySelector('.reader-typography-floating-aa').disabled"),'Deep entry restored');
   await c.evaluate(`(${monitor.toString()})()`);
   const geometry=await c.evaluate("(()=>{const b=document.querySelector('.reader-typography-floating-aa'),s=getComputedStyle(b),t=getComputedStyle(document.querySelector('.reader-typography-aa')),r=b.getBoundingClientRect();return{width:r.width,height:r.height,font:parseFloat(s.fontSize),topFont:parseFloat(t.fontSize),position:s.position,z:s.zIndex,bg:s.backgroundColor,expected:getComputedStyle(document.documentElement).getPropertyValue('--paper-side').trim(),right:s.right,bottom:s.bottom,transition:s.transitionDuration}})()");
   assert(geometry.width>=44&&geometry.height>=44&&geometry.font>=geometry.topFont&&geometry.position==='fixed'&&geometry.z==='40','Floating geometry',geometry);
@@ -71,8 +71,8 @@ function countAppRaf(){
 }
 async function idle(c,width,theme){
   const counts=[];
-  for(const visible of [true,false]){
-    await c.evaluate('window.__g67AppRaf=0');await scroll(c,visible?1500:0);await frames(c,60);
+  for(const y of [1500,0]){const visible=false;
+    await c.evaluate('window.__g67AppRaf=0');await scroll(c,y);await frames(c,60);
     const afterScroll=await c.evaluate('(()=>{const count=window.__g67AppRaf;window.__g67AppRaf=0;return count})()');
     assert(afterScroll>0,'App rAF counter observed this scroll before reset',{width,theme,visible,afterScroll});
     const result=await evaluate(c,visible=>new Promise(resolve=>{let n=0,unchanged=true;function tick(){unchanged=unchanged&&(document.querySelector('.reader-typography-floating-aa').dataset.visible===String(visible));if(++n>=120)resolve({appRaf:window.__g67AppRaf,unchanged});else requestAnimationFrame(tick);}requestAnimationFrame(tick);}),visible);
@@ -86,16 +86,16 @@ async function zeroDisplacement(c,width){await assertFields(c);
   const result=await measured(c,width,'G67-toggle-strict-xy',async()=>{
     await evaluate(c,async()=>{const top=document.querySelector('.reader-typography-aa');for(let i=0;i<4;i++){
       // Real position changes emit scroll/viewport events; pair synthetic translate with scroll.
-      top.style.translate=i%2?'':'0 '+(scrollY+100)+'px';window.dispatchEvent(new Event('scroll'));await new Promise(r=>{let n=0;function tick(){if(++n>=65)r();else requestAnimationFrame(tick);}requestAnimationFrame(tick);});}top.style.translate='';window.dispatchEvent(new Event('scroll'));});
+      document.querySelector('.reader-typography-floating-aa').style.translate=i%2?'':'0 100px';window.dispatchEvent(new Event('scroll'));await new Promise(r=>{let n=0;function tick(){if(++n>=65)r();else requestAnimationFrame(tick);}requestAnimationFrame(tick);});}document.querySelector('.reader-typography-floating-aa').style.translate='';window.dispatchEvent(new Event('scroll'));});
   });
   assert(await c.evaluate('window.__g19.trace.frames.every(f=>f.dx===0&&f.dy===0)'),'Strict x/y zero');
   await c.evaluate('window.__g67.maxDelta='+result.maxAbsDelta);
   // Moving only the overlay into normal flow before the article must be detected.
   const negative=await evaluate(c,async()=>{
     const f=document.querySelector('.reader-typography-floating-aa'),body=document.querySelector('.reader-body'),parent=f.parentNode,next=f.nextSibling;
-    const ref=__g19.reference(),before=__g19.rect(ref.key);body.before(f);f.style.position='static';
+    const ref=__g19.reference(),before=__g19.rect(ref.key);body.before(f);f.style.position='static';f.style.visibility='visible';f.style.display='block';
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const after=__g19.rect(ref.key);const delta=Math.max(Math.abs(after.y-before.y),Math.abs(after.x-before.x));
-    f.style.position='';parent.insertBefore(f,next);await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return delta;
+    f.style.position='';f.style.visibility='';f.style.display='';parent.insertBefore(f,next);await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return delta;
   });
   assert(negative>0,'Normal-flow negative control',negative);await c.evaluate('window.__g67.negative='+negative);
 }
@@ -105,10 +105,10 @@ async function closures(c,width){await assertFields(c);
     assert(await c.evaluate("document.activeElement.id==='reader-typography-sheet-title'"),'Title focus');
     const before=await c.evaluate("({y:scrollY,panels:[...document.querySelectorAll('.gloss-panel')].map(p=>p.dataset.sentenceIndex)})");
     await c.evaluate('window.__g19.events=[]');
-    if(kind==='close')await click(c,'[aria-label="关闭阅读排版"]');
-    else if(kind==='outside'){await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x:width/2,y:40});await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,x:width/2,y:40});await settle(c);}
+    if(kind==='close')await click(c,'[aria-label="关闭阅读设置"]');
+    else if(kind==='outside'){await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x:width/2,y:100});await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,x:width/2,y:100});await settle(c);}
     else {await c.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await c.call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await settle(c);}
-    const after=await c.evaluate("({y:scrollY,panels:[...document.querySelectorAll('.gloss-panel')].map(p=>p.dataset.sentenceIndex),closed:!document.querySelector('.reader-typography-sheet'),focus:document.activeElement===document.querySelector('.reader-typography-floating-aa'),events:__g19.events})");
+    const after=await c.evaluate("({y:scrollY,panels:[...document.querySelectorAll('.gloss-panel')].map(p=>p.dataset.sentenceIndex),closed:!document.querySelector('.reader-typography-sheet'),focus:document.activeElement===document.querySelector('.reader-typography-aa'),events:__g19.events})");
     assert(after.closed&&after.focus&&after.y===before.y&&JSON.stringify(after.panels)===JSON.stringify(before.panels),'Close/focus retains reading '+kind,{before,after});
     assert(after.events.filter(e=>e.event.startsWith('sentence_')||['gloss_abort','gloss_dismiss_early'].includes(e.event)).length===0,'No close/click events',after.events);
   }
@@ -126,7 +126,7 @@ async function typography(c,width){await assertFields(c);
     await settle(c);await revealControls(c,width);
     for(const key of ['fontSize','lineHeight'])await measured(c,width,'G67-'+location+'-drag-'+key,()=>drag(c,key));
     for(const key of ['bodyFont','glossFont'])for(const font of ['sans','serif'])await measured(c,width,'G67-'+location+'-'+key+'-'+font,()=>change(c,key,font));
-    await click(c,'[aria-label="关闭阅读排版"]');
+    await click(c,'[aria-label="关闭阅读设置"]');
   }
   await closures(c,width);
 }
@@ -138,14 +138,14 @@ async function overlays(c,width){await assertFields(c);
   const p=await c.evaluate("(()=>{const s=document.querySelector('.gloss-panel[data-sentence-index=\"6\"]'),r=s.getBoundingClientRect();return{x:r.left+20,y:Math.max(30,r.top+10)}})()");
   await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'right',clickCount:1,...p});await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'right',clickCount:1,...p});await settle(c);
   assert(await c.evaluate("!!document.querySelector('.reader-context-menu')"),'Context menu opened');
-  await click(c,'.reader-typography-floating-aa');assert(await c.evaluate("!document.querySelector('.reader-context-menu')&&!document.querySelector('.reader-typography-sheet')"),'Menu first click consumed');
-  await click(c,'.reader-typography-floating-aa');assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Menu second click opens sheet');await click(c,'[aria-label="关闭阅读排版"]');
-  await scroll(c,0);await click(c,'.feedback-button');await align(c,11);
+  await click(c,'.reader-typography-aa');assert(await c.evaluate("!document.querySelector('.reader-context-menu')&&!document.querySelector('.reader-typography-sheet')"),'Menu first click consumed');
+  await click(c,'.reader-typography-aa');assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Menu second click opens sheet');await click(c,'[aria-label="关闭阅读设置"]');
+  await scroll(c,0);await revealControls(c,width);await evaluate(c,()=>document.querySelector('.reader-settings-feedback').scrollIntoView({block:'nearest'}));await click(c,'.reader-settings-feedback');await align(c,11);
   assert(await c.evaluate("!!document.querySelector('.feedback-card')"),'Feedback open');
-  await click(c,'.reader-typography-floating-aa');assert(await c.evaluate("!document.querySelector('.feedback-card')&&!document.querySelector('.reader-typography-sheet')"),'Feedback first click consumed');
-  await click(c,'.reader-typography-floating-aa');assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Feedback second click opens sheet');await click(c,'[aria-label="关闭阅读排版"]');
-  await c.evaluate('window.__g19.events=[]');await click(c,'.reader-typography-floating-aa');
-  assert(await c.evaluate("__g19.events.every(e=>!e.event.startsWith('sentence_')&&!['gloss_abort','gloss_dismiss_early'].includes(e.event))"),'No button reading event');await click(c,'[aria-label="关闭阅读排版"]');
+  await click(c,'.reader-typography-aa');assert(await c.evaluate("!document.querySelector('.feedback-card')&&!document.querySelector('.reader-typography-sheet')"),'Feedback first click consumed');
+  await click(c,'.reader-typography-aa');assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Feedback second click opens sheet');await click(c,'[aria-label="关闭阅读设置"]');
+  await c.evaluate('window.__g19.events=[]');await click(c,'.reader-typography-aa');
+  assert(await c.evaluate("__g19.events.every(e=>!e.event.startsWith('sentence_')&&!['gloss_abort','gloss_dismiss_early'].includes(e.event))"),'No button reading event');await click(c,'[aria-label="关闭阅读设置"]');
   await open(c,8);assert(await c.evaluate("!!document.querySelector('.gloss-panel[data-sentence-index=\"8\"]')"),'Outside button sentence still opens');
 }
 async function clock(c,width){await assertFields(c);
@@ -155,7 +155,7 @@ async function clock(c,width){await assertFields(c);
   await open(c,3);await wait(()=>c.evaluate("document.querySelector('.gloss-panel[data-sentence-index=\"3\"]')?.dataset.state==='done'"),'Sample gloss done');await align(c,3);await c.evaluate('window.__g19.events=[]');
   await revealControls(c,width);await c.evaluate("__g67.now+=100000;window.dispatchEvent(new Event('scroll'))");await settle(c);
   assert(await c.evaluate("!__g19.events.some(e=>e.event==='gloss_read_complete'&&e.sentenceIndex===3)"),'Sheet pauses clock');
-  await click(c,'[aria-label="关闭阅读排版"]');await c.evaluate("__g67.now+=100000;window.dispatchEvent(new Event('scroll'))");await settle(c);
+  await click(c,'[aria-label="关闭阅读设置"]');await c.evaluate("__g67.now+=100000;window.dispatchEvent(new Event('scroll'))");await settle(c);
   assert(await c.evaluate("__g19.events.some(e=>e.event==='gloss_read_complete'&&e.sentenceIndex===3)"),'Floating entry leaves clock running');
   await c.evaluate('performance.now=__g67.realNow');
 }

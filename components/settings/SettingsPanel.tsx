@@ -113,25 +113,28 @@ export default function SettingsPanel({
   </>;
 }
 
-export function ReaderAppearanceControls() {
+export function ReaderAppearanceControls({ segmented = false }: { segmented?: boolean } = {}) {
   const id = useId();
   const appearance = useSyncExternalStore(subscribeReaderTheme, readerAppearanceSnapshot, () => "system");
   return <fieldset className="reader-theme-options reader-appearance-options" data-reader-settings>
     <legend>外观</legend>
-    {APPEARANCE_OPTIONS.map(option => <label key={option.value}>
+    {segmented ? <div className="reader-segmented">{APPEARANCE_OPTIONS.map(option => <button type="button" key={option.value}
+      data-reader-appearance={option.value} aria-pressed={appearance === option.value} onClick={() => setReaderAppearance(option.value)}>{option.label}</button>)}</div> : APPEARANCE_OPTIONS.map(option => <label key={option.value}>
       <input type="radio" name={`${id}-appearance`} data-reader-appearance={option.value} value={option.value}
         checked={appearance === option.value} onChange={() => setReaderAppearance(option.value)} />{option.label}
     </label>)}
   </fieldset>;
 }
 
-export function ReaderThemeControls() {
+export function ReaderThemeControls({ swatches = false }: { swatches?: boolean } = {}) {
   const id = useId();
   const theme = useSyncExternalStore(subscribeReaderTheme, readerThemeSnapshot, () => "parchment");
   const effective = useSyncExternalStore(subscribeReaderTheme, effectiveThemeSnapshot, () => "parchment");
   return <fieldset className="reader-theme-options reader-paper-options" hidden={effective === "dark"} data-reader-settings>
     <legend>底色</legend>
-    {THEME_OPTIONS.map(option => <label key={option.value}>
+    {swatches ? <div className="reader-mobile-swatches">{THEME_OPTIONS.map(option => <button type="button" key={option.value}
+      data-reader-theme={option.value} aria-label={option.label} aria-pressed={theme === option.value}
+      style={{ backgroundColor: `var(--swatch-${option.value})` }} onClick={() => setReaderTheme(option.value)} />)}</div> : THEME_OPTIONS.map(option => <label key={option.value}>
       <input type="radio" name={`${id}-theme`} data-reader-theme={option.value} value={option.value}
         checked={theme === option.value} onChange={() => setReaderTheme(option.value)} />
       <span className="reader-theme-swatch" aria-hidden="true" style={{ backgroundColor: `var(--swatch-${option.value})` }} />{option.label}
@@ -140,13 +143,13 @@ export function ReaderThemeControls() {
 }
 
 /** One control set for the desktop disclosure and the nonmodal mobile sheet. */
-export function ReaderTypographyControls({ value, onChange, mobile = false, hideReset = false, onGestureStart, onGestureEnd }: {
-  value: ReaderTypography; onChange: (value: ReaderTypography, discrete?: boolean) => void; mobile?: boolean; hideReset?: boolean;
+export function ReaderTypographyControls({ value, onChange, mobile = false, hideReset = false, mobileDetails = false, onGestureStart, onGestureEnd }: {
+  value: ReaderTypography; onChange: (value: ReaderTypography, discrete?: boolean) => void; mobile?: boolean; hideReset?: boolean; mobileDetails?: boolean;
   onGestureStart?: () => void; onGestureEnd?: () => void;
 }) {
   const id = useId();
   return <div className="reader-typography-controls" data-reader-settings>
-    {(Object.keys(TYPOGRAPHY_RANGES) as (keyof typeof TYPOGRAPHY_RANGES)[]).filter(key => !mobile || key !== "lineChars").map(key => {
+    {(Object.keys(TYPOGRAPHY_RANGES) as (keyof typeof TYPOGRAPHY_RANGES)[]).filter(key => mobileDetails ? key === "lineHeight" : !mobile || key !== "lineChars").map(key => {
       const r = TYPOGRAPHY_RANGES[key], rangeId = `${id}-${key}`, helpId = `${rangeId}-help`;
       const start = (r.recommended[0] - r.min) / (r.max - r.min) * 100;
       const end = (r.recommended[1] - r.min) / (r.max - r.min) * 100;
@@ -170,4 +173,40 @@ export function ReaderTypographyControls({ value, onChange, mobile = false, hide
       </fieldset>)}
     {!hideReset && <button type="button" className="reader-typography-reset" onClick={() => onChange({ ...DEFAULT_READER_TYPOGRAPHY }, true)}>恢复推荐值</button>}
   </div>;
+}
+
+export function MobileReaderSettings({ value, onChange, onFontSizeChange, onGestureStart, onGestureEnd, glossShape, onShapeChange, readingMode, onModeChange, onFeedback }: {
+  value: ReaderTypography; onChange: (value: ReaderTypography, discrete?: boolean) => void;
+  onFontSizeChange?: (value: ReaderTypography) => void;
+  onGestureStart: () => void; onGestureEnd: () => void;
+  glossShape: "inline" | "bubble"; onShapeChange: (shape: "inline" | "bubble") => void;
+  readingMode: "review" | "reading"; onModeChange: (mode: "review" | "reading") => void; onFeedback: () => void;
+}) {
+  const [more, setMore] = useState(false), id = useId();
+  const range = TYPOGRAPHY_RANGES.fontSize;
+  return <>
+    <ReaderAppearanceControls segmented /><ReaderThemeControls swatches />
+    <div className="reader-mobile-quick">
+      <div className="reader-size-stepper" role="group" aria-label="字号"><span>字号 <output>{value.fontSize}px</output></span>
+        <div><button type="button" aria-label="字号减小" disabled={value.fontSize <= range.min}
+          onClick={() => onFontSizeChange ? onFontSizeChange({ ...value, fontSize: Math.max(range.min, value.fontSize - .5) }) : onChange({ ...value, fontSize: Math.max(range.min, value.fontSize - .5) }, true)}>A−</button>
+        <button type="button" aria-label="字号增大" disabled={value.fontSize >= range.max}
+          onClick={() => onFontSizeChange ? onFontSizeChange({ ...value, fontSize: Math.min(range.max, value.fontSize + .5) }) : onChange({ ...value, fontSize: Math.min(range.max, value.fontSize + .5) }, true)}>A+</button></div>
+      </div>
+      <fieldset className="reader-mobile-shape"><legend>白话形态</legend><div className="reader-segmented">
+        {([['inline', '小字'], ['bubble', '气泡']] as const).map(([shape, label]) => <button type="button" key={shape}
+          aria-pressed={glossShape === shape} onClick={() => onShapeChange(shape)}>{label}</button>)}
+      </div></fieldset>
+    </div>
+    <button type="button" className="reader-more-typography" aria-expanded={more} aria-controls={id} onClick={() => setMore(!more)}>更多排版 <span aria-hidden="true">{more ? "▾" : "▸"}</span></button>
+    {more && <div id={id} className="reader-mobile-more">
+      <ReaderTypographyControls value={value} onChange={onChange} onGestureStart={onGestureStart} onGestureEnd={onGestureEnd} mobile mobileDetails hideReset />
+      <div className="mode-switch" role="group" aria-label="留下的白话显示设置"><span className="mode-label">留下的白话</span><div className="mode-options">
+        {([['review', '显示'], ['reading', '收起']] as const).map(([mode, label]) => <button type="button" className="mode-option" key={mode}
+          aria-pressed={readingMode === mode} onClick={() => onModeChange(mode)}>{label}</button>)}
+      </div></div>
+      <button type="button" className="reader-typography-reset" onClick={() => onChange({ ...DEFAULT_READER_TYPOGRAPHY }, true)}>恢复推荐值</button>
+    </div>}
+    <button type="button" className="reader-settings-feedback" onClick={onFeedback}>体验反馈</button>
+  </>;
 }

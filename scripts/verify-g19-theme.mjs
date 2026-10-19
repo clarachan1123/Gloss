@@ -138,9 +138,9 @@ async function surfaceChecks(c,width,theme){
   await expectRoles(c,theme,[['正文','.reader-body','color','--text-body'],['主底','.col-main','backgroundColor','--paper-main'],['侧底','.col-right','backgroundColor','--paper-side'],['术语','.gloss-term','color','--term'],['描边',width<768?'.reader-typography-sheet .reader-typography-reset':'.settings-cache-button','borderTopColor','--control-border']],'reader');
   await hover(c,width,theme,theme);originalChecks--;
   await paperVisibility(c,width,theme==='dark');
-  if(width<768) {await c.evaluate("document.querySelector('[aria-label=\"关闭阅读排版\"]').click()");await settle(c);}
+  if(width<768) {await c.evaluate("document.querySelector('[aria-label=\"关闭阅读设置\"]').click()");await settle(c);}
   if(await c.evaluate("!!document.querySelector('.reader-typography-popover')"))await c.evaluate("document.querySelector('.settings-typography-toggle').click()");
-  await c.evaluate("document.querySelector('.feedback-button').click()");await wait(c,"!!document.querySelector('.feedback-card textarea')");
+  if(width<768){await revealControls(c,width);await c.evaluate("document.querySelector('.reader-settings-feedback').click()");}else await c.evaluate("document.querySelector('.feedback-button').click()");await wait(c,"!!document.querySelector('.feedback-card textarea')");
   await expectRoles(c,theme,[['卡片','.feedback-card','backgroundColor','--paper-main'],['输入','.feedback-form textarea','backgroundColor','--input-bg'],['占位','.feedback-form textarea','color','--placeholder','::placeholder'],['主按钮','.feedback-send','backgroundColor','--ink'],['主按钮字','.feedback-send','color','--paper-main']],'feedback');
   await evaluate(c,()=>{const t=document.querySelector('.feedback-form textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'甲'.repeat(1001));t.dispatchEvent(new Event('input',{bubbles:true}));});await settle(c);
   await expectRoles(c,theme,[['超字数','.feedback-error','color','--text-error']],'feedback-error');

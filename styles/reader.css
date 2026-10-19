@@ -744,3 +744,42 @@ body {
 
 .reader-tool > span:last-child { color: var(--gloss); }
 .reader-typography-popover .settings-cache-action > span { color: var(--gloss); }
+
+.reader-back-icon, .reader-mobile-heading, .reader-mobile-progress-track { display: none; }
+@media (max-width: 767.98px) {
+  .shell > .col-left { position: sticky; top: 0; z-index: 45; display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 4px; height: 52px; min-height: 52px; padding: 0 4px; border-bottom: 1px solid var(--rule); background: var(--paper-main); overflow: visible; }
+  .col-left .reader-back-text, .col-left > .feedback-reader, .col-left > .mode-switch { display: none; }
+  .col-left .reader-shelf-back { display: flex; align-items: center; justify-content: center; box-sizing: border-box; width: 44px; height: 44px; line-height: 1; }
+  .reader-back-icon { display: block; }
+  .reader-mobile-heading { display: flex; grid-column: 2; grid-row: 1; min-width: 0; flex-direction: column; align-items: center; justify-content: center; }
+  .reader-mobile-title { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 15px; line-height: 20px; }
+  .reader-mobile-progress { display: block; color: var(--gloss); font-size: 10px; line-height: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .col-left .reader-typography-aa { grid-column: 3; grid-row: 1; box-sizing: border-box; width: 44px; height: 44px; padding: 0; font-size: 12px; }
+  .reader-mobile-progress-track { position: absolute; display: block; height: 2px; bottom: -1px; left: 0; right: 0; pointer-events: none; }
+  .reader-mobile-progress-track > span { display: block; height: 100%; background: var(--hover); opacity: .55; }
+  .reader-typography-floating-aa { visibility: hidden; pointer-events: none; }
+  .reader-typography-sheet .reader-theme-options { margin-top: 12px; }
+  .reader-segmented { display: flex; gap: 0; }
+  .reader-segmented > button { flex: 1; padding: 5px 8px; border: 1px solid var(--rule); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+  .reader-segmented > button[aria-pressed="true"] { border-color: var(--ink); background: var(--paper-main); }
+  .reader-mobile-swatches { display: flex; gap: 12px; }
+  .reader-mobile-swatches > button { box-sizing: border-box; width: 26px; height: 26px; padding: 0; border: 1px solid var(--rule); border-radius: 50%; cursor: pointer; }
+  .reader-mobile-swatches > button[aria-pressed="true"] { border: 2px solid var(--ink); }
+  .reader-mobile-quick { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; font-size: 13px; }
+  .reader-size-stepper > span { display: block; margin-bottom: 6px; }
+  .reader-size-stepper > div { display: flex; gap: 8px; }
+  .reader-size-stepper button { padding: 5px 12px; border: 1px solid var(--rule); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+  .reader-size-stepper button:disabled { opacity: .45; cursor: default; }
+  .reader-mobile-shape { min-width: 0; margin: 0; padding: 0; border: 0; }
+  .reader-mobile-shape legend { padding: 0; margin-bottom: 6px; }
+  .reader-more-typography { display: flex; justify-content: space-between; width: 100%; margin-top: 14px; padding: 6px 0; border: 0; border-top: 1px solid var(--rule); background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+  .reader-mobile-more .mode-switch { margin: 12px 0; }
+  .reader-settings-feedback { display: block; margin-top: 14px; padding: 4px 0; border: 0; background: transparent; color: var(--ink); font: inherit; text-decoration: underline; cursor: pointer; }
+  .reader-typography-sheet button:focus-visible { outline: 2px solid var(--hover); outline-offset: 2px; }
+}
+
+.reader-popover-header h2[tabindex="-1"]:focus, .reader-typography-sheet-header h2[tabindex="-1"]:focus { outline: none; }
+@media (max-width: 767.98px) { .shell { display: block; } .reader-typography-sheet { overscroll-behavior: contain; } }
+
+.reader-mobile-back-label { display: none; }
+@media (max-width: 767.98px) { .reader-mobile-back-label { display: inline; } }

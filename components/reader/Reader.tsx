@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { readerProgress } from "@/lib/reader-progress";
 import { flushSync } from "react-dom";
 import FeedbackButton from "@/components/feedback/FeedbackButton";
 import {
@@ -20,7 +21,7 @@ import {
 } from "react";
 import ContextMenu, { type ContextMenuPoint } from "@/components/reader/ContextMenu";
 import Notice from "@/components/Notice";
-import SettingsPanel, { ReaderTypographyControls, ReaderThemeControls, ReaderAppearanceControls } from "@/components/settings/SettingsPanel";
+import SettingsPanel, { MobileReaderSettings } from "@/components/settings/SettingsPanel";
 import { DEFAULT_READER_TYPOGRAPHY, readReaderTypography, validateReaderTypography, writeReaderTypography, type ReaderTypography } from "@/lib/reader-typography";
 import {
   lookupPreloadedGloss,
@@ -243,11 +244,14 @@ export default function Reader({ docId }: { docId: string }) {
   const queuedTypographyRef = useRef<ReaderTypography | null>(null);
   const typographyFrameRef = useRef<number | null>(null);
   const typographyGestureRef = useRef<{ anchor: CharAnchor | null; pointer: boolean } | null>(null);
+  const fontSizeAdjustmentRef = useRef<{ anchor: CharAnchor | null } | null>(null);
   const queuedTypographyAnchorRef = useRef<CharAnchor | null>(null);
   const typographyGestureTimerRef = useRef<number | undefined>(undefined);
   const typographyLayoutRef = useRef<{ anchor: CharAnchor | null; scrollY: number } | null>(null);
   const [mobileTypographyOpen, setMobileTypographyOpen] = useState(false);
   const mobileTypographyOpenRef = useRef(false);
+  const [mobileProgress, setMobileProgress] = useState<ReturnType<typeof readerProgress>>(null);
+  const [feedbackRequest, setFeedbackRequest] = useState(0);
   const typographySheetRef = useRef<HTMLDivElement>(null);
   const typographyButtonRef = useRef<HTMLButtonElement>(null);
   const [typographyButtonNode, setTypographyButtonNode] = useState<HTMLButtonElement | null>(null);
@@ -260,6 +264,7 @@ export default function Reader({ docId }: { docId: string }) {
   const floatingTypographyEligibleRef = useRef(false);
   const restoreTypographyFocusRef = useRef(false);
   const floatingTypographyShown = floatingTypographyEligible && !mobileTypographyOpen;
+  const feedbackReturnFocus = useCallback(() => window.innerWidth < 768 ? typographyButtonRef.current : null, []);
   const syncFloatingTypographyInteractivity = useCallback((eligible: boolean) => {
     const button = floatingTypographyButtonRef.current;
     if (!button) return;
@@ -294,6 +299,8 @@ export default function Reader({ docId }: { docId: string }) {
       else setFloatingTypographyEligible(eligible);
     };
     const startMobile = (readImmediately: boolean) => {
+      // 吸顶入口无需追踪离屏几何；原 G-67 分支保留，资源不再启动。
+      if (document.querySelector(".reader-mobile-heading")) { updateEligibility(false); return () => {}; }
       let stopped = false, readByEvent = false;
       let frame: number | null = null, stableFrames = 0;
       let inputs: number[] | null = null, previousInputs: number[] | null = null;
@@ -305,7 +312,7 @@ export default function Reader({ docId }: { docId: string }) {
         const width = viewport?.width ?? window.innerWidth, height = viewport?.height ?? window.innerHeight;
         const rect = button.getBoundingClientRect();
         inputs = [rect.left, rect.top, rect.right, rect.bottom, left, top, width, height];
-        const eligible = !rectIntersectsViewport(rect, { left, top, width, height });
+        const eligible = false; // 吸顶顶栏始终提供唯一 Aa；保留原悬浮资源的有限停止与清理。
         const floating = floatingTypographyButtonRef.current;
         if (floating) {
           floating.style.setProperty("--floating-aa-x", `${left + width - window.innerWidth}px`);
@@ -371,7 +378,7 @@ export default function Reader({ docId }: { docId: string }) {
     restoreTypographyFocusRef.current = false;
     const target = window.innerWidth >= 768
       ? document.querySelector<HTMLButtonElement>(".settings-typography-toggle")
-      : floatingTypographyShown ? floatingTypographyButtonRef.current : typographyButtonRef.current;
+      : typographyButtonRef.current;
     target?.focus({ preventScroll: true });
   }, [mobileTypographyOpen, floatingTypographyShown]);
   const hoveredGlossRef = useRef<HTMLElement | null>(null);
@@ -929,6 +936,15 @@ export default function Reader({ docId }: { docId: string }) {
       position.measure = layoutMeasureKey(body);
     }
 
+    let progressFrame: number | null = null;
+    const updateProgress = () => {
+      progressFrame = null;
+      if (window.innerWidth >= 768) return;
+      const next = readerProgress(doc.paragraphs.length, sentences, positionRef.current.index);
+      setMobileProgress(old => old?.current === next?.current && old?.total === next?.total ? old : next);
+    };
+    const scheduleProgress = () => { if (window.innerWidth < 768 && progressFrame === null) progressFrame = requestAnimationFrame(updateProgress); };
+    updateProgress();
     let timer: number | undefined;
     const flush = () => {
       window.clearTimeout(timer);
@@ -943,6 +959,7 @@ export default function Reader({ docId }: { docId: string }) {
       // 布局刚变过：这次滚动由浏览器保持像素位置造成，不是用户在读，交给 ResizeObserver 处理
       if (layoutKey(body) !== positionRef.current.layout) return;
       rememberTopSentence(body, positionRef.current);
+      scheduleProgress();
       window.clearTimeout(timer);
       timer = window.setTimeout(flush, SAVE_DELAY_MS);
     };
@@ -985,12 +1002,15 @@ export default function Reader({ docId }: { docId: string }) {
 
     observer.observe(body);
     window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", scheduleProgress);
     window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       window.clearTimeout(timer);
+      if (progressFrame !== null) cancelAnimationFrame(progressFrame);
       observer.disconnect();
       window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", scheduleProgress);
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
@@ -1306,6 +1326,7 @@ export default function Reader({ docId }: { docId: string }) {
 
     if (adjustment !== 0) {
       window.scrollBy({ top: adjustment, behavior: prefersReducedMotion() ? "instant" : "smooth" });
+      if (window.innerWidth < 768) rememberPositionAnchor(body, positionRef.current);
     }
   }, [activeSavedIndex, expandedSavedIndexes, explainViews, expansions, glosses, glossShape, measurement, readingMode, savedRegions, typography]);
 
@@ -1729,7 +1750,15 @@ export default function Reader({ docId }: { docId: string }) {
     }
   }, []);
   const minHeadingLevel = Math.min(...(doc?.headings ?? []).map((h) => h.level));
+  function endFontSizeAdjustment() {
+    if (!fontSizeAdjustmentRef.current) return;
+    fontSizeAdjustmentRef.current = null;
+    typographyGestureRef.current = null;
+    typographyLayoutRef.current = null;
+    if (bodyRef.current) rememberPositionAnchor(bodyRef.current, positionRef.current);
+  }
   function startTypographyGesture() {
+    endFontSizeAdjustment();
     window.clearTimeout(typographyGestureTimerRef.current);
     typographyGestureRef.current = { anchor: bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null, pointer: true };
     typographyLayoutRef.current = { anchor: typographyGestureRef.current.anchor, scrollY: window.scrollY };
@@ -1738,7 +1767,11 @@ export default function Reader({ docId }: { docId: string }) {
     window.clearTimeout(typographyGestureTimerRef.current);
     typographyGestureRef.current = null;
   }
-  function changeTypography(value: ReaderTypography, discrete = false) {
+  function changeTypography(value: ReaderTypography, discrete = false, fontSizeButton = false) {
+    if (fontSizeButton) {
+      fontSizeAdjustmentRef.current ??= { anchor: bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null };
+      typographyGestureRef.current = { anchor: fontSizeAdjustmentRef.current.anchor, pointer: true };
+    } else endFontSizeAdjustment();
     if (discrete || !typographyGestureRef.current) {
       typographyGestureRef.current = { anchor: bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null, pointer: false };
     }
@@ -1779,6 +1812,7 @@ export default function Reader({ docId }: { docId: string }) {
   }
   function setTypographySheet(open: boolean) {
     if (open === mobileTypographyOpenRef.current) return;
+    if (!open) endFontSizeAdjustment();
     if (open) for (const attempt of readAttemptRef.current.values()) attempt.clock.stop(performance.now());
     mobileTypographyOpenRef.current = open;
     syncFloatingTypographyInteractivity(floatingTypographyEligibleRef.current);
@@ -1809,12 +1843,17 @@ export default function Reader({ docId }: { docId: string }) {
   useEffect(() => () => { if (typographyFrameRef.current !== null) cancelAnimationFrame(typographyFrameRef.current);
     window.clearTimeout(typographyGestureTimerRef.current); }, []);
   useEffect(() => {
-    const release = () => { typographyLayoutRef.current = null; };
+    const release = (event?: Event) => {
+      if (window.innerWidth < 768 && (event?.target as Element | null)?.closest?.('[data-reader-settings]')) return;
+      endFontSizeAdjustment(); typographyLayoutRef.current = null;
+    };
+    let mobile = window.innerWidth < 768;
+    const breakpoint = () => { const next = window.innerWidth < 768; if (next !== mobile) { endFontSizeAdjustment(); mobile = next; } };
     const key = (event: KeyboardEvent) => { if (!(event.target as Element)?.closest?.('[data-reader-settings]') &&
       ['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key)) release(); };
     window.addEventListener('wheel', release, { passive: true }); window.addEventListener('touchstart', release, { passive: true });
-    document.addEventListener('keydown', key);
-    return () => { window.removeEventListener('wheel', release); window.removeEventListener('touchstart', release); document.removeEventListener('keydown', key); };
+    document.addEventListener('keydown', key); window.addEventListener('resize', breakpoint);
+    return () => { window.removeEventListener('resize', breakpoint); window.removeEventListener('wheel', release); window.removeEventListener('touchstart', release); document.removeEventListener('keydown', key); };
   }, []);
   // 左栏常驻信息（G-25）：全部来自已存的记录，不随滚动变化，不新增状态
   const skippedLine = skippedSummary(doc?.meta.skipped);
@@ -1868,8 +1907,14 @@ export default function Reader({ docId }: { docId: string }) {
     <div className="shell">
       <aside className="col col-left">
         <Link href="/" className="wordmark">Gloss</Link>
-        <Link href="/" className="reader-shelf-back" style={{ visibility: hasOwnBooks === null ? "hidden" : "visible" }}>{hasOwnBooks ? "← 回到书架" : "← 回到首页"}</Link>
-        <FeedbackButton placement="reader" />
+        <Link href="/" className="reader-shelf-back" style={{ visibility: hasOwnBooks === null ? "hidden" : "visible" }}>
+          <svg className="reader-back-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m14 5-7 7 7 7M7 12h14" /></svg>
+          <span className="reader-back-text">{hasOwnBooks ? "← 回到书架" : "← 回到首页"}</span><span className="reader-mobile-back-label reader-sr-only">{hasOwnBooks ? "回到书架" : "回到首页"}</span></Link>
+        <div className="reader-mobile-heading"><strong className="reader-mobile-title">{doc?.meta.fileName?.replace(/\.[^.]+$/, "") || "阅读"}</strong>
+          {mobileProgress && <span className="reader-mobile-progress">第 {mobileProgress.current} 段 · 共 {mobileProgress.total} 段</span>}
+        </div>
+        {mobileProgress && <div className="reader-mobile-progress-track" aria-hidden="true"><span style={{ width: `${mobileProgress.ratio * 100}%` }} /></div>}
+        <FeedbackButton placement="reader" openRequest={feedbackRequest} returnFocus={feedbackReturnFocus} />
 
         <div className="mode-switch" role="group" aria-label="留下的白话显示设置">
           <span className="mode-label">留下的白话</span>
@@ -2031,11 +2076,11 @@ export default function Reader({ docId }: { docId: string }) {
         onClick={event => { event.stopPropagation(); setTypographySheet(true); }}>Aa</button>
       {mobileTypographyOpen && <div ref={typographySheetRef} id="reader-typography-sheet" className="reader-typography-sheet"
         data-reader-settings role="dialog" aria-labelledby="reader-typography-sheet-title">
-        <div className="reader-typography-sheet-header"><h2 id="reader-typography-sheet-title" tabIndex={-1}>阅读排版</h2>
-          <button type="button" aria-label="关闭阅读排版" onClick={() => setTypographySheet(false)}>关闭</button></div>
-        <ReaderTypographyControls value={typography} onChange={changeTypography} onGestureStart={startTypographyGesture} onGestureEnd={endTypographyGesture} mobile />
-        <ReaderAppearanceControls />
-        <ReaderThemeControls />
+        <div className="reader-typography-sheet-header"><h2 id="reader-typography-sheet-title" tabIndex={-1}>阅读设置</h2>
+          <button type="button" aria-label="关闭阅读设置" onClick={() => setTypographySheet(false)}>关闭</button></div>
+        <MobileReaderSettings value={typography} onChange={changeTypography} onFontSizeChange={value => changeTypography(value, false, true)} onGestureStart={startTypographyGesture} onGestureEnd={endTypographyGesture}
+          glossShape={glossShape} onShapeChange={changeGlossShape} readingMode={readingMode} onModeChange={changeReadingMode}
+          onFeedback={() => { setTypographySheet(false); setFeedbackRequest(value => value + 1); }} />
       </div>}
       {contextMenu && (
         <ContextMenu
@@ -2486,7 +2531,7 @@ function layoutMeasureKey(body: HTMLElement): string {
 /** 把指定句子的首行滚到视口顶端；第 0 句回到页面顶部 */
 function scrollToSentence(body: HTMLElement, index: number): void {
   const target = index > 0 ? body.querySelector<HTMLElement>(`.sentence[data-index="${index}"]`) : null;
-  const top = target ? firstLineTop(target) + window.scrollY : 0;
+  const top = target ? firstLineTop(target) + window.scrollY - mobileReaderTop() : 0;
   if (Math.abs(top - window.scrollY) > 1) window.scrollTo({ top, behavior: "instant" });
 }
 
@@ -2502,7 +2547,7 @@ function topSentenceIndex(body: HTMLElement): number {
   let found = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (firstLineTop(spans[mid]) <= TOP_TOLERANCE_PX) {
+    if (firstLineTop(spans[mid]) <= mobileReaderTop() + TOP_TOLERANCE_PX) {
       found = mid;
       lo = mid + 1;
     } else {
@@ -2584,9 +2629,12 @@ function anchorAtClick(target: HTMLElement, x: number, y: number): CharAnchor | 
  * 不用坐标反查（caretFromPoint）：参考点落在行距、段间距或撑开区外边距里时会取不到字，锚定就静默失效了。
  * 按文档顺序扫描有可见字框的片段，同行跨句时仍选最早的真实字；手势开始时只选择一次。
  */
+function mobileReaderTop(): number {
+  return window.innerWidth < 768 ? document.querySelector(".col-left")?.getBoundingClientRect().bottom ?? 0 : 0;
+}
 export function anchorAtViewportTop(body: HTMLElement): CharAnchor | null {
   const viewport = window.visualViewport;
-  const visibleTop = viewport?.offsetTop ?? 0;
+  const visibleTop = Math.max(viewport?.offsetTop ?? 0, mobileReaderTop());
   const sheet = document.querySelector<HTMLElement>(".reader-typography-sheet");
   const floating = document.querySelector<HTMLElement>('.reader-typography-floating-aa[data-visible="true"]');
   const visibleBottom = Math.min(visibleTop + (viewport?.height ?? window.innerHeight), sheet?.getBoundingClientRect().top ?? Infinity,
@@ -2642,8 +2690,9 @@ function visibilityAdjustment(body: HTMLElement, index: number, panel: HTMLEleme
   const top = firstLineTop(first);
   const bottom = panel.getBoundingClientRect().bottom;
   const viewportBottom = window.innerHeight - VISIBLE_MARGIN_PX;
-  if (top < VISIBLE_MARGIN_PX) return top - VISIBLE_MARGIN_PX;
-  if (bottom > viewportBottom) return Math.min(bottom - viewportBottom, top - VISIBLE_MARGIN_PX);
+  const viewportTop = Math.max(VISIBLE_MARGIN_PX, mobileReaderTop());
+  if (top < viewportTop) return top - viewportTop;
+  if (bottom > viewportBottom) return Math.min(bottom - viewportBottom, top - viewportTop);
   return 0;
 }
 

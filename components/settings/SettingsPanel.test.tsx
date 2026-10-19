@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { startReaderThemeSync, setReaderAppearance } from "@/lib/reader-theme";
-import SettingsPanel, { ReaderTypographyControls } from "./SettingsPanel";
+import SettingsPanel, { ReaderTypographyControls, MobileReaderSettings } from "./SettingsPanel";
 import { DEFAULT_READER_TYPOGRAPHY as defaults } from "@/lib/reader-typography";
 let stop: () => void;
 beforeEach(() => { localStorage.clear(); stop = startReaderThemeSync(); });
@@ -107,4 +107,26 @@ it("外观切换保留浮层、三套底色及选中值", async () => {
       expect(host.querySelector('[data-reader-theme="moon-white"]')!.getAttribute("aria-pressed")).toBe("true");
     }
   } finally { await act(async () => root.unmount()); host.remove(); }
+});
+
+it("手机字号步进、更多排版及现有模式行为", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const host = document.createElement("div"), root = createRoot(host), change = vi.fn(), mode = vi.fn(), feedback = vi.fn();
+  const props = { value: { ...defaults }, onChange: change, onGestureStart: vi.fn(), onGestureEnd: vi.fn(), glossShape: "inline" as const,
+    onShapeChange: vi.fn(), readingMode: "reading" as const, onModeChange: mode, onFeedback: feedback };
+  try {
+    await act(async () => root.render(createElement(MobileReaderSettings, props)));
+    expect(host.querySelectorAll("input[type=range]")).toHaveLength(0);
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="字号增大"]')!.click());
+    expect(change).toHaveBeenLastCalledWith({ ...defaults, fontSize: 18 }, true);
+    await act(async () => host.querySelector<HTMLButtonElement>(".reader-more-typography")!.click());
+    expect([...host.querySelectorAll('[data-typography]')].map(el => el.getAttribute('data-typography'))).toEqual(['lineHeight','bodyFont','bodyFont','glossFont','glossFont']);
+    await act(async () => host.querySelector<HTMLButtonElement>(".mode-option")!.click()); expect(mode).toHaveBeenCalledWith("review");
+    await act(async () => host.querySelector<HTMLButtonElement>(".reader-settings-feedback")!.click()); expect(feedback).toHaveBeenCalledOnce();
+    for (const size of [15, 21]) {
+      await act(async () => root.render(createElement(MobileReaderSettings, { ...props, value: { ...defaults, fontSize: size } })));
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="字号减小"]')!.disabled).toBe(size === 15);
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="字号增大"]')!.disabled).toBe(size === 21);
+    }
+  } finally { await act(async () => root.unmount()); }
 });

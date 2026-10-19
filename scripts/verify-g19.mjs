@@ -60,7 +60,7 @@ function setup() {
   };
   window.__g19.reference = () => {
     const bottom = Math.min(innerHeight, document.querySelector('.reader-typography-sheet')?.getBoundingClientRect().top ?? Infinity);
-    const c=window.__g19.glyphs().find(c=>c.char.trim()&&c.y>=0&&c.bottom<=bottom&&(()=>{const p=document.querySelector('.reader-typography-popover')?.getBoundingClientRect(),r=window.__g19.rect(c.key);return !p||Math.min(r.x+r.width,p.right)<=Math.max(r.x,p.left)||Math.min(r.y+r.height,p.bottom)<=Math.max(r.y,p.top)})()); if(!c)throw Error('No visible original glyph'); return c;
+    const c=window.__g19.glyphs().find(c=>c.char.trim()&&c.y>=(innerWidth<768?document.querySelector(".col-left").getBoundingClientRect().bottom:0)&&c.bottom<=bottom&&(()=>{const p=document.querySelector('.reader-typography-popover')?.getBoundingClientRect(),r=window.__g19.rect(c.key);return !p||Math.min(r.x+r.width,p.right)<=Math.max(r.x,p.left)||Math.min(r.y+r.height,p.bottom)<=Math.max(r.y,p.top)})()); if(!c)throw Error('No visible original glyph'); return c;
   };
   const scrollTo=window.scrollTo;
   window.scrollTo=function(...args){const trace=window.__g19.trace;
@@ -103,24 +103,29 @@ function setup() {
   };
 }
 async function revealControls(c,width) {
+  const more=async()=>{if(width<768)await c.evaluate("(()=>{const b=document.querySelector('.reader-more-typography');if(b?.getAttribute('aria-expanded')==='false')b.click()})()");};
   if(width<768) {
-    if(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"))return;
+    if(await c.evaluate("!!document.querySelector('.reader-typography-sheet')")){await more();return;}
     const selector=await c.evaluate("document.querySelector('.reader-typography-floating-aa')?.dataset.visible==='true'?'.reader-typography-floating-aa':'.reader-typography-aa'");
     const point=await evaluate(c,selector=>{const b=document.querySelector(selector),r=b.getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};},selector);
     await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});
     await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
-    await settle(c);assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Visible Aa opens shared sheet');return;
+    await settle(c);assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Visible Aa opens shared sheet');await more();return;
   }
   await evaluate(c,width=>{const selector=width<768?'.reader-typography-aa':'.settings-typography-toggle',button=document.querySelector(selector);
     if(button.getAttribute('aria-expanded')!=='true')button.click();},width); await settle(c);
 }
 async function align(c,index=11) {
-  await evaluate(c,index=>{const glyph=window.__g19.glyphs().find(g=>g.index===index&&g.char.trim());window.scrollTo({top:scrollY+glyph.y-36,behavior:'instant'});},index); await settle(c);
+  await evaluate(c,index=>{if(innerWidth<768)dispatchEvent(new WheelEvent('wheel'));const glyph=window.__g19.glyphs().find(g=>g.index===index&&g.char.trim());window.scrollTo({top:scrollY+glyph.y-(innerWidth<768?document.querySelector('.col-left').getBoundingClientRect().bottom+36:36),behavior:'instant'});},index); await settle(c);
 }
 async function change(c,key,value) {
+  if(key==='fontSize'&&await c.evaluate('innerWidth<768')){
+    await revealControls(c,375);
+    await evaluate(c,async value=>{const text=()=>parseFloat(document.querySelector('.reader-size-stepper output').textContent);while(text()!==value){const label=text()<value?'字号增大':'字号减小',button=document.querySelector(`[aria-label="${label}"]`);button.scrollIntoView({block:'nearest'});button.click();await new Promise(r=>requestAnimationFrame(r));}},value);await settle(c);return;
+  }
   await evaluate(c,(key,value)=>{const prefix=innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover';
     const input=document.querySelector(`${prefix} input[data-typography="${key}"]${typeof value==='string'?`[value="${value}"]`:''}`);
-    if(!input)throw Error('Missing typography input '+key); if(input.type==='radio')input.click();
+    if(!input)throw Error('Missing typography input '+key);input.scrollIntoView({block:'nearest'}); if(input.type==='radio')input.click();
     else {const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(input,String(value));input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));}},key,value);
   await settle(c);
 }
@@ -139,8 +144,10 @@ async function measured(c,width,label,operation,negative=false,key=null,allowTop
   const result=await c.evaluate('window.__g19.end()');checkRow(width,result,negative);return result;
 }
 async function drag(c,key='fontSize') {
+  if(key==='fontSize'&&await c.evaluate('innerWidth<768')){await change(c,key,15);await change(c,key,21);return;}
+
   const r=await evaluate(c,key=>{const prefix=innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover',el=document.querySelector(`${prefix} input[data-typography="${key}"]`);
-    const r=el.getBoundingClientRect();return{x:r.left+8,y:r.top+r.height/2,width:r.width-16};},key);
+    el.scrollIntoView({block:"nearest"});const r=el.getBoundingClientRect();return{x:r.left+8,y:r.top+r.height/2,width:r.width-16};},key);
   await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:r.x,y:r.y});
   await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x:r.x,y:r.y});
   let lastX=r.x;
@@ -166,12 +173,12 @@ async function save(c,index) {
 async function reload(c) { await c.call('Page.reload');await ready(c); }
 async function layoutChecks(c,width) {
   const layout=await evaluate(c,width=>{
-    const rect=el=>{const r=el.getBoundingClientRect();return{text:el.textContent,font:getComputedStyle(el).fontSize,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width};};
+    const rect=el=>{const r=el.getBoundingClientRect();return{text:el.matches('.reader-shelf-back')?el.querySelector('.reader-back-text').textContent.replace(/^← /,''):el.textContent,font:getComputedStyle(el).fontSize,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width};};
     const aa=document.querySelector('.reader-typography-aa'),right=document.querySelector('.col-right');
     if(getComputedStyle(document.querySelector('.reader-body')).paddingBottom!==innerHeight+'px')throw Error('Reader 100lvh padding');
-    if(width<768){const els=[document.querySelector('.reader-shelf-back'),...document.querySelectorAll('.mode-switch > span,.mode-options button'),document.querySelector('.feedback-button'),aa],boxes=els.map(rect);
+    if(width<768){const els=[document.querySelector('.reader-shelf-back'),document.querySelector('.reader-mobile-heading'),aa],boxes=els.map(rect);
       for(let i=0;i<boxes.length;i++)for(let j=i+1;j<boxes.length;j++){const a=boxes[i],b=boxes[j];if(Math.min(a.right,b.right)>Math.max(a.left,b.left)&&Math.min(a.bottom,b.bottom)>Math.max(a.top,b.top))throw Error('STOP: top row does not fit '+JSON.stringify({width,boxes,i,j}));}
-      if(Math.max(...boxes.map(b=>b.top))-Math.min(...boxes.map(b=>b.top))>2)throw Error('STOP: top row not one row '+JSON.stringify(boxes));
+      if(Math.max(...boxes.map(b=>(b.top+b.bottom)/2))-Math.min(...boxes.map(b=>(b.top+b.bottom)/2))>2)throw Error('STOP: top row not one row '+JSON.stringify(boxes));
       if(getComputedStyle(right).display!=='none')throw Error('mobile right visible');return boxes;
     }
     if(Math.abs(rect(right).width-88)>1)throw Error('right rail width');if(getComputedStyle(aa).display!=='none')throw Error('desktop Aa visible');return{grid:getComputedStyle(document.querySelector('.shell')).gridTemplateColumns};
@@ -181,22 +188,25 @@ async function checks(c,width) {
   await layoutChecks(c,width);
   await revealControls(c,width);
   await evaluate(c,width=>{const scope=document.querySelector(width<768?'.reader-typography-sheet':'.reader-typography-popover');
-    if(scope.querySelectorAll('input[type=range]').length!==(width<768?2:3))throw Error('range count');
+    if(scope.querySelectorAll('input[type=range]').length!==(width<768?1:3))throw Error('range count');
     for(const el of scope.querySelectorAll('input[type=range]'))if(el.nextElementSibling.getBoundingClientRect().top<=el.getBoundingClientRect().bottom)throw Error('band overlaps knob bounds');
     if(width<768&&scope.getBoundingClientRect().height>innerHeight*.5)throw Error('sheet taller than half');
   },width);
   await align(c);
   for(const [key,values] of [['fontSize',[15,21,17.5]],['lineHeight',[1.5,2.1,1.75]],...(width>=768?[['lineChars',[20,45,32]]]:[]),['bodyFont',['serif','sans']],['glossFont',['sans','serif']]]) {
-    for(const value of values) await measured(c,width,`empty:${key}=${value}`,()=>change(c,key,value));
+    for(const value of values) {
+      if(width<768&&key==='fontSize'){await c.evaluate("document.querySelector('[aria-label=\"关闭阅读设置\"]').click()");await revealControls(c,width);await align(c);}
+      await measured(c,width,`empty:${key}=${value}`,()=>change(c,key,value));
+    }
   }
   await measured(c,width,'empty:continuous-fontSize',()=>drag(c));
   await measured(c,width,'empty:continuous-lineHeight',()=>drag(c,'lineHeight'));
   if(width>=768)await measured(c,width,'empty:continuous-lineChars',()=>drag(c,'lineChars'));
   await measured(c,width,'empty:keyboard-step',async()=>{
-    await evaluate(c,()=>document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover'} [data-typography="fontSize"]`).focus({preventScroll:true}));
+    await evaluate(c,()=>{const el=document.querySelector(innerWidth<768?'[aria-label="字号减小"]':'.reader-typography-popover [data-typography="fontSize"]');el.scrollIntoView({block:'nearest'});el.focus({preventScroll:true});});
     for(let i=0;i<3;i++){if(await c.evaluate('window.__g19.trace.firstFailure!==null'))break;
-      await c.call('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37});
-      await c.call('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37});await sleep(100);}
+      await c.call('Input.dispatchKeyEvent',await c.evaluate("innerWidth<768?({type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13}):({type:'keyDown',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37})"));
+      await c.call('Input.dispatchKeyEvent',await c.evaluate("innerWidth<768?({type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13}):({type:'keyUp',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37})"));await sleep(100);}
   });
   await measured(c,width,'reset',async()=>{await evaluate(c,()=>document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover'} .reader-typography-reset`).click());await settle(c);});
   assert(await c.evaluate(`localStorage.getItem(${JSON.stringify(KEY)})`)===JSON.stringify(DEFAULTS),'restore all five');
@@ -283,13 +293,13 @@ async function ownedShelfCheck(c,width) {
     localStorage.setItem('gloss:structure:g19-owned',JSON.stringify({version:1,prompt:'structure-v1',structure:'本地验证夹具结构。',savedAt:1}));
   });
   await c.call('Page.navigate',{url:ORIGIN+'/read/g19-owned'});await ready(c);
-  const result=await evaluate(c,()=>{const col=document.querySelector('.col-left'),available=col.clientWidth-32;
-    const elements=[document.querySelector('.reader-shelf-back'),document.querySelector('.mode-label'),...document.querySelectorAll('.mode-option'),document.querySelector('.feedback-button'),document.querySelector('.reader-typography-aa')];
-    return{available,boxes:elements.map(el=>{const r=el.getBoundingClientRect();return{text:el.textContent,font:getComputedStyle(el).fontSize,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width}})};
+  const result=await evaluate(c,()=>{const col=document.querySelector('.col-left'),available=col.clientWidth-(innerWidth<768?8:32);
+    const elements=innerWidth<768?[document.querySelector('.reader-shelf-back'),document.querySelector('.reader-mobile-heading'),document.querySelector('.reader-typography-aa')]:[document.querySelector('.reader-shelf-back'),document.querySelector('.mode-label'),...document.querySelectorAll('.mode-option'),document.querySelector('.feedback-button'),document.querySelector('.reader-typography-aa')];
+    return{available,boxes:elements.map(el=>{const r=el.getBoundingClientRect();return{text:el.matches('.reader-shelf-back')?el.querySelector('.reader-back-text').textContent.replace(/^← /,''):el.textContent,font:getComputedStyle(el).fontSize,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width}})};
   });
   console.log(JSON.stringify({width,ownedShelfLayout:result}));
-  assert(result.boxes[0].text==='← 回到书架','Owned document shelf link');
-  if(width<768){assert(Math.max(...result.boxes.map(b=>b.top))-Math.min(...result.boxes.map(b=>b.top))<=2,'STOP: owned book top row not one row',result);
+  assert(result.boxes[0].text==='回到书架','Owned document shelf link');
+  if(width<768){assert(Math.max(...result.boxes.map(b=>(b.top+b.bottom)/2))-Math.min(...result.boxes.map(b=>(b.top+b.bottom)/2))<=2,'STOP: owned book top row not one row',result);
     for(let i=0;i<result.boxes.length;i++)for(let j=i+1;j<result.boxes.length;j++){const a=result.boxes[i],b=result.boxes[j];
       assert(Math.min(a.right,b.right)<=Math.max(a.left,b.left)||Math.min(a.bottom,b.bottom)<=Math.max(a.top,b.top),'STOP: owned book top row overlap',{result,i,j});}
     assert(result.boxes.at(-1).right<=documentClientRight(result),'STOP: owned book top overflow',result);
@@ -344,9 +354,9 @@ async function actualOwnedImport(c,width) {
   const doc=await c.call('DOM.getDocument'),input=await c.call('DOM.querySelector',{nodeId:doc.root.nodeId,selector:'input[type=file]'});
   await c.call('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[resolve(import.meta.dirname,'../test-fixtures/政治经济学批判-序言.docx')]});
   await waitFor(()=>c.evaluate("(()=>{if(location.pathname.startsWith('/read/'))return true;const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='开始阅读');b?.click();return false;})()"),'imported reader');await ready(c);
-  const result=await c.evaluate("(()=>{const col=document.querySelector('.col-left');return{available:col.clientWidth-32,boxes:[document.querySelector('.reader-shelf-back'),document.querySelector('.mode-label'),...document.querySelectorAll('.mode-option'),document.querySelector('.feedback-button'),document.querySelector('.reader-typography-aa')].map(el=>{const r=el.getBoundingClientRect();return{text:el.textContent,font:getComputedStyle(el).fontSize,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width}}),imported:JSON.parse(localStorage.getItem('gloss:doc:'+location.pathname.split('/').at(-1))).meta.fileName}})()");
-  assert(result.imported==='政治经济学批判-序言.docx','Real fixture imported',result);assert(result.boxes[0].text==='← 回到书架','Actual own book shelf link');
-  assert(Math.max(...result.boxes.map(b=>b.top))-Math.min(...result.boxes.map(b=>b.top))<=2,'STOP: actual own book top row not one row',result);
+  const result=await c.evaluate("(()=>{const col=document.querySelector('.col-left');return{available:col.clientWidth-(innerWidth<768?8:32),boxes:[document.querySelector('.reader-shelf-back'),...(innerWidth<768?[document.querySelector('.reader-mobile-heading')]:[document.querySelector('.mode-label'),...document.querySelectorAll('.col-left .mode-option'),document.querySelector('.feedback-button')]),document.querySelector('.reader-typography-aa')].map(el=>{const r=el.getBoundingClientRect();return{text:el.matches('.reader-shelf-back')?el.querySelector('.reader-back-text').textContent.replace(/^← /,''):el.textContent,font:getComputedStyle(el).fontSize,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width}}),imported:JSON.parse(localStorage.getItem('gloss:doc:'+location.pathname.split('/').at(-1))).meta.fileName}})()");
+  assert(result.imported==='政治经济学批判-序言.docx','Real fixture imported',result);assert(result.boxes[0].text==='回到书架','Actual own book shelf link');
+  assert(Math.max(...result.boxes.map(b=>(b.top+b.bottom)/2))-Math.min(...result.boxes.map(b=>(b.top+b.bottom)/2))<=2,'STOP: actual own book top row not one row',result);
   for(let i=0;i<result.boxes.length;i++)for(let j=i+1;j<result.boxes.length;j++){const a=result.boxes[i],b=result.boxes[j];assert(Math.min(a.right,b.right)<=Math.max(a.left,b.left)||Math.min(a.bottom,b.bottom)<=Math.max(a.top,b.top),'STOP: actual own book top overlap',{result,i,j});}
   assert(result.boxes.at(-1).right<=result.available+16,'STOP: actual own book top overflow',result);console.log(JSON.stringify({width,actualOwnedImport:result}));
 }

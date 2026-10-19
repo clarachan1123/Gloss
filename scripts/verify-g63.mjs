@@ -106,7 +106,12 @@ function pageSetup() {
       const index=window.__g63.operationIndex,source=document.querySelector('.sentence[data-index="'+index+'"]'),panel=document.querySelector('.gloss-panel[data-sentence-index="'+index+'"]');
       if(source&&panel) {
         const top=(source.getClientRects()[0]??source.getBoundingClientRect()).top,bottom=panel.getBoundingClientRect().bottom;
+        if(innerWidth<768) {
+          const visibleTop=Math.max(16,document.querySelector('.col-left').getBoundingClientRect().bottom);
+          expected=top<visibleTop?top-visibleTop:bottom>innerHeight-16?Math.min(bottom-(innerHeight-16),top-visibleTop):0;
+        } else {
         expected=top<16?top-16:bottom>innerHeight-16?Math.min(bottom-(innerHeight-16),top-16):0;
+        }
       }
     }
     window.__g63.calls.push({top:options?.top??args[1]??0,g6,expected});

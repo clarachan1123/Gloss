@@ -764,7 +764,7 @@ describe("G-57 白话悬停与返回入口", () => {
     const host = document.createElement("div");
     host.innerHTML = html;
     const link = host.querySelector<HTMLElement>(".reader-shelf-back")!;
-    expect(link.textContent).toBe("← 回到首页");
+    expect(link.querySelector(".reader-back-text")?.textContent).toBe("← 回到首页");
     expect(link.style.visibility).toBe("hidden");
     expect(link.style.display).toBe("");
   });
@@ -778,14 +778,14 @@ describe("G-57 白话悬停与返回入口", () => {
     vi.spyOn(storage, "loadShelf").mockReturnValue({ entries: entries as unknown as storage.ShelfEntry[], unavailable });
     const host = await mount("g57-missing");
     const link = host.querySelector<HTMLElement>(".reader-shelf-back")!;
-    expect(link.textContent).toBe(text);
+    expect(link.querySelector(".reader-back-text")?.textContent).toBe(text);
     expect(link.style.visibility).toBe("visible");
   });
 
   it("书架读取抛错仍显示回到首页", async () => {
     vi.spyOn(storage, "loadShelf").mockImplementation(() => { throw new Error("storage unavailable"); });
     const host = await mount("g57-missing");
-    expect(host.querySelector<HTMLElement>(".reader-shelf-back")?.textContent).toBe("← 回到首页");
+    expect(host.querySelector<HTMLElement>(".reader-shelf-back .reader-back-text")?.textContent).toBe("← 回到首页");
     expect(host.querySelector<HTMLElement>(".reader-shelf-back")?.style.visibility).toBe("visible");
   });
 
@@ -1215,7 +1215,52 @@ describe("G-63 同段多开、并发与整段收起", () => {
     expect(events.slice(eventCount).filter(e => ["gloss_abort", "gloss_dismiss_early", "sentence_click"].includes(e.event))).toEqual([]);
     expect(runs.size).toBe(0);
   });
-  it("G-67 空 Observer 仍由滚动更新悬浮入口；关闭后焦点回当前入口且不收白话", async () => {
+  it.each([
+    ["连续点击共用参照字", "keep"], ["间隔 2 秒仍共用参照字", "delay"],
+    ["读者滚动后重新选择", "scroll"], ["关闭抽屉后重新选择", "close"], ["点行高后重新选择", "lineHeight"],
+  ])("G-19c 字号按钮：%s", async (_name, action) => {
+    const previousWidth = Object.getOwnPropertyDescriptor(window, "innerWidth")!;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    let firstVisibleOffset = 0;
+    const nativeRange = document.createRange.bind(document);
+    vi.spyOn(document, "createRange").mockImplementation(() => {
+      const range = nativeRange();
+      vi.spyOn(range, "getBoundingClientRect").mockImplementation(() => {
+        const top = range.startOffset < firstVisibleOffset ? 10 : 100;
+        return { top, bottom: top + 20, left: 0, right: 10, width: 10, height: 20 } as DOMRect;
+      });
+      vi.spyOn(range, "getClientRects").mockImplementation(() => [range.getBoundingClientRect()] as unknown as DOMRectList);
+      return range;
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const top = this.classList.contains("reader-typography-sheet") ? 500 : 0;
+      const bottom = this.classList.contains("col-left") ? 52 : 1000;
+      return { top, bottom, left: 0, right: 375, width: 375, height: bottom - top } as DOMRect;
+    });
+    const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const press = async (selector: string) => { await act(async () => {
+      container.querySelector<HTMLButtonElement>(selector)!.click();
+      await new Promise(resolve => requestAnimationFrame(() => resolve(null)));
+    }); await flush(); };
+    try {
+      await mount(); await press(".reader-typography-aa"); await press('[aria-label="字号减小"]');
+      if (action === "delay") await new Promise(resolve => setTimeout(resolve, 2000));
+      firstVisibleOffset = 1;
+      if (action === "scroll") await act(async () => { window.dispatchEvent(new WheelEvent("wheel")); });
+      if (action === "close") { await press('[aria-label="关闭阅读设置"]'); await press(".reader-typography-aa"); }
+      if (action === "lineHeight") {
+        await press(".reader-more-typography");
+        const input = container.querySelector<HTMLInputElement>('[data-typography="lineHeight"]')!;
+        input.setPointerCapture = vi.fn();
+        await act(async () => { input.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+          input.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 })); });
+      }
+      scroll.mockClear(); await press('[aria-label="字号减小"]');
+      if (action === "keep" || action === "delay") expect(scroll).toHaveBeenCalled();
+      else expect(scroll).not.toHaveBeenCalled();
+    } finally { Object.defineProperty(window, "innerWidth", previousWidth); }
+  });
+  it("G-19c 吸顶 Aa 唯一可用，滚动不启用悬浮入口，关闭后回顶栏", async () => {
     const previousWidth = Object.getOwnPropertyDescriptor(window, "innerWidth")!;
     const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({
       matches: query === "(max-width: 767.98px)", media: query, onchange: null,
@@ -1232,14 +1277,14 @@ describe("G-63 同段多开、并发与整段收起", () => {
       vi.spyOn(top, "getBoundingClientRect").mockImplementation(() => ({ top: bottom - 24, bottom, left: 300, right: 330, width: 30, height: 24 } as DOMRect));
       const frame = async () => { await act(async () => { window.dispatchEvent(new Event("scroll"));
         await new Promise(resolve => requestAnimationFrame(resolve)); }); await flush(); };
-      await frame(); expect(floating.disabled).toBe(false); expect(floating.getAttribute("aria-hidden")).toBe("false");
-      await act(async () => floating.click()); await flush();
+      await frame(); expect(floating.disabled).toBe(true); expect(floating.getAttribute("aria-hidden")).toBe("true");
+      await act(async () => top.click()); await flush();
       expect(floating.disabled).toBe(true); expect(floating.tabIndex).toBe(-1); expect(floating.hasAttribute("inert")).toBe(true);
       await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))); await flush();
-      expect(document.activeElement).toBe(floating); expect(panels()).toEqual([0]);
+      expect(document.activeElement).toBe(top); expect(panels()).toEqual([0]);
       bottom = 0.001; await frame(); expect(floating.disabled).toBe(true);
       await act(async () => top.click()); await flush();
-      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭阅读排版"]')!.click()); await flush();
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭阅读设置"]')!.click()); await flush();
       expect(document.activeElement).toBe(top); expect(panels()).toEqual([0]);
     } finally { media.mockRestore(); Object.defineProperty(window, "innerWidth", previousWidth); }
   });
@@ -1266,7 +1311,7 @@ describe("G-63 同段多开、并发与整段收起", () => {
       vi.spyOn(top, "getBoundingClientRect").mockReturnValue({ top: -25, bottom: -1, left: 300, right: 330, width: 30, height: 24 } as DOMRect);
       const before = callbacks;
       await act(async () => { window.dispatchEvent(new Event("scroll")); });
-      expect(container.querySelector<HTMLButtonElement>(".reader-typography-floating-aa")!.disabled).toBe(false);
+      expect(container.querySelector<HTMLButtonElement>(".reader-typography-floating-aa")!.disabled).toBe(true);
       expect(queued.size).toBeGreaterThan(0); await advance(20);
       expect(callbacks - before).toBeGreaterThan(0); expect(callbacks - before).toBeLessThanOrEqual(11);
       expect(queued.size).toBe(0); const stopped = callbacks; await advance(40);

@@ -217,3 +217,12 @@ it("发送按钮禁用样式包含 opacity: 0.45", async () => {
   expect(rule).not.toBeNull();
   expect(rule![1]).toMatch(/(?:^|;)\s*opacity:\s*0\.45\s*;/);
 });
+it("抽屉交接复用 reader 反馈卡，关闭焦点回顶栏 Aa", async () => {
+  const aa = document.createElement("button"); aa.setAttribute("aria-label", "阅读排版"); document.body.append(aa);
+  try {
+    await act(async () => root.render(createElement(FeedbackButton, { placement: "reader", openRequest: 1, returnFocus: () => aa })));
+    expect(dialog()).not.toBeNull(); expect(button().getAttribute("aria-expanded")).toBe("true");
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    expect(dialog()).toBeNull(); expect(document.activeElement).toBe(aa);
+  } finally { aa.remove(); }
+});

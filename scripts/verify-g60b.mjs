@@ -137,6 +137,11 @@ async function ready(cdp, selector) {
   await cdp.evaluate("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))", true);
 }
 async function click(cdp, selector) {
+  if(selector==='.feedback-button'&&await cdp.evaluate("innerWidth<768&&!!document.querySelector('.reader-body-reader')")){
+    if(await cdp.evaluate("!!document.querySelector('.feedback-card')"))selector='.reader-typography-aa';
+    else {if(!await cdp.evaluate("!!document.querySelector('.reader-typography-sheet')"))await click(cdp,'.reader-typography-aa');
+      await cdp.evaluate("document.querySelector('.reader-settings-feedback').scrollIntoView({block:'nearest'})");selector='.reader-settings-feedback';}
+  }
   const p = await evalFn(cdp, s => { const r = document.querySelector(s).getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; }, selector);
   await cdp.call("Input.dispatchMouseEvent", {type:"mousePressed",button:"left",clickCount:1,...p});
   await cdp.call("Input.dispatchMouseEvent", {type:"mouseReleased",button:"left",clickCount:1,...p});
@@ -157,13 +162,14 @@ function space(page) {
 }
 
 function buttonBoxes() {
-  const button = document.querySelector(".feedback-button"), b = button.getBoundingClientRect();
+  const button = document.querySelector(innerWidth<768&&document.querySelector(".reader-body-reader")?".reader-settings-feedback":".feedback-button"), b = button.getBoundingClientRect();
   const plain = r => ({x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom});
   const intersections = [];
   const overlap = (r, name) => {
     if (r.width > 0 && r.height > 0 && Math.min(b.right,r.right) > Math.max(b.left,r.left) && Math.min(b.bottom,r.bottom) > Math.max(b.top,r.top)) intersections.push({element:name,rect:plain(r)});
   };
-  for (const el of document.querySelectorAll("body *")) {
+  const scope = innerWidth < 768 && button.closest(".reader-typography-sheet") || document.body;
+  for (const el of scope.querySelectorAll("*")) {
     if (el === button || button.contains(el)) continue;
     const s = getComputedStyle(el);
     if (s.display === "none" || s.visibility !== "visible" || s.opacity === "0") continue;
@@ -207,6 +213,7 @@ async function key(cdp,name,code,text) {
   await cdp.call("Input.dispatchKeyEvent",{type:"keyUp",key:name,code});
 }
 async function checks(cdp,width,page) {
+  if(page==='reader'&&width<768){await click(cdp,'.reader-typography-aa');await cdp.evaluate("document.querySelector('.reader-settings-feedback').scrollIntoView({block:'nearest'})");}
   const box=await evalFn(cdp,buttonBoxes);
   assert(box.text==="体验反馈","button label");
   assert(box.button.x>=0&&box.button.y>=0&&box.button.right<=box.clientWidth&&box.button.bottom<=box.height,"button viewport "+JSON.stringify(box));
@@ -220,6 +227,7 @@ async function checks(cdp,width,page) {
     for(let i=0;i<before.length;i++)for(let j=0;j<4;j++)assert(Math.abs(before[i][j]-hidden[i][j])<0.5,"landing main buttons moved");
     await cdp.evaluate("feedbackHidden.remove()");
   }
+  if(page==='reader'&&width<768)await click(cdp,'.reader-typography-aa');
   let before;
   if(page==="reader") {
     await evalFn(cdp,()=>document.querySelector('.sentence[data-index="0"]').click());
@@ -274,7 +282,7 @@ async function checks(cdp,width,page) {
       await cdp.call("Input.dispatchMouseEvent",{type:"mouseReleased",button:"left",clickCount:1,...point});
     }
     await waitForValue(()=>cdp.evaluate("!document.querySelector('.feedback-card')"),"close "+method);
-    assert(await cdp.evaluate("document.activeElement===document.querySelector('.feedback-button')"),"focus return");
+    assert(await cdp.evaluate("document.activeElement===document.querySelector(innerWidth<768&&document.querySelector('.reader-body-reader')?'.reader-typography-aa':'.feedback-button')"),"focus return");
     if(before) {
       await compareOriginal(cdp,before);
       assert(await cdp.evaluate("document.querySelectorAll('.gloss-panel').length===1"),"close affected gloss");

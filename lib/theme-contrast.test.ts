@@ -16,7 +16,7 @@ const AA_NORMAL_TEXT = 4.5;
 
 const CSS = readFileSync(path.resolve(__dirname, "../styles/tokens.css"), "utf8");
 
-type Token = "--text-body" | "--paper-main" | "--paper-side" | "--ink" | "--gloss" | "--saved-inline" | "--term" | "--hover";
+type Token = "--text-body" | "--paper-main" | "--paper-side" | "--ink" | "--gloss" | "--saved-inline" | "--term" | "--hover" | "--sentence-active-bg";
 
 /** 从 tokens.css 里取某套主题的色值。主题块按 [data-theme="…"] 分段 */
 function themeColors(theme: string): Record<Token, string> {
@@ -37,6 +37,7 @@ function themeColors(theme: string): Record<Token, string> {
     "--saved-inline": read("--saved-inline"),
     "--term": read("--term"),
     "--hover": read("--hover"),
+    "--sentence-active-bg": read("--sentence-active-bg"),
   };
 }
 
@@ -272,5 +273,20 @@ describe("G-19 完整主题", () => {
     const start = CSS.indexOf(`[data-theme="${theme}"]`), block = CSS.slice(start, CSS.indexOf("}", start));
     for (const part of ["top", "mid", "bottom", "edge", "shadow"])
       expect(block).toMatch(new RegExp(`--shelf-ledge-${part}:\\s*#[0-9a-fA-F]{6};`));
+  });
+});
+
+
+describe("G-69 活动原句配色", () => {
+  const backgrounds = { parchment: "#E7E9E6", "moon-white": "#E4E8ED", "eye-green": "#DCE4E0", dark: "#252524" };
+  it.each(THEMES)("%s：指定底色与悬停字色达到 AA", (theme) => {
+    const c = themeColors(theme);
+    expect(c["--sentence-active-bg"]).toBe(backgrounds[theme as keyof typeof backgrounds]);
+    expect(contrast(c["--hover"], c["--sentence-active-bg"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+  });
+  it("默认羊皮纸、继承属性注册及主题过渡均覆盖新 token", () => {
+    expect(CSS).toMatch(/:root,\s*\[data-theme="parchment"\]/);
+    expect(CSS).toContain('@property --sentence-active-bg { syntax: "<color>"; inherits: true; initial-value: #E7E9E6; }');
+    expect(CSS.slice(CSS.indexOf("html[data-theme-transition]"))).toMatch(/transition-property:[^;]*--sentence-active-bg/);
   });
 });

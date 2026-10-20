@@ -14,15 +14,17 @@ export interface SentenceProps {
   breathe?: boolean;
   /** 收起状态下已留下且未展开的句子；每个真实片段都标记。 */
   savedCollapsed?: boolean;
+  /** G-69: explicit non-mouse opening; paint only, including measurement commits. */
+  active?: boolean;
 }
 
 /**
  * 单个句子（或被行尾拆分切开的句子片段）。
  * hover 变色由 CSS 负责；留下状态的下划线只作装饰，不改变字符排版。
  */
-export default function Sentence({ index, offset, text, breathe = false, savedCollapsed = false }: SentenceProps) {
+export default function Sentence({ index, offset, text, breathe = false, savedCollapsed = false, active = false }: SentenceProps) {
   return (
-    <span className={`sentence${breathe ? " sentence-breathe" : ""}${savedCollapsed ? " sentence-saved-collapsed" : ""}`} data-index={index} data-offset={offset}>
+    <span className={`sentence${breathe ? " sentence-breathe" : ""}${savedCollapsed ? " sentence-saved-collapsed" : ""}${active ? " sentence-active" : ""}`} data-index={index} data-offset={offset}>
       {text}
     </span>
   );

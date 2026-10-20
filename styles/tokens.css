@@ -29,6 +29,7 @@
   --rule: #E5DFC8;
   --term: #233448; /* 候选 A 深·低饱和：vs 底色 11.73，vs 白话 1.78，ΔE 20.0 */
   --hover: #1F4E75; /* C 档：vs 底色 8.08，与正文墨色 ΔE 21.6，与术语色 ΔE 10.4 */
+  --sentence-active-bg: #E7E9E6;
   --shelf-ledge-top: #E5DFC8;
   --shelf-ledge-mid: #F1EBD9;
   --shelf-ledge-bottom: #DDD2B1;
@@ -67,6 +68,7 @@
   --rule: #E2E2E8;
   --term: #1F3341; /* 候选 A 深·低饱和：vs 底色 11.99，vs 白话 1.91，ΔE 16.4（月白的白话色偏冷灰，灰蓝难拉开） */
   --hover: #1F4E75; /* C 档：vs 底色 8.02，与正文墨色 ΔE 21.6，与术语色 ΔE 11.8 */
+  --sentence-active-bg: #E4E8ED;
   --shelf-ledge-top: #E2E2E8;
   --shelf-ledge-mid: #E7E7EC;
   --shelf-ledge-bottom: #CECED7;
@@ -105,6 +107,7 @@
   --rule: #D5DFD0;
   --term: #326095; /* 候选 B 中·中饱和：vs 底色 5.70，vs 白话 1.08，ΔE 26.8 */
   --hover: #14446B; /* C 档：vs 底色 8.94，与正文墨色 ΔE 23.3，与术语色 ΔE 10.1 */
+  --sentence-active-bg: #DCE4E0;
   --shelf-ledge-top: #D5DFD0;
   --shelf-ledge-mid: #DFE7DB;
   --shelf-ledge-bottom: #C1D0BA;
@@ -145,6 +148,7 @@
   --rule: #3B3631;
   --term: #8DB0D4;
   --hover: #C4DAF0;
+  --sentence-active-bg: #252524;
   --shelf-ledge-top: #5E4D3A;
   --shelf-ledge-mid: #4A3A2A;
   --shelf-ledge-bottom: #3A2D20;
@@ -207,6 +211,7 @@
 @property --saved-inline { syntax: "<color>"; inherits: true; initial-value: #666057; }
 @property --rule { syntax: "<color>"; inherits: true; initial-value: #E5DFC8; }
 @property --term { syntax: "<color>"; inherits: true; initial-value: #233448; }
+@property --sentence-active-bg { syntax: "<color>"; inherits: true; initial-value: #E7E9E6; }
 @property --hover { syntax: "<color>"; inherits: true; initial-value: #1F4E75; }
 @property --shelf-ledge-top { syntax: "<color>"; inherits: true; initial-value: #E5DFC8; }
 @property --shelf-ledge-mid { syntax: "<color>"; inherits: true; initial-value: #F1EBD9; }
@@ -216,7 +221,7 @@
 /* Only explicit user switches transition. Loading a saved theme never enables this selector. */
 html[data-theme-transition] {
   transition-property: --paper-main, --paper-side, --ink, --text-body, --gloss, --saved-inline, --rule,
-    --term, --hover, --shelf-ledge-top, --shelf-ledge-mid, --shelf-ledge-bottom, --shelf-ledge-edge, --shelf-ledge-shadow,
+    --term, --hover, --sentence-active-bg, --shelf-ledge-top, --shelf-ledge-mid, --shelf-ledge-bottom, --shelf-ledge-edge, --shelf-ledge-shadow,
     --input-bg, --placeholder, --control-border, --secondary-border, --button-hover, --import-border, --upload-border, --overlay-remove, --overlay-import, --shadow-context, --shadow-import, --surface-highlight, --text-error, --focus-strong, --shadow-continue, --shadow-spine, --shadow-cover, --swatch-parchment, --swatch-moon-white, --swatch-eye-green;
   transition-duration: 180ms;
   transition-timing-function: ease;

@@ -348,7 +348,7 @@ body {
 
 /*
  * 句子：hover 轻微变色是「这句能点」的唯一视觉提示。
- * D13：点击前后句子本身不改任何属性（无底色、边框、字重、位置变化），撑开状态由撑开区承担。
+ * D13：撑开状态由撑开区承担。G-69 有意例外：非鼠标点开的临时白话仅改原句字色与底色，几何不变。
  */
 .sentence {
   cursor: pointer;
@@ -377,6 +377,11 @@ body {
 .reader-body-sample-breathing .sentence-breathe.sentence-hover { color: var(--hover); }
 .reader-body .sentence.sentence-gloss-hover,
 .reader-body.reader-body-sample-breathing .sentence.sentence-gloss-hover { color: var(--hover); }
+.reader-body .sentence.sentence-active,
+.reader-body.reader-body-sample-breathing .sentence.sentence-active {
+  color: var(--hover);
+  background-color: var(--sentence-active-bg);
+}
 @keyframes sample-sentence-breathe {
   0%, 100% { color: var(--text-body); }
   50% { color: color-mix(in srgb, var(--paper-main) var(--sample-breathe-fade), var(--text-body)); }

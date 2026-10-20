@@ -214,6 +214,19 @@ export default function Reader({ docId }: { docId: string }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [sampleBreathed, setSampleBreathed] = useState(false);
   const [expansions, setExpansions] = useState<ReadonlyMap<number, Expansion>>(() => new Map());
+  // G-69: provenance belongs to the continuous opening, including save/unsave transitions.
+  const [nonMouseOpenedIndexes, setNonMouseOpenedIndexes] = useState<ReadonlySet<number>>(() => new Set());
+  const nonMouseOpenedIndexesRef = useRef(nonMouseOpenedIndexes);
+  function updateNonMouseOpenedIndexes(next: ReadonlySet<number>) {
+    nonMouseOpenedIndexesRef.current = next;
+    setNonMouseOpenedIndexes(next);
+  }
+  function setNonMouseOpened(index: number, active: boolean) {
+    const next = new Set(nonMouseOpenedIndexesRef.current);
+    if (active) next.add(index); else next.delete(index);
+    updateNonMouseOpenedIndexes(next);
+  }
+  const activeArraysRef = useRef<readonly (readonly number[])[]>([]);
   const expansionsRef = useRef(expansions);
   expansionsRef.current = expansions;
   const [recentIndex, setRecentIndex] = useState<number | null>(null);
@@ -652,6 +665,7 @@ export default function Reader({ docId }: { docId: string }) {
     setSavedRegions(null);
     setMeasurement(null);
     setExpansions(new Map());
+    updateNonMouseOpenedIndexes(new Set());
     setGlosses(new Map());
     setRetryCounts(new Map());
     setRecentIndex(null);
@@ -871,6 +885,22 @@ export default function Reader({ docId }: { docId: string }) {
     savedMarkerArraysRef.current = next;
     return next;
   }, [doc, expandedSavedIndexes, readingMode, savedGlosses, sentences]);
+
+  const activeIndexesByParagraph = useMemo(() => {
+    const groups: number[][] = Array.from({ length: doc?.paragraphs.length ?? 0 }, () => []);
+    for (const index of nonMouseOpenedIndexes) {
+      const visible = savedGlosses.has(index)
+        ? readingMode === "reading" && expandedSavedIndexes.has(index) : expansions.has(index);
+      if (visible && sentences[index]) groups[sentences[index].paraIndex]?.push(index);
+    }
+    const result = groups.map((indexes, para) => {
+      indexes.sort((a, b) => a - b);
+      const old = activeArraysRef.current[para];
+      return indexes.length === 0 ? NO_INDEXES : old?.length === indexes.length && old.every((index, i) => index === indexes[i]) ? old : indexes;
+    });
+    activeArraysRef.current = result;
+    return result;
+  }, [doc, nonMouseOpenedIndexes, savedGlosses, readingMode, expandedSavedIndexes, expansions, sentences]);
 
   const regionsByParagraph = useMemo(() => {
     const groups = visibleSavedRegionsByParagraph.slice();
@@ -1094,9 +1124,10 @@ export default function Reader({ docId }: { docId: string }) {
       }
       if (paras.size) stageLayouts(paras, 0);
     }
+    if (index !== null && readingMode === "review") setNonMouseOpened(index, false);
     setActiveSavedIndex(index);
   }
-  function expandSaved(index: number, options: { anchor?: CharAnchor | null; showActions?: boolean } = {}) {
+  function expandSaved(index: number, options: { anchor?: CharAnchor | null; showActions?: boolean; nonMouse?: boolean } = {}) {
     closeContextMenu();
     setTransaction({ anchor: options.anchor ?? (bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null),
       animateOpen: false, operationIndex: index });
@@ -1105,6 +1136,7 @@ export default function Reader({ docId }: { docId: string }) {
     paras.add(sentences[index].paraIndex);
     cutoffs.set(sentences[index].paraIndex, index);
     setRecentIndex(index);
+    setNonMouseOpened(index, options.nonMouse === true);
     updateExpandedSavedIndexes(new Set(expandedSavedIndexesRef.current).add(index));
     setActiveSavedIndex(options.showActions ? index : null);
     stageLayouts(paras, cutoffs, expansionsRef.current, readingMode, expandedSavedIndexesRef.current);
@@ -1138,7 +1170,7 @@ export default function Reader({ docId }: { docId: string }) {
     setReportFeedback(null);
   }
 
-  function open(index: number, target: HTMLElement, clientX: number, clientY: number) {
+  function open(index: number, target: HTMLElement, clientX: number, clientY: number, nonMouse: boolean) {
     const body = bodyRef.current;
     const sentence = sentences[index];
     if (!body || !sentence) return;
@@ -1177,6 +1209,7 @@ export default function Reader({ docId }: { docId: string }) {
         setGloss({ index, view: { status: "done", text: cacheLookup.entry.text, failure: null, instant: true } });
       }
     }
+    setNonMouseOpened(index, nonMouse);
     // 切换句子时，前一个撑开区在同一次提交里直接移除（不播收起动画），参照物是新点的这一行
     commit(
       { index, paraIndex: sentence.paraIndex, splitAt },
@@ -1196,6 +1229,9 @@ export default function Reader({ docId }: { docId: string }) {
       return panel && rect && rect.top >= 0 && rect.top < window.innerHeight
         ? [{ index, height: panelShift(panel) }] : [];
     }) : [];
+    const active = new Set(nonMouseOpenedIndexesRef.current);
+    indexes.forEach((index) => active.delete(index));
+    updateNonMouseOpenedIndexes(active);
     removeAttempts(transient, early);
     const expanded = new Set(expandedSavedIndexesRef.current);
     saved.forEach((index) => expanded.delete(index));
@@ -1224,6 +1260,8 @@ export default function Reader({ docId }: { docId: string }) {
     }
     const target = eventTarget.closest<HTMLElement>(".sentence");
     if (!target) return;
+    const pointerType = "pointerType" in event.nativeEvent ? event.nativeEvent.pointerType : undefined;
+    const nonMouse = typeof pointerType === "string" && pointerType.length > 0 && pointerType !== "mouse";
     const index = Number(target.dataset.index);
 
     const now = performance.now();
@@ -1235,14 +1273,14 @@ export default function Reader({ docId }: { docId: string }) {
       const anchor = anchorAtClick(target, event.clientX, event.clientY);
       if (readingMode === "reading") {
         if (expandedSavedIndexes.has(index)) collapseIndexes([index], true, anchor, true);
-        else expandSaved(index, { anchor, showActions: true });
+        else expandSaved(index, { anchor, showActions: true, nonMouse });
       } else {
         commitSaved(activeSavedIndex === index ? null : index, { anchor });
       }
     } else if (expansions.has(index)) {
       collapseIndexes([index], true, anchorAtClick(target, event.clientX, event.clientY), true);
     } else {
-      open(index, target, event.clientX, event.clientY);
+      open(index, target, event.clientX, event.clientY, nonMouse);
     }
   }
 
@@ -1879,6 +1917,7 @@ export default function Reader({ docId }: { docId: string }) {
     }
     setActiveSavedIndex(null);
     updateExpandedSavedIndexes(new Set());
+    updateNonMouseOpenedIndexes(new Set([...nonMouseOpenedIndexesRef.current].filter((index) => !savedGlossesRef.current.has(index))));
     setReadingMode(next);
     stageLayouts(new Set(sentences.map((sentence) => sentence.paraIndex)), 0, expansionsRef.current, next, new Set());
   }, [readingMode]);
@@ -2037,6 +2076,7 @@ export default function Reader({ docId }: { docId: string }) {
                   pieces={piecesByParagraph[paraIndex] ?? NO_PIECES}
                   regions={regionsByParagraph[paraIndex] ?? NO_REGIONS}
                   savedMarkers={savedMarkersByParagraph[paraIndex] ?? NO_INDEXES}
+                  activeIndexes={activeIndexesByParagraph[paraIndex] ?? NO_INDEXES}
                   panelRef={null}
                   panelFor={panelFor}
                   onRetry={retryGloss}
@@ -2298,6 +2338,7 @@ interface ParagraphProps {
   onExplainBlocked: (index: number) => void;
   sentences: readonly SentenceData[];
   breatheSentenceIndex: number | null;
+  activeIndexes?: readonly number[];
 }
 
 /** 功能一的上下文窗口：目标句 + 前后各至多 2 句（跨段照取）+ 全书结构摘要 */
@@ -2438,6 +2479,7 @@ export const Paragraph = memo(function Paragraph({
   onExplainBlocked,
   sentences,
   breatheSentenceIndex,
+  activeIndexes = NO_INDEXES,
 }: ParagraphProps) {
   const Tag: ElementType = heading ? HEADING_TAGS[Math.min(Math.max(heading.level, 1), 6) - 1] : "p";
   const className = heading ? "reader-heading" : "reader-para";
@@ -2446,7 +2488,7 @@ export const Paragraph = memo(function Paragraph({
   if (regions.length === 0) {
     return (
       <Tag id={"para-" + paraIndex} data-para={paraIndex} data-reader-block="" data-block-start={0} data-block-end={paragraphLength(pieces)} data-block-continues="false" className={className}>
-        {renderPieces(pieces, markerIndexes, breatheSentenceIndex)}
+        {renderPieces(pieces, markerIndexes, breatheSentenceIndex, activeIndexes)}
       </Tag>
     );
   }
@@ -2466,7 +2508,7 @@ export const Paragraph = memo(function Paragraph({
           data-reader-block="" data-block-start={start} data-block-end={boundary}
           data-block-continues={region.splitAt !== null ? "true" : "false"}
           className={splitFragmentClassName(className, heading !== undefined, position === 0, region.splitAt !== null)}>
-          {renderPieces(head, markerIndexes, breatheSentenceIndex)}
+          {renderPieces(head, markerIndexes, breatheSentenceIndex, activeIndexes)}
         </Tag>}
         <GlossPanel key={region.saved ? "saved:" + region.index : region.glossKey ?? glossKey ?? "transient:" + region.index}
           ref={panelFor ? panelFor(region.index) : region.saved ? undefined : panelRef}
@@ -2482,7 +2524,7 @@ export const Paragraph = memo(function Paragraph({
   const remaining = slicePieces(pieces, from, Infinity);
   return <Fragment>{nodes}{remaining.length > 0 && (
     <Tag data-para={paraIndex} data-reader-block="" data-block-start={from} data-block-end={paragraphLength(pieces)}
-      data-block-continues="false" className="reader-para reader-para-cont">{renderPieces(remaining, markerIndexes, breatheSentenceIndex)}</Tag>
+      data-block-continues="false" className="reader-para reader-para-cont">{renderPieces(remaining, markerIndexes, breatheSentenceIndex, activeIndexes)}</Tag>
   )}</Fragment>;
 
 });
@@ -2496,12 +2538,13 @@ function renderPieces(
   pieces: Piece[],
   markerIndexes: ReadonlySet<number>,
   breatheSentenceIndex: number | null,
+  activeIndexes: readonly number[],
 ) {
   return pieces.map((p) => p.placeholder ? (
     <TailPlaceholder key={`placeholder:${p.index}:${p.start}`} text={p.text} />
   ) : (
     <Sentence key={`${p.index}:${p.start}`} index={p.index} offset={p.start} text={p.text}
-      breathe={p.index === breatheSentenceIndex} savedCollapsed={markerIndexes.has(p.index)} />
+      breathe={p.index === breatheSentenceIndex} savedCollapsed={markerIndexes.has(p.index)} active={activeIndexes.includes(p.index)} />
   ));
 }
 

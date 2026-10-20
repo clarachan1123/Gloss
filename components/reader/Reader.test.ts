@@ -1485,3 +1485,69 @@ describe("G-19c 浮层遮挡的参照字", () => {
     } finally { body.remove(); panel.remove(); vi.restoreAllMocks(); }
   });
 });
+
+
+describe("G-69 非鼠标打开来源", () => {
+  const fonts = Object.getOwnPropertyDescriptor(document, "fonts");
+  let root: ReturnType<typeof createRoot>;
+  let host: HTMLDivElement;
+  let time = 0;
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    Object.defineProperty(document, "fonts", { configurable: true, value: { ready: Promise.resolve() } });
+    vi.spyOn(lineSplit, "measureSplit").mockReturnValue(null);
+    vi.spyOn(performance, "now").mockImplementation(() => time += 400);
+    vi.spyOn(cache, "preloadGlossCache").mockResolvedValue(new Map([0, 1, 2].map(index => [index, { text: "本地白话。", hasStructure: false }])));
+    localStorage.setItem("gloss:doc:g69", JSON.stringify({ version: 1, docId: "g69", paragraphs: ["甲乙。丙丁。", "戊己。"], headings: [], footnotes: [], meta: { format: "txt", fileName: "测试.txt", charCount: 9 }, savedAt: 1 }));
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount()); host.remove(); localStorage.clear();
+    if (fonts) Object.defineProperty(document, "fonts", fonts); else Reflect.deleteProperty(document, "fonts");
+    vi.restoreAllMocks(); vi.unstubAllGlobals();
+  });
+  async function flush() { for (let n = 0; n < 6; n++) await act(async () => { await Promise.resolve(); }); }
+  async function mount() { await act(async () => root.render(createElement(Reader, { docId: "g69" }))); await flush(); }
+  async function click(index: number, pointerType?: string) {
+    await act(async () => {
+      const sentence = host.querySelector<HTMLElement>('.sentence[data-index="' + index + '"]')!;
+      const event = pointerType === undefined ? new MouseEvent("click", { bubbles: true }) : new PointerEvent("click", { bubbles: true, pointerType });
+      sentence.dispatchEvent(event);
+    }); await flush();
+  }
+  const active = () => [...new Set([...host.querySelectorAll<HTMLElement>(".sentence-active")].map(node => Number(node.dataset.index)))].sort();
+  it.each(["touch", "pen", "mouse", "", undefined])("来源 %s 仅明确非鼠标才激活", async (source) => {
+    await mount(); await click(0, source);
+    expect(active()).toEqual(source === "touch" || source === "pen" ? [0] : []);
+    await click(0, source); expect(active()).toEqual([]);
+  });
+  it("同段来源独立，跨段、空白、Esc 和重新打开都清理旧来源", async () => {
+    await mount(); await click(0, "mouse"); await click(1, "touch"); expect(active()).toEqual([1]);
+    await click(0, "mouse"); await click(0, "touch"); expect(active()).toEqual([0, 1]);
+    await click(1, "touch"); expect(active()).toEqual([0]);
+    await click(2, "pen"); expect(active()).toEqual([2]);
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); await flush(); expect(active()).toEqual([]);
+    await click(0, "touch"); await act(async () => document.body.click()); await flush(); expect(active()).toEqual([]);
+    await click(0, "mouse"); expect(active()).toEqual([]);
+  });
+  it("收起模式已留下句点开激活，侧栏跳转和常驻显示不激活", async () => {
+    await storage.saveSavedGloss("g69", segmentParagraphs(["甲乙。丙丁。", "戊己。"]).sentences[0], "已留下。");
+    localStorage.setItem("gloss:settings:reading-mode", "reading"); await mount();
+    await click(0, "touch"); expect(active()).toEqual([0]);
+    expect(host.querySelector('.sentence[data-index="0"]')?.classList.contains("sentence-saved-collapsed")).toBe(false);
+    await click(0, "touch"); expect(active()).toEqual([]);
+    await act(async () => host.querySelector<HTMLElement>(".saved-link")!.click()); await flush(); expect(active()).toEqual([]);
+    await act(async () => root.render(createElement(Reader, { docId: "missing-g69" }))); await flush(); expect(active()).toEqual([]);
+  });
+  it("新活动规则只改两种颜色，透明尾巴不接受活动标记", () => {
+    const css = readFileSync(path.resolve(process.cwd(), "styles/reader.css"), "utf8");
+    const rule = css.match(/\.reader-body \.sentence\.sentence-active,\s*\.reader-body\.reader-body-sample-breathing \.sentence\.sentence-active\s*\{([^}]+)\}/);
+    expect(rule?.[1].trim()).toBe("color: var(--hover);\n  background-color: var(--sentence-active-bg);");
+    const html = renderToString(createElement(Paragraph, { paraIndex: 0, heading: undefined, pieces: [{ index: 0, start: 0, text: "甲。" }, { index: 1, start: 2, text: "乙。" }], regions: [{ index: 0, splitAt: 3, saved: false, presentation: "inline", actionVisible: false, view: { status: "done", text: "白话", failure: null, instant: true }, explainView: IDLE_EXPLAIN_VIEW }], savedMarkers: [], activeIndexes: [0, 1], panelRef: null, onRetry: () => {}, onBeforeReveal: () => null, onAfterReveal: () => {}, onSave: async () => "saved" as const, onExplain: () => {}, onExplainRetry: () => {}, onExplainBlocked: () => {}, sentences: [], breatheSentenceIndex: null }));
+    host.innerHTML = html;
+    expect(host.querySelector(".reader-tail-placeholder.sentence-active")).toBeNull();
+    expect([...host.querySelectorAll(".sentence")].every(node => node.classList.contains("sentence-active"))).toBe(true);
+  });
+});

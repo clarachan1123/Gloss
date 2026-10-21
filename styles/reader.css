@@ -788,3 +788,13 @@ body {
 
 .reader-mobile-back-label { display: none; }
 @media (max-width: 767.98px) { .reader-mobile-back-label { display: inline; } }
+
+/* G-70: reader-only gloss sizing; the landing demo keeps the global defaults. */
+.reader-body-reader {
+  --reader-gloss-font-size: max(14px, calc(var(--reader-font-size, 17.5px) * 0.8));
+}
+.reader-body-reader .gloss-panel,
+.reader-body-reader .action-row-save,
+.reader-body-reader .action-row-explain {
+  font-size: var(--reader-gloss-font-size);
+}

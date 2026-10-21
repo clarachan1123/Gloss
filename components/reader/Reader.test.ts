@@ -1579,3 +1579,34 @@ describe("G-69 非鼠标打开来源", () => {
     expect([...host.querySelectorAll(".sentence")].every(node => node.classList.contains("sentence-active"))).toBe(true);
   });
 });
+
+describe("G-70 阅读页白话字号", () => {
+  const css = readFileSync(path.resolve(process.cwd(), "styles/reader.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  it("派生变量只在阅读页声明，公式保底 14px", () => {
+    const definitions = [...css.matchAll(/([^{}]+)\{([^{}]*--reader-gloss-font-size\s*:[^{}]*)\}/g)];
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0][1].trim()).toBe(".reader-body-reader");
+    expect(definitions[0][2].trim()).toBe("--reader-gloss-font-size: max(14px, calc(var(--reader-font-size, 17.5px) * 0.8));");
+  });
+  it("仅阅读页面板与两种操作按钮消费变量", () => {
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*font-size:\s*var\(--reader-gloss-font-size\)[^{}]*)\}/g)];
+    expect(rules).toHaveLength(1);
+    expect(rules[0][1].trim().split(/,\s*/)).toEqual([
+      ".reader-body-reader .gloss-panel", ".reader-body-reader .action-row-save", ".reader-body-reader .action-row-explain",
+    ]);
+    expect(rules[0][2].trim()).toBe("font-size: var(--reader-gloss-font-size);");
+  });
+  it("演示没有阅读页身份或字号变量，全局默认与附注规则保留", () => {
+    const demo = readFileSync(path.resolve(process.cwd(), "components/landing/LandingDemo.tsx"), "utf8");
+    expect(demo).not.toContain("reader-body-reader");
+    expect(demo).not.toContain("--reader-font-size");
+    expect(css).toMatch(/\.gloss-panel\s*\{[^}]*font-size: 14px;/);
+    expect(css).toMatch(/\.action-row-save,\s*\.action-row-explain\s*\{\s*font-size: 14px;/);
+    expect(css).toMatch(/\.settings-cache-result,\s*\.action-row-notice\s*\{[^}]*font-size: 12px;/);
+    expect(css).toContain("letter-spacing: 0.4125px;");
+    expect(css).toContain("min-height: calc(3 * 2.05em);");
+  });
+  it.each([[15, 14], [17.5, 14], [18, 14.4], [21, 16.8]])("正文 %s 时公式结果为 %s", (body, gloss) => {
+    expect(Math.max(14, body * 0.8)).toBe(gloss);
+  });
+});

@@ -214,7 +214,8 @@ export default function Reader({ docId }: { docId: string }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [sampleBreathed, setSampleBreathed] = useState(false);
   const [expansions, setExpansions] = useState<ReadonlyMap<number, Expansion>>(() => new Map());
-  // G-69: provenance belongs to the continuous opening, including save/unsave transitions.
+  const lastPointerDownRef = useRef<{ pointerType: string; sentenceIndex: number | null } | null>(null);
+  // G-69：来源属于本次连续展开，留下或取消留下时沿用。
   const [nonMouseOpenedIndexes, setNonMouseOpenedIndexes] = useState<ReadonlySet<number>>(() => new Set());
   const nonMouseOpenedIndexesRef = useRef(nonMouseOpenedIndexes);
   function updateNonMouseOpenedIndexes(next: ReadonlySet<number>) {
@@ -1247,6 +1248,11 @@ export default function Reader({ docId }: { docId: string }) {
     stageLayouts(paras, Math.min(...indexes), next, readingMode, expanded);
   }
 
+  function handleBodyPointerDown(event: ReactPointerEvent<HTMLElement>) {
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>(".sentence[data-index]") : null;
+    lastPointerDownRef.current = { pointerType: event.pointerType, sentenceIndex: target ? Number(target.dataset.index) : null };
+  }
+
   function handleBodyClick(event: ReactMouseEvent<HTMLElement>) {
     typographyLayoutRef.current = null;
     // G5：用户划选了文字（复制原文），松开鼠标不触发撑开
@@ -1260,9 +1266,12 @@ export default function Reader({ docId }: { docId: string }) {
     }
     const target = eventTarget.closest<HTMLElement>(".sentence");
     if (!target) return;
-    const pointerType = "pointerType" in event.nativeEvent ? event.nativeEvent.pointerType : undefined;
-    const nonMouse = typeof pointerType === "string" && pointerType.length > 0 && pointerType !== "mouse";
     const index = Number(target.dataset.index);
+    const pointerDown = lastPointerDownRef.current;
+    const pointerType = pointerDown && pointerDown.sentenceIndex === index
+      ? pointerDown.pointerType : "pointerType" in event.nativeEvent ? event.nativeEvent.pointerType : undefined;
+    const nonMouse = typeof pointerType === "string" && pointerType.length > 0 && pointerType !== "mouse";
+    lastPointerDownRef.current = null;
 
     const now = performance.now();
     const last = lastToggleRef.current;
@@ -2058,6 +2067,7 @@ export default function Reader({ docId }: { docId: string }) {
             data-measuring={measurement !== null || savedRegions === null || !fontsReady ? "true" : "false"}
             lang="zh-CN"
             onClick={handleBodyClick}
+            onPointerDown={handleBodyPointerDown}
             onPointerOver={(event) => { handleGlossPointerOver(event); handleSentencePointerOver(event); }}
             onPointerOut={(event) => { handleGlossPointerOut(event); handleSentencePointerOut(event); }}
             onPointerLeave={(event) => {

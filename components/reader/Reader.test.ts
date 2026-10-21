@@ -1518,6 +1518,34 @@ describe("G-69 非鼠标打开来源", () => {
     }); await flush();
   }
   const active = () => [...new Set([...host.querySelectorAll<HTMLElement>(".sentence-active")].map(node => Number(node.dataset.index)))].sort();
+  async function pointerDown(index: number, pointerType: string) {
+    await act(async () => {
+      host.querySelector<HTMLElement>('.sentence[data-index="' + index + '"]')!
+        .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType }));
+    });
+  }
+  it("iOS 同句 pointerdown touch 优先于 click mouse，原句高亮", async () => {
+    await mount(); await pointerDown(0, "touch"); await click(0, "mouse");
+    expect(active()).toEqual([0]);
+  });
+  it("pointerdown mouse 与 click mouse 不高亮", async () => {
+    await mount(); await pointerDown(0, "mouse"); await click(0, "mouse");
+    expect(active()).toEqual([]);
+  });
+  it("pointerdown 与 click 不同句时回退到 click mouse，不高亮", async () => {
+    await mount(); await pointerDown(0, "touch"); await click(1, "mouse");
+    expect(active()).toEqual([]);
+  });
+  it("没有 pointerdown 的键盘 MouseEvent click 不高亮", async () => {
+    await mount(); await click(0);
+    expect(active()).toEqual([]);
+  });
+  it("pointerdown 来源只用一次，收起后无新按下的 click mouse 不高亮", async () => {
+    await mount(); await pointerDown(0, "touch"); await click(0, "mouse");
+    expect(active()).toEqual([0]);
+    await click(0, "mouse"); expect(active()).toEqual([]);
+    await click(0, "mouse"); expect(active()).toEqual([]);
+  });
   it.each(["touch", "pen", "mouse", "", undefined])("来源 %s 仅明确非鼠标才激活", async (source) => {
     await mount(); await click(0, source);
     expect(active()).toEqual(source === "touch" || source === "pen" ? [0] : []);

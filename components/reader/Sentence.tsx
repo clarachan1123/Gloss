@@ -14,7 +14,7 @@ export interface SentenceProps {
   breathe?: boolean;
   /** 收起状态下已留下且未展开的句子；每个真实片段都标记。 */
   savedCollapsed?: boolean;
-  /** G-69: explicit non-mouse opening; paint only, including measurement commits. */
+  /** G-69：明确非鼠标点开时仅改颜色，测量提交期间也保留。 */
   active?: boolean;
 }
 

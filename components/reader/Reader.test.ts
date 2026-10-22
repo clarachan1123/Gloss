@@ -1610,3 +1610,94 @@ describe("G-70 阅读页白话字号", () => {
     expect(Math.max(14, body * 0.8)).toBe(gloss);
   });
 });
+
+import GlossPanel, { type GlossRevealProgress, type GlossView } from "./GlossPanel";
+import { ReadCompleteClock } from "@/lib/analytics-read-complete";
+
+describe("G-70 重测保留逐字进度", () => {
+  let root: ReturnType<typeof createRoot>;
+  let host: HTMLDivElement;
+  let now = 1000;
+  const fonts = Object.getOwnPropertyDescriptor(document, "fonts");
+  const width = Object.getOwnPropertyDescriptor(window, "innerWidth");
+  const events: string[] = [];
+  const onEvent = (event: Event) => events.push((event as CustomEvent).detail.event);
+  const visible = () => Array.from(host.querySelector(".gloss-panel-text")?.textContent ?? "").length;
+  async function advance(ms = 45) { now += ms; await act(async () => { vi.advanceTimersByTime(ms); }); }
+  async function renderPanel(view: GlossView, key: string) {
+    await act(async () => { root.render(createElement(GlossPanel, {
+      key, view, saved: false, sentenceIndex: 0, onRetry: vi.fn(), onBeforeReveal: () => null,
+      onAfterReveal: vi.fn(), onSave: async () => "saved" as const, onExplain: vi.fn(),
+      onExplainRetry: vi.fn(), onExplainBlocked: vi.fn(),
+    })); });
+  }
+  beforeEach(() => {
+    vi.unstubAllGlobals(); vi.useFakeTimers(); now = 1000; events.length = 0; localStorage.clear();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+    Object.defineProperty(document, "fonts", { configurable: true, value: { ready: Promise.resolve() } });
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ top: 100, bottom: 300, height: 200, left: 0, right: 600, width: 600, x: 0, y: 100 } as DOMRect);
+    vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} unobserve() {} });
+    vi.stubGlobal("fetch", vi.fn((url: string) => String(url).includes("/samples/") ? Promise.resolve(Response.json(sampleContent)) : new Promise<Response>(() => {})));
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+    window.addEventListener("gloss:analytics", onEvent);
+  });
+  afterEach(async () => {
+    await act(async () => { root.unmount(); }); host.remove();
+    window.removeEventListener("gloss:analytics", onEvent); localStorage.clear();
+    if (fonts) Object.defineProperty(document, "fonts", fonts); else Reflect.deleteProperty(document, "fonts");
+    if (width) Object.defineProperty(window, "innerWidth", width);
+    vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals();
+  });
+  it.each(["字号", "行高", "每行字数", "字体", "主题", "断点", "stageLayouts", "G-63 续排"])("已放完：%s 导致重挂的首帧直接全文", async (cause) => {
+    const progress: GlossRevealProgress = { shown: 0 };
+    const view: GlossView = { status: "done", text: "甲".repeat(40), failure: null, instant: false, revealProgress: progress };
+    await renderPanel(view, "first"); expect(visible()).toBe(0);
+    for (let i = 0; i < 10; i++) await advance();
+    expect(visible()).toBe(40); expect(progress.shown).toBe(40);
+    const old = host.querySelector(".gloss-panel");
+    await renderPanel(view, cause);
+    expect(host.querySelector(".gloss-panel")).not.toBe(old); expect(visible()).toBe(40);
+    await advance(); expect(visible()).toBe(40); expect(events).toEqual([]);
+  });
+  it("一半重挂从已提交字数续放，不回落、不直接跳全文", async () => {
+    const progress: GlossRevealProgress = { shown: 0 };
+    const view: GlossView = { status: "done", text: "甲".repeat(40), failure: null, instant: false, revealProgress: progress };
+    await renderPanel(view, "first"); for (let i = 0; i < 5; i++) await advance();
+    expect(visible()).toBe(20); await renderPanel(view, "remeasure"); expect(visible()).toBe(20);
+    for (let count = 24; count <= 40; count += 4) { await advance(); expect(visible()).toBe(count); }
+  });
+  it("主动重试使用新进度从头放，缓存 instant 和首次 4 字规则不变", async () => {
+    const view: GlossView = { status: "done", text: "甲".repeat(40), failure: null, instant: false, revealProgress: { shown: 40 } };
+    await renderPanel(view, "old"); expect(visible()).toBe(40);
+    await renderPanel({ ...view, revealProgress: { shown: 0 } }, "retry"); expect(visible()).toBe(0);
+    await advance(); expect(visible()).toBe(4);
+    await renderPanel({ ...view, firstChunkNow: true, revealProgress: { shown: 0 } }, "first-open"); expect(visible()).toBe(4);
+    await renderPanel({ ...view, instant: true, revealProgress: { shown: 0 } }, "cache"); expect(visible()).toBe(40);
+  });
+  it.each([false, true])("Reader 实际字体重测，已完成=%s：进度和同一读完时钟保留，重挂不增事件", async (complete) => {
+    const clock = vi.spyOn(ReadCompleteClock.prototype, "sample");
+    await act(async () => { root.render(createElement(Reader, { docId: "sample" })); });
+    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLElement>('.sentence[data-index="0"]')!.click(); });
+    for (let i = 0; i < (complete ? 12 : 2); i++) await advance();
+    const before = visible(), total = Array.from(sampleContent.glosses[0]).length;
+    expect(before).toBe(complete ? total : 12);
+    await act(async () => { host.querySelector<HTMLButtonElement>(".settings-typography-toggle")!.click(); });
+    const old = host.querySelector(".gloss-panel"), previousEvents = [...events];
+    const sameClock = clock.mock.contexts.at(-1);
+    if (!(sameClock instanceof ReadCompleteClock)) throw new Error("Expected the Reader read-complete clock");
+    const accrued = sameClock.visibleMs;
+    await act(async () => { document.querySelector<HTMLInputElement>('.reader-typography-popover [data-typography="bodyFont"][value="serif"]')!.click(); });
+    await advance(17);
+    expect(host.querySelector(".gloss-panel")).not.toBe(old);
+    expect(visible()).toBe(before); expect(clock.mock.contexts.at(-1)).toBe(sameClock);
+    expect(sameClock.visibleMs).toBeGreaterThanOrEqual(accrued); expect(events).toEqual(previousEvents);
+    let last = visible();
+    for (let i = 0; i < 12; i++) { await advance(); expect(visible()).toBeGreaterThanOrEqual(last); last = visible(); }
+    expect(visible()).toBe(total);
+    expect(events.filter(event => event === "gloss_complete")).toHaveLength(1);
+    expect(events.filter(event => ["gloss_read_complete", "gloss_abort", "gloss_dismiss_early", "sentence_reclick"].includes(event))).toEqual([]);
+  });
+});

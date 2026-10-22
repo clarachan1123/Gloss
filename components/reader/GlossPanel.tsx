@@ -16,6 +16,9 @@ import TermMark from "./TermMark";
 
 export type GlossStatus = "loading" | "streaming" | "done" | "failed";
 
+/** Reader owns this committed count across layout-only panel remounts. */
+export interface GlossRevealProgress { shown: number }
+
 export interface GlossView {
   status: GlossStatus;
   /** 目前收到的全部白话（失败时是断流前收到的部分） */
@@ -25,6 +28,7 @@ export interface GlossView {
   instant: boolean;
   /** 随书白话已在本机，撑开首帧直接显示第一块，余下仍按正常节奏播放。 */
   firstChunkNow?: boolean;
+  revealProgress?: GlossRevealProgress;
 }
 
 export const LOADING_VIEW: GlossView = { status: "loading", text: "", failure: null, instant: false };
@@ -125,10 +129,13 @@ export default function GlossPanel({
   const [reducedMotion] = useState(prefersReducedMotion);
   // 每次渲染都判断：重复点击时面板先以「加载中」出现，下一次渲染才拿到会话缓存
   const immediate = view.instant || reducedMotion;
-  const [shown, setShown] = useState(0);
+  const [shown, setShown] = useState(() => view.revealProgress?.shown ?? 0);
   const pendingRevealAnchor = useRef<RevealAnchor | null>(null);
   const visible = immediate ? chars.length : Math.min(Math.max(shown, view.firstChunkNow ? REVEAL_CHARS : 0), chars.length);
   const revealing = visible < chars.length;
+  useLayoutEffect(() => {
+    if (view.revealProgress) view.revealProgress.shown = visible;
+  }, [view.revealProgress, visible]);
 
   useEffect(() => {
     if (!revealing) return;

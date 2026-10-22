@@ -61,7 +61,7 @@ import {
   type StorageErrorCode,
   type StoredDocument,
 } from "@/lib/storage";
-import GlossPanel, { IDLE_EXPLAIN_VIEW, LOADING_VIEW, type ExplainView, type GlossView } from "./GlossPanel";
+import GlossPanel, { IDLE_EXPLAIN_VIEW, LOADING_VIEW, type ExplainView, type GlossRevealProgress, type GlossView } from "./GlossPanel";
 import { measureSplit, paragraphLength, paragraphOriginalFragments, rectOf, splitFragmentClassName, splitParagraphTail, slicePieces } from "./lineSplit";
 export { paragraphOriginalFragments, splitFragmentClassName } from "./lineSplit";
 import Sentence, { TailPlaceholder } from "./Sentence";
@@ -517,9 +517,14 @@ export default function Reader({ docId }: { docId: string }) {
   const [glosses, setGlosses] = useState<ReadonlyMap<number, GlossView>>(() => new Map());
   const glossesRef = useRef(glosses);
   glossesRef.current = glosses;
+  // G-70: layout remounts share committed reveal progress; explicit opens/retries start fresh.
+  const revealProgressBySentence = useMemo(() => new Map<number, GlossRevealProgress>(), [docId]);
   const setGloss = useCallback((entry: { index: number; view: GlossView }) => {
-    setGlosses((current) => new Map(current).set(entry.index, entry.view));
-  }, []);
+    let progress = revealProgressBySentence.get(entry.index);
+    if (!progress) { progress = { shown: 0 }; revealProgressBySentence.set(entry.index, progress); }
+    const view = { ...entry.view, revealProgress: progress };
+    setGlosses((current) => new Map(current).set(entry.index, view));
+  }, [revealProgressBySentence]);
   const [retryCounts, setRetryCounts] = useState<ReadonlyMap<number, number>>(() => new Map());
   /** 本次会话与 IndexedDB 预载的自动白话；只放 ref，预载完成不触发段落重渲染。 */
   const glossMemoRef = useRef(new Map<number, MemoryGloss>());
@@ -1180,6 +1185,7 @@ export default function Reader({ docId }: { docId: string }) {
       setSampleBreathed(true);
     }
 
+    revealProgressBySentence.delete(index);
     const savedClick = savedGlosses.has(index);
     const nextCount = savedClick ? null : (clickCountsRef.current.get(index) ?? 0) + 1;
     if (nextCount !== null) clickCountsRef.current.set(index, nextCount);
@@ -1538,9 +1544,10 @@ export default function Reader({ docId }: { docId: string }) {
     }
   }, [expansions, measurement, savedRegions, fontsReady, docId, isSample, retryCounts, sentences, capturePanelGrowth, setGloss]);
   const retryGloss = useCallback((index: number) => {
+    revealProgressBySentence.delete(index);
     setGloss({ index, view: LOADING_VIEW });
     setRetryCounts((counts) => new Map(counts).set(index, (counts.get(index) ?? 0) + 1));
-  }, [setGloss]);
+  }, [revealProgressBySentence, setGloss]);
 
   /**
    * 只有整块面板已经在视口上方时才建立字符锚定：视口顶边切在面板内时，

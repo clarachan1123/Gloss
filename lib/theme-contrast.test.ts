@@ -16,7 +16,7 @@ const AA_NORMAL_TEXT = 4.5;
 
 const CSS = readFileSync(path.resolve(__dirname, "../styles/tokens.css"), "utf8");
 
-type Token = "--text-body" | "--paper-main" | "--paper-side" | "--ink" | "--gloss" | "--saved-inline" | "--term" | "--hover" | "--sentence-active-bg";
+type Token = "--selection-bg" | "--selection-start-bg" | "--tool-active-bg" | "--text-body" | "--paper-main" | "--paper-side" | "--ink" | "--gloss" | "--saved-inline" | "--term" | "--hover" | "--sentence-active-bg";
 
 /** 从 tokens.css 里取某套主题的色值。主题块按 [data-theme="…"] 分段 */
 function themeColors(theme: string): Record<Token, string> {
@@ -29,6 +29,9 @@ function themeColors(theme: string): Record<Token, string> {
     return m[1];
   };
   return {
+    "--selection-bg": read("--selection-bg"),
+    "--selection-start-bg": read("--selection-start-bg"),
+    "--tool-active-bg": read("--tool-active-bg"),
     "--paper-main": read("--paper-main"),
     "--paper-side": read("--paper-side"),
     "--ink": read("--ink"),
@@ -289,4 +292,10 @@ describe("G-69 活动原句配色", () => {
     expect(CSS).toContain('@property --sentence-active-bg { syntax: "<color>"; inherits: true; initial-value: #E7E9E6; }');
     expect(CSS.slice(CSS.indexOf("html[data-theme-transition]"))).toMatch(/transition-property:[^;]*--sentence-active-bg/);
   });
+});
+
+describe("G-64a 划选颜色对比度", () => {
+  for (const theme of ["parchment", "moon-white", "eye-green", "dark"]) {
+    it(theme, () => { const c = themeColors(theme); for (const [fg,bg] of [["--text-body","--selection-bg"],["--text-body","--selection-start-bg"],["--ink","--tool-active-bg"]] as const) expect(contrast(c[fg],c[bg])).toBeGreaterThanOrEqual(4.5); });
+  }
 });

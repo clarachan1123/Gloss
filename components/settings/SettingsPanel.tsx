@@ -14,7 +14,11 @@ export default function SettingsPanel({
   onTypographyChange,
   onTypographyGestureStart,
   onTypographyGestureEnd,
+  selectionActive = false,
+  onSelectionToggle,
 }: {
+  selectionActive?: boolean;
+  onSelectionToggle?: () => void;
   glossShape: "inline" | "bubble";
   onGlossShapeChange: (shape: "inline" | "bubble") => void;
   typography: ReaderTypography;
@@ -77,6 +81,7 @@ export default function SettingsPanel({
   const result = state === "cleared" ? "已清除" : state === "failed" ? "清除失败" : null;
   return <>
     <div className="reader-tool-rail" data-reader-settings>
+      {onSelectionToggle && <button type="button" className="reader-tool reader-selection-desktop" data-selection-control aria-label="划选" aria-pressed={selectionActive} onClick={onSelectionToggle}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M4 9V4h5m6 0h5v5M4 15v5h5m6 0h5v-5M8 12h8" /></svg><span>划选</span></button>}
       <button ref={buttonRef} type="button" className="reader-tool settings-typography-toggle" aria-label="阅读排版"
         aria-expanded={expanded} aria-controls={typographyId} onClick={() => expanded ? close() : setExpanded(true)}>
         <span className="reader-tool-aa" aria-hidden="true">Aa</span><span>排版</span>

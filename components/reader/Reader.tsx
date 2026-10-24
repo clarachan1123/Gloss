@@ -20,6 +20,8 @@ import {
   type CSSProperties,
 } from "react";
 import ContextMenu, { type ContextMenuPoint } from "@/components/reader/ContextMenu";
+import SelectionBar from "./SelectionBar";
+import { normalizeSelection, sourcePointFromGlyphs, type SourcePoint, type SourceSelection, type SourceGlyph } from "@/lib/selection";
 import Notice from "@/components/Notice";
 import SettingsPanel, { MobileReaderSettings } from "@/components/settings/SettingsPanel";
 import { DEFAULT_READER_TYPOGRAPHY, readReaderTypography, validateReaderTypography, writeReaderTypography, type ReaderTypography } from "@/lib/reader-typography";
@@ -415,6 +417,7 @@ export default function Reader({ docId }: { docId: string }) {
   }, []);
 
   function handleGlossPointerOver(event: ReactPointerEvent<HTMLElement>) {
+    if (selectionModeRef.current) return;
     if (event.pointerType !== "mouse" || !(event.target instanceof Element)) return;
     const panel = event.target.closest<HTMLElement>(".gloss-panel[data-sentence-index]");
     if (!panel || !event.currentTarget.contains(panel) || panel === hoveredGlossRef.current) return;
@@ -453,6 +456,7 @@ export default function Reader({ docId }: { docId: string }) {
   }, []);
 
   function handleSentencePointerOver(event: ReactPointerEvent<HTMLElement>) {
+    if (selectionModeRef.current) return;
     if (event.pointerType !== "mouse" || !(event.target instanceof Element)) return;
     const target = event.target.closest<HTMLElement>(".sentence[data-index]");
     if (!target || !event.currentTarget.contains(target)) return;
@@ -616,7 +620,7 @@ export default function Reader({ docId }: { docId: string }) {
       if (!contextMenuRef.current || event.button !== 0) return;
       const menu = document.querySelector<HTMLElement>(".reader-context-menu");
       if (menu?.contains(event.target as Node)) return;
-      suppressOutsideClickRef.current = true;
+      suppressOutsideClickRef.current = !(event.target instanceof Element && event.target.closest("[data-selection-control]"));
       closeContextMenu();
     };
     const onClick = (event: MouseEvent) => {
@@ -787,6 +791,138 @@ export default function Reader({ docId }: { docId: string }) {
 
   // 不存 sentences，每次加载重算（G-03 保证确定性）
   const sentences = useMemo(() => (doc ? segmentParagraphs(doc.paragraphs).sentences : []), [doc]);
+
+  const [selectionMode, setSelectionMode] = useState(false);
+  const selectionModeRef = useRef(false);
+  const [selectionMobile, setSelectionMobile] = useState(false);
+  const [selectionStart, setSelectionStart] = useState<SourcePoint | null>(null);
+  const [selection, setSelection] = useState<SourceSelection | null>(null);
+  const selectionMarkerRef = useRef<HTMLSpanElement>(null);
+  const selectionGestureRef = useRef<{ id: number; x: number; y: number; moved: boolean; start: SourcePoint; last: SourcePoint } | null>(null);
+  function clearSelection() { setSelectionStart(null); setSelection(null); selectionGestureRef.current = null; }
+  function exitSelection() { selectionModeRef.current = false; setSelectionMode(false); clearSelection(); }
+  function toggleSelection() {
+    if (selectionModeRef.current) { exitSelection(); return; }
+    endFontSizeAdjustment();
+    clearSentenceHover(); clearGlossHover(); closeContextMenu();
+    suppressOutsideClickRef.current = false;
+    window.getSelection()?.removeAllRanges();
+    setSelectionMobile(window.innerWidth < 768);
+    clearSelection(); selectionModeRef.current = true; setSelectionMode(true);
+  }
+  // 只从真实原文的字框反查，白话、脚注、透明尾巴和空白间隙均不会成为端点。
+  function selectionPoint(x: number, y: number): SourcePoint | null {
+    const body = bodyRef.current;
+    const hit = document.elementFromPoint(x, y);
+    const span = hit?.closest<HTMLElement>(".sentence[data-offset]");
+    if (!body || !span || !body.contains(span) || span.closest(".gloss-panel, .reader-notes, .reader-tail-placeholder")) return null;
+    const node = span.firstChild, block = span.closest<HTMLElement>("[data-para]");
+    if (!(node instanceof Text) || !block || !doc) return null;
+    const paraIndex = Number(block.dataset.para), original = doc.paragraphs[paraIndex];
+    const hidden = original.length - original.trimStart().length;
+    const base = Number(span.dataset.offset) + hidden;
+    const glyphs: SourceGlyph[] = [];
+    for (let offset = 0; offset < node.length;) {
+      const char = String.fromCodePoint(node.data.codePointAt(offset)!);
+      const range = document.createRange(); range.setStart(node, offset); range.setEnd(node, offset + char.length);
+      for (const rect of range.getClientRects()) {
+        glyphs.push({ kind: "source", start: { paraIndex, offset: base + offset }, end: { paraIndex, offset: base + offset + char.length },
+          left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
+      }
+      offset += char.length;
+    }
+    return sourcePointFromGlyphs(glyphs, x, y);
+  }
+  function selectBetween(a: SourcePoint, b: SourcePoint) {
+    if (doc) setSelection(normalizeSelection(doc.paragraphs, sentences, a, b));
+  }
+  function selectionPointerDown(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0 || !event.isPrimary) return;
+    const point = selectionPoint(event.clientX, event.clientY);
+    if (!point) return;
+    selectionGestureRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false, start: point, last: point };
+    if (window.innerWidth >= 768 && event.pointerType === "mouse") {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setSelection(null);
+    }
+  }
+  function selectionPointerMove(event: ReactPointerEvent<HTMLElement>) {
+    const gesture = selectionGestureRef.current;
+    if (!selectionModeRef.current || !gesture || gesture.id !== event.pointerId) return;
+    if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= 10) gesture.moved = true;
+    if (window.innerWidth < 768 || event.pointerType !== "mouse") return;
+    const point = selectionPoint(event.clientX, event.clientY);
+    if (point) { gesture.last = point; selectBetween(gesture.start, point); }
+  }
+  function selectionPointerUp(event: ReactPointerEvent<HTMLElement>) {
+    const gesture = selectionGestureRef.current;
+    if (!selectionModeRef.current || !gesture || gesture.id !== event.pointerId) return;
+    selectionGestureRef.current = null;
+    const point = selectionPoint(event.clientX, event.clientY);
+    if (window.innerWidth >= 768 && event.pointerType === "mouse") {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      selectBetween(gesture.start, point ?? gesture.last);
+    } else if (point && !gesture.moved && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < 10 && !selection) {
+      if (selectionStart) selectBetween(selectionStart, point); else setSelectionStart(point);
+    }
+  }
+  // 本轮确定只退出；执行二、三在此接入所选范围的请求与结果事务。
+  function confirmSelection() { if (selection && selection.chars <= 1000) exitSelection(); }
+  useEffect(() => {
+    if (!selectionMode) return;
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); exitSelection(); } };
+    document.addEventListener("keydown", key, true);
+    return () => document.removeEventListener("keydown", key, true);
+  }, [selectionMode]);
+  useLayoutEffect(() => {
+    if (!selectionMode || !doc) return;
+    const body = bodyRef.current;
+    if (!body) return;
+    const highlights = typeof CSS !== "undefined" && "highlights" in CSS ? CSS.highlights : null;
+    const update = () => {
+      const ink = getComputedStyle(body).getPropertyValue("--ink").trim();
+      const cursor = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="4" fill="none" stroke="' + ink + '"/></svg>';
+      body.style.setProperty("--selection-cursor", "url(\"data:image/svg+xml," + encodeURIComponent(cursor) + "\") 8 8, crosshair");
+      const ranges: Range[] = [];
+      const start = selection?.start ?? selectionStart;
+      let end = selection?.end;
+      if (start && !end) end = { ...start, offset: start.offset + String.fromCodePoint(doc.paragraphs[start.paraIndex].codePointAt(start.offset)!).length };
+      if (start && end) for (const span of body.querySelectorAll<HTMLElement>(".sentence[data-offset]")) {
+        const node = span.firstChild, block = span.closest<HTMLElement>("[data-para]");
+        if (!(node instanceof Text) || !block) continue;
+        const paraIndex = Number(block.dataset.para);
+        if (paraIndex < start.paraIndex || paraIndex > end.paraIndex) continue;
+        const original = doc.paragraphs[paraIndex], hidden = original.length - original.trimStart().length;
+        const base = Number(span.dataset.offset) + hidden;
+        const from = Math.max(0, paraIndex === start.paraIndex ? start.offset - base : 0);
+        const to = Math.min(node.length, paraIndex === end.paraIndex ? end.offset - base : node.length);
+        if (to <= from) continue;
+        const range = document.createRange(); range.setStart(node, from); range.setEnd(node, to); ranges.push(range);
+      }
+      if (highlights && typeof Highlight !== "undefined") {
+        highlights.delete("gloss-selection"); highlights.delete("gloss-selection-start");
+        if (ranges.length) highlights.set(selection ? "gloss-selection" : "gloss-selection-start", new Highlight(...ranges));
+      }
+      const marker = selectionMarkerRef.current, last = ranges.at(-1), rect = last?.getClientRects();
+      const finalRect = rect?.[rect.length - 1];
+      if (marker) {
+        marker.hidden = !finalRect;
+        if (finalRect) { marker.style.left = (selection ? finalRect.right + 2 : finalRect.left) + "px";
+          marker.style.top = (selection ? finalRect.bottom - 3 : finalRect.bottom) + "px";
+          marker.style.width = (selection ? 5 : finalRect.width) + "px"; }
+      }
+    };
+    const resized = () => { setSelectionMobile(window.innerWidth < 768); update(); };
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", resized);
+    const themeObserver = new MutationObserver(update); themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    const observer = new ResizeObserver(update); observer.observe(body);
+    return () => { highlights?.delete("gloss-selection"); highlights?.delete("gloss-selection-start");
+      window.removeEventListener("scroll", update); window.removeEventListener("resize", resized); observer.disconnect(); themeObserver.disconnect(); body.style.removeProperty("--selection-cursor"); };
+  }, [selectionMode, selection, selectionStart, doc, measurement]);
+
   explainContextRef.current = { docId, sentences, paragraphs: doc?.paragraphs ?? [] };
   explainViewsRef.current = explainViews;
 
@@ -1154,6 +1290,7 @@ export default function Reader({ docId }: { docId: string }) {
   }
 
   function handleReaderContextMenu(event: ReactMouseEvent<HTMLElement>) {
+    if (selectionModeRef.current) { event.preventDefault(); event.stopPropagation(); return; }
     const eventTarget = event.target;
     const target = eventTarget instanceof Element ? eventTarget : eventTarget instanceof Node ? eventTarget.parentElement : null;
     if (!target) return;
@@ -1255,11 +1392,13 @@ export default function Reader({ docId }: { docId: string }) {
   }
 
   function handleBodyPointerDown(event: ReactPointerEvent<HTMLElement>) {
+    if (selectionModeRef.current) { selectionPointerDown(event); return; }
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>(".sentence[data-index]") : null;
     lastPointerDownRef.current = { pointerType: event.pointerType, sentenceIndex: target ? Number(target.dataset.index) : null };
   }
 
   function handleBodyClick(event: ReactMouseEvent<HTMLElement>) {
+    if (selectionModeRef.current) { event.stopPropagation(); return; }
     typographyLayoutRef.current = null;
     // G5：用户划选了文字（复制原文），松开鼠标不触发撑开
     if (hasTextSelection()) return;
@@ -1387,6 +1526,7 @@ export default function Reader({ docId }: { docId: string }) {
   useEffect(() => {
     if (measurement || !bodyRef.current || (!expansions.size && !expandedSavedIndexes.size && activeSavedIndex === null)) return;
     const dismiss = () => {
+      if (selectionModeRef.current) return;
       typographyLayoutRef.current = null;
       collapseIndexes([...expansionsRef.current.keys(), ...expandedSavedIndexesRef.current], true);
       setActiveSavedIndex(null);
@@ -1985,6 +2125,7 @@ export default function Reader({ docId }: { docId: string }) {
           </div>
         </div>
 
+        <button type="button" className="reader-selection-mobile" data-selection-control data-reader-settings aria-label="划选" aria-pressed={selectionMode} onClick={toggleSelection}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M4 9V4h5m6 0h5v5M4 15v5h5m6 0h5v-5M8 12h8" /></svg><span>划选</span></button>
         <button type="button" ref={attachTypographyButton} className="reader-typography-aa" data-reader-settings
           aria-label="阅读排版" aria-haspopup="dialog" aria-controls="reader-typography-sheet" aria-expanded={mobileTypographyOpen}
           onClick={() => setTypographySheet(!mobileTypographyOpenRef.current)}>Aa</button>
@@ -2070,11 +2211,14 @@ export default function Reader({ docId }: { docId: string }) {
             style={{ "--reader-font-size": `${typography.fontSize}px`, "--reader-line-height": typography.lineHeight,
               "--reader-line-chars": typography.lineChars, "--reader-body-font": `var(--font-${typography.bodyFont}-cjk)`,
               "--reader-gloss-font": `var(--font-${typography.glossFont}-cjk)` } as CSSProperties}
-            className={"reader-body reader-body-reader" + (sample && !sampleBreathed ? " reader-body-sample-breathing" : "")}
+            className={"reader-body reader-body-reader" + (selectionMode ? " reader-body-selection" : "") + (sample && !sampleBreathed ? " reader-body-sample-breathing" : "")}
             data-measuring={measurement !== null || savedRegions === null || !fontsReady ? "true" : "false"}
             lang="zh-CN"
             onClick={handleBodyClick}
             onPointerDown={handleBodyPointerDown}
+            onPointerMove={selectionPointerMove}
+            onPointerUp={selectionPointerUp}
+            onPointerCancel={() => { selectionGestureRef.current = null; }}
             onPointerOver={(event) => { handleGlossPointerOver(event); handleSentencePointerOver(event); }}
             onPointerOut={(event) => { handleGlossPointerOut(event); handleSentencePointerOut(event); }}
             onPointerLeave={(event) => {
@@ -2124,9 +2268,11 @@ export default function Reader({ docId }: { docId: string }) {
       </main>
 
       <aside className="col col-right" aria-label="阅读设置">
-          <SettingsPanel glossShape={glossShape} onGlossShapeChange={changeGlossShape} typography={typography} onTypographyChange={changeTypography}
+          <SettingsPanel selectionActive={selectionMode} onSelectionToggle={toggleSelection} glossShape={glossShape} onGlossShapeChange={changeGlossShape} typography={typography} onTypographyChange={changeTypography}
             onTypographyGestureStart={startTypographyGesture} onTypographyGestureEnd={endTypographyGesture} />
       </aside>
+      {selectionMode && <><SelectionBar mobile={selectionMobile} started={selectionStart !== null} selection={selection} onReselect={clearSelection} onConfirm={confirmSelection} onExit={exitSelection} />
+        <span ref={selectionMarkerRef} className="reader-selection-marker" data-kind={selection ? "end" : "start"} aria-hidden="true" hidden /></>}
       <button type="button" ref={attachFloatingTypographyButton} className="reader-typography-floating-aa" data-reader-settings
         data-visible={floatingTypographyShown}
         aria-label="阅读排版" aria-haspopup="dialog" aria-controls="reader-typography-sheet" aria-expanded={mobileTypographyOpen}

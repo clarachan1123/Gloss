@@ -5,6 +5,8 @@ import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import SelectionBar from "./SelectionBar";
+import type { SourceSelection } from "@/lib/selection";
 import * as storage from "@/lib/storage";
 import * as lineSplit from "./lineSplit";
 import { slicePieces, splitParagraphTail } from "./lineSplit";
@@ -697,6 +699,24 @@ describe("G-15b 阅读器事件", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/explain"))).toEqual([]);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/report"))).toHaveLength(1);
     expectAccepted(["deep_explain_blocked", "report_error_click"]);
+  });
+
+  it.each([".reader-selection-mobile", ".reader-selection-desktop"])("菜单外点 %s 同次进入划选且保留白话", async (selector) => {
+    stubEnvironment(["g64a-menu"]);
+    const container = await mount("g64a-menu");
+    await click(container, ".sentence[data-index='0']", 1_000);
+    const sentence = container.querySelector<HTMLElement>(".sentence[data-index='0']")!;
+    await act(async () => { sentence.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 })); });
+    expect(document.querySelector(".reader-context-menu")).not.toBeNull();
+    const button = container.querySelector<HTMLElement>(selector)!;
+    await act(async () => {
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(document.querySelector(".reader-context-menu")).toBeNull();
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelector(".reader-selection-bar")).not.toBeNull();
+    expect(container.querySelector(".gloss-panel")).not.toBeNull();
   });
 
   it("右键「听不懂」未用时发 context_menu", async () => {
@@ -1700,4 +1720,9 @@ describe("G-70 重测保留逐字进度", () => {
     expect(events.filter(event => event === "gloss_complete")).toHaveLength(1);
     expect(events.filter(event => ["gloss_read_complete", "gloss_abort", "gloss_dismiss_early", "sentence_reclick"].includes(event))).toEqual([]);
   });
+});
+
+describe("G-64a 选区确认提示", () => {
+ it.each([1000,1001])("%i字确认门槛", chars=>{const value:SourceSelection={start:{paraIndex:0,offset:0},end:{paraIndex:0,offset:chars},text:"字".repeat(chars),autoPunctuation:"",chars,sentenceCount:2,kind:"range"};const host=document.createElement("div");host.innerHTML=renderToString(createElement(SelectionBar,{mobile:true,started:true,selection:value,onReselect:vi.fn(),onConfirm:vi.fn(),onExit:vi.fn()}));const confirm=[...host.querySelectorAll("button")].find(b=>b.textContent==="确定")!;expect(confirm.disabled).toBe(chars>1000);expect(host.textContent).toContain(chars>1000?"选得太长了，请缩短到 1000 字以内":"已选『");});
+ it("起点后提示再点终点且没有结果操作",()=>{const html=renderToString(createElement(SelectionBar,{mobile:true,started:true,selection:null,onReselect:vi.fn(),onConfirm:vi.fn(),onExit:vi.fn()}));expect(html).toContain("再点终点");expect(html).not.toContain("留下");});
 });

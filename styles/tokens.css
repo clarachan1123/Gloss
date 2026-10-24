@@ -30,6 +30,9 @@
   --term: #233448; /* 候选 A 深·低饱和：vs 底色 11.73，vs 白话 1.78，ΔE 20.0 */
   --hover: #1F4E75; /* C 档：vs 底色 8.08，与正文墨色 ΔE 21.6，与术语色 ΔE 10.4 */
   --sentence-active-bg: #E7E9E6;
+  --selection-bg: #E8DCB5;
+  --selection-start-bg: #D2BE84;
+  --tool-active-bg: #E6E1D6;
   --shelf-ledge-top: #E5DFC8;
   --shelf-ledge-mid: #F1EBD9;
   --shelf-ledge-bottom: #DDD2B1;
@@ -69,6 +72,9 @@
   --term: #1F3341; /* 候选 A 深·低饱和：vs 底色 11.99，vs 白话 1.91，ΔE 16.4（月白的白话色偏冷灰，灰蓝难拉开） */
   --hover: #1F4E75; /* C 档：vs 底色 8.02，与正文墨色 ΔE 21.6，与术语色 ΔE 11.8 */
   --sentence-active-bg: #E4E8ED;
+  --selection-bg: #D8D8E2;
+  --selection-start-bg: #C4C4D2;
+  --tool-active-bg: #DCDCE2;
   --shelf-ledge-top: #E2E2E8;
   --shelf-ledge-mid: #E7E7EC;
   --shelf-ledge-bottom: #CECED7;
@@ -108,6 +114,9 @@
   --term: #326095; /* 候选 B 中·中饱和：vs 底色 5.70，vs 白话 1.08，ΔE 26.8 */
   --hover: #14446B; /* C 档：vs 底色 8.94，与正文墨色 ΔE 23.3，与术语色 ΔE 10.1 */
   --sentence-active-bg: #DCE4E0;
+  --selection-bg: #CBD8C3;
+  --selection-start-bg: #B6C8AB;
+  --tool-active-bg: #D5DDD0;
   --shelf-ledge-top: #D5DFD0;
   --shelf-ledge-mid: #DFE7DB;
   --shelf-ledge-bottom: #C1D0BA;
@@ -149,6 +158,9 @@
   --term: #8DB0D4;
   --hover: #C4DAF0;
   --sentence-active-bg: #252524;
+  --selection-bg: #4A4238;
+  --selection-start-bg: #5E5446;
+  --tool-active-bg: #34302C;
   --shelf-ledge-top: #5E4D3A;
   --shelf-ledge-mid: #4A3A2A;
   --shelf-ledge-bottom: #3A2D20;
@@ -211,6 +223,9 @@
 @property --saved-inline { syntax: "<color>"; inherits: true; initial-value: #666057; }
 @property --rule { syntax: "<color>"; inherits: true; initial-value: #E5DFC8; }
 @property --term { syntax: "<color>"; inherits: true; initial-value: #233448; }
+@property --selection-bg { syntax: "<color>"; inherits: true; initial-value: #E8DCB5; }
+@property --selection-start-bg { syntax: "<color>"; inherits: true; initial-value: #D2BE84; }
+@property --tool-active-bg { syntax: "<color>"; inherits: true; initial-value: #E6E1D6; }
 @property --sentence-active-bg { syntax: "<color>"; inherits: true; initial-value: #E7E9E6; }
 @property --hover { syntax: "<color>"; inherits: true; initial-value: #1F4E75; }
 @property --shelf-ledge-top { syntax: "<color>"; inherits: true; initial-value: #E5DFC8; }
@@ -221,7 +236,7 @@
 /* Only explicit user switches transition. Loading a saved theme never enables this selector. */
 html[data-theme-transition] {
   transition-property: --paper-main, --paper-side, --ink, --text-body, --gloss, --saved-inline, --rule,
-    --term, --hover, --sentence-active-bg, --shelf-ledge-top, --shelf-ledge-mid, --shelf-ledge-bottom, --shelf-ledge-edge, --shelf-ledge-shadow,
+    --term, --hover, --sentence-active-bg, --selection-bg, --selection-start-bg, --tool-active-bg, --shelf-ledge-top, --shelf-ledge-mid, --shelf-ledge-bottom, --shelf-ledge-edge, --shelf-ledge-shadow,
     --input-bg, --placeholder, --control-border, --secondary-border, --button-hover, --import-border, --upload-border, --overlay-remove, --overlay-import, --shadow-context, --shadow-import, --surface-highlight, --text-error, --focus-strong, --shadow-continue, --shadow-spine, --shadow-cover, --swatch-parchment, --swatch-moon-white, --swatch-eye-green;
   transition-duration: 180ms;
   transition-timing-function: ease;

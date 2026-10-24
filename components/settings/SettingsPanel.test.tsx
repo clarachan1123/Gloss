@@ -130,3 +130,7 @@ it("手机字号步进、更多排版及现有模式行为", async () => {
     }
   } finally { await act(async () => root.unmount()); }
 });
+
+it("划选位于工具轨首位并反映按下状态", () => {
+ const onSelectionToggle=vi.fn(); const html=renderToString(createElement(SettingsPanel,{glossShape:"inline",onGlossShapeChange:vi.fn(),typography:{...defaults},onTypographyChange:vi.fn(),selectionActive:true,onSelectionToggle}));const host=document.createElement("div");host.innerHTML=html;const first=host.querySelector(".reader-tool-rail")!.firstElementChild!;expect(first.getAttribute("aria-label")).toBe("划选");expect(first.getAttribute("aria-pressed")).toBe("true");
+});

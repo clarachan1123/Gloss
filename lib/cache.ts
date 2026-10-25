@@ -1,4 +1,5 @@
 import type { GlossInput } from "./gloss-client";
+import { clearAllSelectionCache, clearSelectionCacheForDocument } from "./selection-cache";
 import { MODEL_FAST } from "./models";
 import { GLOSS_MAX_TOKENS, GLOSS_PROMPT_VERSION, GLOSS_TEMPERATURE } from "./prompts/gloss";
 import { STRUCTURE_PROMPT_VERSION } from "./prompts/structure";
@@ -164,7 +165,7 @@ function openCache(): Promise<IDBDatabase> {
 }
 
 /** 清除全部浏览器自动缓存；不触碰 localStorage 中的保存白话、原文、位置或结构摘要。 */
-export function clearAllGlossCache(): Promise<boolean> {
+function clearExistingGlossCache(): Promise<boolean> {
   return new Promise((resolve) => {
     try {
       const request = indexedDB.deleteDatabase(GLOSS_CACHE_DB);
@@ -178,7 +179,7 @@ export function clearAllGlossCache(): Promise<boolean> {
 }
 
 /** 删除一本文档的自动白话，不影响其他文档的 IndexedDB 缓存。 */
-export async function clearGlossCacheForDocument(docId: string): Promise<boolean> {
+async function clearExistingGlossCacheForDocument(docId: string): Promise<boolean> {
   try {
     const db = await openCache();
     try {
@@ -203,6 +204,17 @@ export async function clearGlossCacheForDocument(docId: string): Promise<boolean
   } catch {
     return false;
   }
+}
+
+/** 清除两类独立数据库；任一失败都返回 false，两边仍各自尝试。 */
+export async function clearAllGlossCache(): Promise<boolean> {
+  const results = await Promise.all([clearExistingGlossCache(), clearAllSelectionCache()]);
+  return results.every(Boolean);
+}
+/** 按书同时清除单句与划选结果，保存白话不受影响。 */
+export async function clearGlossCacheForDocument(docId: string): Promise<boolean> {
+  const results = await Promise.all([clearExistingGlossCacheForDocument(docId), clearSelectionCacheForDocument(docId)]);
+  return results.every(Boolean);
 }
 
 export function selectRecord(

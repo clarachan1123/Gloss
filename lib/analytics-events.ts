@@ -67,7 +67,7 @@ const fields: Record<string, Record<string, Check>> = {
   reader_enter: { source: oneOf("shelf", "upload", "direct", "landing"), positionRestored: bool },
   shelf_book_click: { entry: oneOf("continue", "cover", "start"), daysSinceOpenBucket: daysSinceOpen },
   ai_call: {
-    callKind: oneOf("gloss", "structure", "explain"),
+    callKind: oneOf("gloss", "structure", "explain", "range", "term"),
     attempt: (value) => integer(value) && (value as number) >= 1 && (value as number) <= 2,
     outcome: oneOf("done", "overlength", "error", "abort"),
     model: short,

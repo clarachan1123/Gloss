@@ -340,3 +340,18 @@ describe("标记长度上限：≤ 6 字", () => {
     expect(terms(limitTerms(splitTerms(text), { source: LONG_SOURCE }))).toEqual(["力", "实在性", "终极因"]);
   });
 });
+
+describe("划选可选上限不改变旧默认管线", () => {
+  it("默认与显式150的分块、拒答、截断逐项相同", () => {
+    const run = (raw: string, explicit: boolean) => {
+      const output = explicit ? new GlossOutput(150) : new GlossOutput();
+      const chunks: string[] = [];
+      for (const ch of raw) chunks.push(...output.push(ch));
+      chunks.push(...output.end());
+      return { chunks, refused: output.refused, truncated: output.truncated, charCount: output.charCount };
+    };
+    for (const raw of ["# 标题\n**正文**。", "【无法处理】原因", "字".repeat(200), "⟦潮汐⟧变化。", "😀 \n".repeat(170)]) {
+      expect(run(raw, false)).toEqual(run(raw, true));
+    }
+  });
+});

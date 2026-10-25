@@ -1,4 +1,9 @@
 // @vitest-environment happy-dom
+import { clearAllSelectionCache, clearSelectionCacheForDocument } from "./selection-cache";
+vi.mock("./selection-cache", () => ({
+  clearAllSelectionCache: vi.fn(async () => true), clearSelectionCacheForDocument: vi.fn(async (_docId: string) => true),
+}));
+
 import { describe, expect, it, vi } from "vitest";
 import {
   CURRENT_GLOSS_CACHE_RUNTIME,
@@ -157,6 +162,17 @@ describe("G-10a 清除自动缓存", () => {
     expect(localStorage.getItem("gloss:doc:12345678")).toBe("原文");
     expect(localStorage.getItem("gloss:pos:12345678")).toBe("4");
     expect(localStorage.getItem("gloss:structure:12345678")).toBe("摘要");
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("清除自动缓存同时清除划选缓存",()=>{
+  it("旧库失败也尝试新库，返回合并结果",async()=>{
+    vi.stubGlobal("indexedDB",{deleteDatabase:()=>{throw new Error("拒绝旧库");},open:()=>{throw new Error("拒绝旧库");}});
+    expect(await clearAllGlossCache()).toBe(false);
+    expect(clearAllSelectionCache).toHaveBeenCalled();
+    expect(await clearGlossCacheForDocument("只删此书")).toBe(false);
+    expect(clearSelectionCacheForDocument).toHaveBeenCalledWith("只删此书");
     vi.unstubAllGlobals();
   });
 });

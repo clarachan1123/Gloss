@@ -148,3 +148,16 @@ describe("G-61 import buckets", () => {
     }
   });
 });
+describe("划选服务端调用类型", () => {
+  const detail = { event:"ai_call", eventId, attempt:1, outcome:"done", model:"deepseek-flash", promptVersion:"term-v0",
+    durationMs:100,firstChunkMs:20,cacheHitTokens:1,cacheMissTokens:2,completionTokens:3,usageKnown:true,failureCode:null,abortPhase:null };
+  it.each(["term","range"])("接收服务端 %s，但不加入客户端白名单",callKind=>{
+    expect(validateAnalyticsEvent({...detail,callKind})).toBe(true);
+    expect(validateAnalyticsEvent({...detail,callKind},true)).toBe(false);
+    for(const extra of [{sentence:"源句"},{text:"结果"},{docId:"书"},{title:"书名"}]) expect(validateAnalyticsEvent({...detail,callKind,...extra})).toBe(false);
+  });
+  it("既有调用类型及严格字段保持不变",()=>{
+    for(const callKind of ["gloss","structure","explain"]) expect(validateAnalyticsEvent({...detail,callKind})).toBe(true);
+    expect(validateAnalyticsEvent({...detail,callKind:"selection"})).toBe(false);
+  });
+});

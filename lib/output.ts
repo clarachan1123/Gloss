@@ -75,6 +75,7 @@ function stripInline(text: string): string {
 
 /** 输出开头若是拒答标记（C6）就吞掉并标记；可能还在输出标记的途中时先扣住，确定不是再放行 */
 class RefusalGate {
+  constructor(private readonly marker: string = GLOSS_REFUSAL_MARKER) {}
   refused = false;
   private decided = false;
   private held = "";
@@ -84,12 +85,12 @@ class RefusalGate {
     if (this.decided) return text;
     this.held += text;
     const head = this.held.replace(/^\s+/u, "");
-    if (head.startsWith(GLOSS_REFUSAL_MARKER)) {
+    if (head.startsWith(this.marker)) {
       this.refused = true;
       this.held = "";
       return "";
     }
-    if (GLOSS_REFUSAL_MARKER.startsWith(head)) return "";
+    if (this.marker.startsWith(head)) return "";
     return this.release(head);
   }
 
@@ -153,8 +154,14 @@ class Chunker {
 /** 一次功能一调用的输出管线。push 喂模型的原始增量，返回可以立刻发给前端的字块 */
 export class GlossOutput {
   private readonly stripper = new MarkdownStripper();
-  private readonly gate = new RefusalGate();
-  private readonly limiter = new CharLimiter(MAX_GLOSS_CHARS, TERM_OPEN + TERM_CLOSE);
+  private readonly gate: RefusalGate;
+  private readonly limiter: CharLimiter;
+
+  /** 新调用方可指定上限和拒答标记；默认完整保留单句管线。 */
+  constructor(maxChars = MAX_GLOSS_CHARS, refusalMarker: string = GLOSS_REFUSAL_MARKER) {
+    this.gate = new RefusalGate(refusalMarker);
+    this.limiter = new CharLimiter(maxChars, TERM_OPEN + TERM_CLOSE);
+  }
   private readonly chunker = new Chunker();
 
   get refused(): boolean {

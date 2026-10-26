@@ -756,9 +756,10 @@ body {
   .col-left .reader-back-text, .col-left > .feedback-reader, .col-left > .mode-switch { display: none; }
   .col-left .reader-shelf-back { display: flex; align-items: center; justify-content: center; box-sizing: border-box; width: 44px; height: 44px; line-height: 1; }
   .reader-back-icon { display: block; }
-  .reader-mobile-heading { display: flex; grid-column: 2; grid-row: 1; min-width: 0; flex-direction: column; align-items: center; justify-content: center; }
-  .reader-mobile-title { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 15px; line-height: 20px; }
-  .reader-mobile-progress { display: block; color: var(--gloss); font-size: 10px; line-height: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .reader-mobile-heading { display: flex; grid-column: 2; grid-row: 1; min-width: 0; flex-direction: column; align-items: flex-start; justify-content: center; }
+  .reader-mobile-title { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 15px; line-height: 20px; text-align: left; }
+  .reader-mobile-progress { display: block; color: var(--gloss); font-size: 10px; line-height: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: left; }
+  .reader-mobile-title::before, .reader-mobile-title::after, .reader-mobile-progress::before, .reader-mobile-progress::after { text-align: start; }
   .col-left .reader-typography-aa { grid-column: 3; grid-row: 1; box-sizing: border-box; width: 44px; height: 44px; padding: 0; font-size: 12px; }
   .reader-mobile-progress-track { position: absolute; display: block; height: 2px; bottom: -1px; left: 0; right: 0; pointer-events: none; }
   .reader-mobile-progress-track > span { display: block; height: 100%; background: var(--hover); opacity: .55; }

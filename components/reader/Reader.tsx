@@ -27,7 +27,7 @@ import { TERM_PROMPT_VERSION } from "@/lib/prompts/term";
 import { RANGE_PROMPT_VERSION } from "@/lib/prompts/range";
 import { MODEL_FAST } from "@/lib/models";
 import { readSelectionCache, saveSelectionCache, selectionCacheRuntime } from "@/lib/selection-cache";
-import { loadSavedSelections, saveSavedSelection, removeSavedSelection, selectionIdentity, type SavedSelection } from "@/lib/selection-storage";
+import { hashSelectionSource, loadSavedSelections, saveSavedSelection, removeSavedSelection, selectionIdentity, type SavedSelection } from "@/lib/selection-storage";
 
 import { normalizeSelection, sourcePointFromGlyphs, comparePoints, selectionText, SELECTION_PUNCTUATION, type SourcePoint, type SourceSelection, type SourceGlyph } from "@/lib/selection";
 import Notice from "@/components/Notice";
@@ -1021,7 +1021,7 @@ export default function Reader({ docId }: { docId: string }) {
         next.set(id, { ...result, saved: null, expanded: true }); stageSelectionResults(next); return "removed";
       }
       const entry = await saveSavedSelection(docId, doc.paragraphs, { resultKind: result.resultKind,
-        start: result.selection.start, end: result.selection.end, sourceHash: await sha256(result.selection.text),
+        start: result.selection.start, end: result.selection.end, sourceHash: await hashSelectionSource(result.selection.text),
         text: result.view.text, savedAt: Date.now(), promptVersion: result.promptVersion, model: result.model });
       if (explainContextRef.current.docId !== docId) return "saved";
       const latest = selectionResultsRef.current.get(id); if (!latest) return "saved";

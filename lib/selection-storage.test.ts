@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { loadSavedSelections, saveSavedSelection, removeSavedSelection, selectionIdentity, SELECTION_SAVED_PREFIX, type SavedSelection } from "./selection-storage";
+import { hashSelectionSource, loadSavedSelections, saveSavedSelection, removeSavedSelection, selectionIdentity, SELECTION_SAVED_PREFIX, type SavedSelection } from "./selection-storage";
 import { removeShelfDocument } from "./storage";
 import { sha256 } from "./cache";
 const paragraphs=["潮汐推动海水。月亮引起潮汐。","后段。"];
@@ -9,6 +9,16 @@ async function entry(start=0,end=2,kind:"term"|"range"="term"):Promise<SavedSele
  return {resultKind:kind,start:{paraIndex:0,offset:start},end:{paraIndex:0,offset:end},sourceHash:await sha256(paragraphs[0].slice(start,end)),text:"本地结果。",savedAt:100,promptVersion:kind+"-v0",model:"deepseek-flash"};
 }
 describe("独立划选保存",()=>{
+ it("无 Web Crypto 时用 UTF-8 SHA-256 保持原文校验一致",async()=>{
+   expect(await hashSelectionSource("abc",null)).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+   const long="海".repeat(450);expect(await hashSelectionSource(long,null)).toBe(await sha256(long));
+ });
+ it("触摸路径可保存长响应与跨句跨段范围并在重新读取时恢复",async()=>{
+   const sourceParagraph="甲".repeat(230)+"。"+"乙".repeat(220)+"。",crossParagraphs=[sourceParagraph,"末段原句。"],sourceText=sourceParagraph+"\n末段原句";
+   const value:SavedSelection={resultKind:"range",start:{paraIndex:0,offset:0},end:{paraIndex:1,offset:4},sourceHash:await hashSelectionSource(sourceText,null),text:"白话".repeat(225),savedAt:101,promptVersion:"range-v0",model:"deepseek-flash"};
+   expect([...value.text].length).toBe(450);expect(await saveSavedSelection("book",crossParagraphs,value)).toEqual(value);
+   expect(await loadSavedSelections("book",crossParagraphs)).toEqual([value]);
+ });
  it("旧单句、解释、原文与阅读位置逐字不变，刷新读取保留区间与模型信息",async()=>{
    const old={"gloss:saved:book":'{"version":1,"entries":[{"旧":"数据"}]}',"gloss:explain:book":"旧解释","gloss:doc:book":"旧原文","gloss:pos:book":"8"};
    for(const[k,v]of Object.entries(old))localStorage.setItem(k,v);

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, rm, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
@@ -109,7 +109,7 @@ async function seed(c, paragraphs, fileName) {
   }, paragraphs,fileName);
 }
 async function header(c) {
-  return c.evaluate("(()=>{const bar=document.querySelector('.col-left');const q=s=>{const e=document.querySelector(s),r=e.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width,height:r.height,font:getComputedStyle(e).fontSize}};return {available:bar.clientWidth,back:q('.reader-shelf-back'),heading:q('.reader-mobile-heading'),title:q('.reader-mobile-title'),progress:q('.reader-mobile-progress'),aa:q('.col-left .reader-typography-aa'),selection:document.querySelector('.reader-selection-mobile')?q('.reader-selection-mobile'):null,overflow:bar.scrollWidth-bar.clientWidth}})()");
+  return c.evaluate("(()=>{const bar=document.querySelector('.col-left');const q=s=>{const e=document.querySelector(s),r=e.getBoundingClientRect(),style=getComputedStyle(e);return {left:r.left,right:r.right,width:r.width,height:r.height,font:style.fontSize,textAlign:style.textAlign}};const textLeft=s=>{const e=document.querySelector(s),n=document.createTreeWalker(e,NodeFilter.SHOW_TEXT).nextNode();if(!n)return null;const r=document.createRange();r.setStart(n,0);r.setEnd(n,1);return r.getBoundingClientRect().left};return {available:bar.clientWidth,back:q('.reader-shelf-back'),heading:q('.reader-mobile-heading'),title:q('.reader-mobile-title'),titleTextLeft:textLeft('.reader-mobile-title'),progress:q('.reader-mobile-progress'),progressTextLeft:textLeft('.reader-mobile-progress'),aa:q('.col-left .reader-typography-aa'),selection:document.querySelector('.reader-selection-mobile')?q('.reader-selection-mobile'):null,overflow:bar.scrollWidth-bar.clientWidth}})()");
 }
 async function ordinary(c) {
   await c.evaluate("getSelection()?.removeAllRanges();document.dispatchEvent(new MouseEvent('click',{bubbles:true}))");
@@ -369,7 +369,7 @@ function resultMock(){
     __g64.resultRequests.push({kind,input:JSON.parse(init.body)});
     if(mode==="refused")return Response.json({error:"refused"},{status:422});
     if(mode==="error")return Response.json({error:"api_error"},{status:502});
-    const text=("这里是在说海水随月亮的影响不断变化。").repeat(kind==="term"?5:9).slice(0,kind==="term"?100:150);
+    const longText=Array.from("海水随着月亮发生周期变化。"),text=__g64.resultTextLength?Array.from({length:__g64.resultTextLength},(_,i)=>longText[i%longText.length]).join(""):("这里是在说海水随月亮的影响不断变化。").repeat(kind==="term"?5:9).slice(0,kind==="term"?100:150);
     let timer,offset=0,stopped=false;
     return new Response(new ReadableStream({
       start(controller){
@@ -422,6 +422,43 @@ async function resultFunctionalSmoke(c,width,source){
   await wait(c,"document.querySelectorAll('[data-saved-selection-id]').length===1&&CSS.highlights.has('gloss-result-saved')","刷新恢复保存范围");
   assert(await c.evaluate("!document.querySelector('[data-selection-id]')"),"刷新保留收起模式");
   console.log(JSON.stringify({resultFunctionalSmoke:{width,savedFields:true,collapsedUnderline:true,rangeToggle:true,sidebarJump:true,refresh:true}}));
+}
+
+const SAVE_REPRO_PARAGRAPH="资本主义以前的时代道德观念都有些宗教性：中国的儒道、印度的佛教、欧洲的基督教。这些宗教的道德说各自又有分派。等到资本主义的时代又有资产阶级式的道德说，将来还有无产阶级的道德说。在现代社会里明明有三种阶级（贵族、资产、无产）的道德说。那一种是对的？无论那一种亦不是绝对正当的。只能从人类大多数的劳动群众的观点看来，说那在现时即能含孕将来的社会关系的道德说——无产阶级的道德说，是现时最正确的善恶标准，——因为他是促进社会进化的。据此说来，三个阶级各有各的善恶，可见道德观点的根据在于各阶级的经济地位。";
+async function selectionSaveReproduction(c,width){
+  const failures=[],paraIndex=2,text=sample.paragraphs[paraIndex],start=text.indexOf("这些宗教"),end=text.indexOf("那一种是对的？")+"那一种是对的？".length-1;
+  assert(start>=0&&end>=start,"实际示例书目标边界");
+  const source=selection.normalizeSelection(sample.paragraphs,segmentParagraphs(sample.paragraphs).sentences,{paraIndex,offset:start},{paraIndex,offset:end});
+  assert(source.kind==="range"&&source.sentenceCount===4,"实际示例书为四句范围",source);
+  const activate=async selector=>{const point=await evaluate(c,s=>{const e=document.querySelector(s);e.scrollIntoView({block:"center",behavior:"instant"});const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};},selector);if(width<768)await touch(c,point);else await realClick(c,point);};
+  for(const length of [100,450]){
+    await navigate(c,ORIGIN+"/read/sample");
+    await c.evaluate('localStorage.setItem("gloss:settings:reading-mode","review");for(const key of ["gloss:pos:sample","gloss:saved:sample","gloss:selection-saved:sample"])localStorage.removeItem(key)');
+    await c.evaluate('new Promise((resolve,reject)=>{const r=indexedDB.deleteDatabase("gloss-selection-cache");r.onsuccess=resolve;r.onerror=()=>reject(r.error);r.onblocked=()=>reject(Error("缓存未关闭"));})');
+    await navigate(c,ORIGIN+"/read/sample");
+    await c.evaluate("("+resultMock.toString()+")()");await evaluate(c,n=>__g64.resultTextLength=n,length);
+    await activate(toggle(width));
+    const first=await glyph(c,paraIndex,start,true);
+    if(width<768){await touch(c,first);await c.call("Input.synthesizeScrollGesture",{x:width/2,y:500,yDistance:-100,speed:1000,gestureSourceType:"touch"});await touch(c,await glyph(c,paraIndex,end));}
+    else await drag(c,first,await glyph(c,paraIndex,end));
+    await expected(c,sample.paragraphs,{paraIndex,offset:start},{paraIndex,offset:end});
+    await activate(".reader-selection-actions button:nth-child(2)");await finishResult(c);
+    const pointer=await c.evaluate("({touch:CSS.highlights.has('gloss-result-touch'),mouse:CSS.highlights.has('gloss-result-mouse')})");
+    assert(width<768?pointer.touch&&!pointer.mouse:pointer.mouse&&!pointer.touch,"实际输入确认来源",pointer);
+    const request=await c.evaluate("__g64.resultRequests.at(-1)");
+    assert(request.kind==="range"&&request.input.text===source.text&&request.input.sentenceCount===4&&request.input.structure===sample.structure.trim(),"实际示例书请求与自带摘要");
+    assert(length<=Math.min(600,150*source.sentenceCount),"固定响应在输出上限内");
+    await wait(c,"document.querySelector('[data-selection-id] .action-row-save')?.disabled===false","实际示例书留下可点");
+    await activate("[data-selection-id] .action-row-save");await sleep(800);
+    const state=await c.evaluate('({secureContext:isSecureContext,subtle:typeof crypto.subtle!=="undefined",saved:!!document.querySelector(".gloss-panel-saved[data-selection-id]"),notice:document.querySelector(".action-row-notice")?.textContent??null,entry:JSON.parse(localStorage.getItem("gloss:selection-saved:sample")||"null")?.entries?.[0]??null,errors:__g64.resultErrors})');
+    const storedChars=state.entry?.text?Array.from(state.entry.text).length:null,expectFailure=process.env.G64A_SAVE_REPRO_EXPECT_FAIL==="1";
+    let refresh=false;
+    if(state.saved){assert(state.entry.sourceHash===createHash("sha256").update(source.text).digest("hex")&&JSON.stringify(state.entry.start)===JSON.stringify(source.start)&&JSON.stringify(state.entry.end)===JSON.stringify(source.end),"实际示例书保存原文哈希与坐标");await navigate(c,ORIGIN+"/read/sample");await wait(c,"document.querySelectorAll('[data-saved-selection-id]').length===1","实际示例书刷新恢复条目");refresh=await evaluate(c,entry=>JSON.stringify(JSON.parse(localStorage.getItem("gloss:selection-saved:sample")).entries[0])===JSON.stringify(entry),state.entry);}
+    console.log(JSON.stringify({saveReproduction:{path:"/read/sample",width,length,pointer:width<768?"touch":"mouse",sentenceCount:source.sentenceCount,selectedChars:source.chars,secureContext:state.secureContext,subtle:state.subtle,saved:state.saved,notice:state.notice,storedChars,refresh,errors:state.errors}}));
+    counts.saveRepro=(counts.saveRepro??0)+1;
+    if(expectFailure?!(!state.saved&&state.notice):!(state.saved&&storedChars===length&&refresh))failures.push({width,length,saved:state.saved,notice:state.notice,storedChars,refresh});
+  }
+  assert(failures.length===0,"实际示例书保存四组合",failures);
 }
 
 async function resultProbe(c,width) {
@@ -502,8 +539,31 @@ async function resultGeometry(c,width,mode="done",kind="term"){
 }
 
 
-async function confirmResult(c){await recordOpening(c,await c.evaluate("__g64.chosenResult"));await click(c,".reader-selection-actions button:nth-child(2)");await wait(c,"!!document.querySelector('[data-selection-id]')","结果出现");}
+async function confirmResult(c,touchConfirm=false){await recordOpening(c,await c.evaluate("__g64.chosenResult"));if(touchConfirm){const p=await evaluate(c,()=>{const button=document.querySelector('.reader-selection-actions button:nth-child(2)');button.scrollIntoView({block:'center',behavior:'instant'});const r=button.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};});await touch(c,p);}else await click(c,".reader-selection-actions button:nth-child(2)");await wait(c,"!!document.querySelector('[data-selection-id]')","结果出现");}
 async function finishResult(c){await wait(c,"document.querySelector('[data-selection-id]:not(.gloss-panel-saved)')?.dataset.state==='done'","临时结果完成");}
+
+async function rangeSaveTouchRefresh(c,width,length){
+  const original=RESULT_PARAGRAPHS[3];RESULT_PARAGRAPHS[3]=SAVE_REPRO_PARAGRAPH;
+  try{
+    await prepareResults(c,width);await evaluate(c,n=>__g64.resultTextLength=n,length);
+    const text=RESULT_PARAGRAPHS[3],start=text.indexOf('这些宗教'),end=text.indexOf('那一种是对的？')+'那一种是对的？'.length-1;
+    const source=await chooseResult(c,width,start,end,3),limit=Math.min(600,150*source.sentenceCount);
+    assert(source.kind==='range'&&source.sentenceCount>1&&length<=limit,'触摸留下目标为上限内跨句范围',{kind:source.kind,sentenceCount:source.sentenceCount,length,limit});
+    await confirmResult(c,true);
+    const pointer=await c.evaluate("({touch:CSS.highlights.has('gloss-result-touch'),mouse:CSS.highlights.has('gloss-result-mouse')})");
+    assert(pointer.touch&&!pointer.mouse,'触摸确认来源保留到结果着色',pointer);
+    await finishResult(c);await wait(c,"document.querySelector('[data-selection-id] .action-row-save')?.disabled===false",'长范围结果可留下');
+    const point=await evaluate(c,()=>{const button=document.querySelector('[data-selection-id] .action-row-save');button.scrollIntoView({block:'center',behavior:'instant'});const r=button.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};});
+    await touch(c,point);await wait(c,"!!document.querySelector('.gloss-panel-saved[data-selection-id]')",'触摸留下长范围');
+    const saved=await c.evaluate('JSON.parse(localStorage.getItem("gloss:selection-saved:g64a-fixture")).entries[0]');
+    assert([...saved.text].length===length&&saved.resultKind==='range','长范围完整保存',{length:[...saved.text].length,resultKind:saved.resultKind});
+    await navigate(c,ORIGIN+'/read/g64a-fixture');
+    const restored=await c.evaluate('JSON.parse(localStorage.getItem("gloss:selection-saved:g64a-fixture")).entries[0]');
+    assert(restored.text===saved.text&&restored.sourceHash===saved.sourceHash&&await c.evaluate("document.querySelectorAll('[data-saved-selection-id]').length===1"),'刷新后长范围仍在',{width,length,restored:[...restored.text].length});
+    console.log(JSON.stringify({ivTouchSave:{width,length,selectedChars:source.chars,sentenceCount:source.sentenceCount,touchConfirm:pointer.touch,saved:true,refresh:true}}));
+    counts.ivTouch=(counts.ivTouch??0)+1;
+  }finally{RESULT_PARAGRAPHS[3]=original;}
+}
 
 async function resultCollapseCheck(c,kind,point){
   const state=await captureReturn(c);
@@ -663,6 +723,7 @@ async function resultNewCases(c,width){
   if(width===1024){await resultReplacement(c,width);await resultGeometry(c,width,"negative-h");}
   await prepareResults(c,width);const source=await chooseResult(c,width,4,5);await confirmResult(c);await finishResult(c);
   await resultFunctionalSmoke(c,width,source);counts.iv=(counts.iv??0)+1;
+  if(width===375||width===506)for(const length of [100,450])await rangeSaveTouchRefresh(c,width,length);
 }
 
 
@@ -721,6 +782,8 @@ async function run(width) {
     });
     if(compensationNegative){await resultReplacement(c,width,true);return;}
     if(process.env.G64A_EXTRA_ONLY==="1"){await resultWhole(c,width);await resultInputAndPointer(c,width);return;}
+    if(process.env.G64A_SAVE_REPRO==="1"){await evaluate(c,()=>({secureContext:isSecureContext,subtle:typeof crypto.subtle!=="undefined"}));try{await selectionSaveReproduction(c,width);}catch(error){console.log(JSON.stringify({saveReproductionFailure:String(error?.stack??error)}));throw error;}return;}
+    if(process.env.G64A_TOUCH_SAVE_ONLY==="1"){for(const length of [100,450])await rangeSaveTouchRefresh(c,width,length);return;}
     if(process.env.G64A_REPLACEMENT_ONLY==="1"){await resultReplacement(c,width);return;}
     if(process.env.G64A_SPACING_NEGATIVE==="1"){await resultGeometry(c,width,"negative-h");return;}
     if(process.env.G64A_RESULTS_ONLY==="1"){await resultNewCases(c,width);return;}
@@ -732,6 +795,7 @@ async function run(width) {
     await navigate(c, ORIGIN + "/read/sample");
     const fonts = await c.evaluate("['.reader-mobile-title','.reader-mobile-progress','.col-left .reader-typography-aa','.reader-tool-aa','.reader-body'].map(s=>{const e=document.querySelector(s);return e?getComputedStyle(e).fontSize:null})");
     assert(JSON.stringify(fonts) === JSON.stringify(baselineFonts), "既有字号与对照相同", { fonts, baselineFonts });
+    if(width<768){const heading=await header(c);assert(heading.title.textAlign==='left'&&heading.progress.textAlign==='left'&&Math.abs(heading.titleTextLeft-heading.heading.left)<.5&&Math.abs(heading.progressTextLeft-heading.heading.left)<.5,'手机书名与段落进度靠左且紧跟返回键',heading);}
     const entries = await c.evaluate("[...document.querySelectorAll('[aria-label=划选]')].filter(e=>e.getBoundingClientRect().width>0&&getComputedStyle(e).visibility!=='hidden'&&!e.disabled&&e.tabIndex>=0).length");
     assert(entries === 1, "唯一可点可聚焦入口", entries); counts.a++;
     await stable(c, () => click(c, toggle(width)), "进入模式与提示条");
@@ -821,16 +885,23 @@ async function run(width) {
     console.log(JSON.stringify({width,cssHighlights:supported,counts:{...counts},negativeDetected:negative,passed:true}));
   } finally {
     if(c){try{await c.call("Browser.close");}catch{}c.close();}
-    if(!exited)await Promise.race([new Promise(r=>edge.once("exit",r)),sleep(5000)]);
+    const cleanupStarted=Date.now();
+    if(!exited&&edge.exitCode===null){
+      assert(dirname(resolve(profile))===resolve(tmpdir())&&profile.startsWith(join(tmpdir(),"gloss-g")),"结束前核验本卡临时目录");
+      const script=[`$taskProfile='${profile.replaceAll("'","''")}'`,`$taskProcess=Get-CimInstance Win32_Process -Filter 'ProcessId=${edge.pid}'`,`if($null -eq $taskProcess){exit 0}`,`if($taskProcess.Name -ne 'msedge.exe' -or -not $taskProcess.CommandLine.Contains($taskProfile)){throw '拒绝结束非本卡浏览器'}`,`taskkill /T /F /PID ${edge.pid} | Out-Null`,`if($LASTEXITCODE -ne 0 -and (Get-CimInstance Win32_Process -Filter 'ProcessId=${edge.pid}')){exit 1}`,'exit 0'].join("\n");
+      const result=spawnSync("powershell.exe",["-NoProfile","-Command",script],{windowsHide:true,encoding:"utf8",timeout:5000});
+      assert(result.status===0,"核验并结束本卡浏览器",{pid:edge.pid,status:result.status,error:result.error?.code});
+    }
+    if(!exited)await Promise.race([new Promise(r=>edge.once("exit",r)),sleep(Math.max(0,5000-(Date.now()-cleanupStarted)))]);
     assert(exited,"浏览器进程退出");
     assert(dirname(resolve(profile))===resolve(tmpdir())&&profile.startsWith(join(tmpdir(),"gloss-g")),"安全配置目录");
     await rm(profile,{recursive:true,force:true});
   }
 }
 if(compensationNegative){await prepareCompensationNegative();try{await run(1024);}finally{const after=createHash("sha256").update(await readFile(diagnostic.sourcePath)).digest("hex");await rm(diagnostic.sourceCopy);await rm(diagnostic.chunkCopy);assert(after===diagnostic.before,"产品源码补偿负对照前后哈希一致");console.log(JSON.stringify({anchorNegativeDetected:true,productSha256Before:diagnostic.before,productSha256After:after,diagnosticDeleted:true}));}process.exit(0);}
-if(menuNegative){await prepareMenuNegative();try{await run(1024);}finally{const after=createHash("sha256").update(await readFile(diagnostic.sourcePath)).digest("hex");await rm(diagnostic.sourceCopy);await rm(diagnostic.chunkCopy);assert(after===diagnostic.before,"产品源码负对照前后哈希一致");console.log(JSON.stringify({menuNegativeDetected:true,productSha256Before:diagnostic.before,productSha256After:after,diagnosticDeleted:true}));}}else for(const width of process.env.G64A_EXTRA_ONLY==="1"?[375,1024]:process.env.G64A_RESULT_PROBE==="1"||process.env.G64A_REPLACEMENT_ONLY==="1"||process.env.G64A_SPACING_NEGATIVE==="1"?[1024]:[375,506,768,1024,1280,1440]) await run(width);
+if(menuNegative){await prepareMenuNegative();try{await run(1024);}finally{const after=createHash("sha256").update(await readFile(diagnostic.sourcePath)).digest("hex");await rm(diagnostic.sourceCopy);await rm(diagnostic.chunkCopy);assert(after===diagnostic.before,"产品源码负对照前后哈希一致");console.log(JSON.stringify({menuNegativeDetected:true,productSha256Before:diagnostic.before,productSha256After:after,diagnosticDeleted:true}));}}else for(const width of process.env.G64A_SAVE_REPRO==="1"?[Number(process.env.G64A_SAVE_PROBE_WIDTH??375)]:process.env.G64A_TOUCH_SAVE_ONLY==="1"?[375,506]:process.env.G64A_EXTRA_ONLY==="1"?[375,1024]:process.env.G64A_RESULT_PROBE==="1"||process.env.G64A_REPLACEMENT_ONLY==="1"||process.env.G64A_SPACING_NEGATIVE==="1"?[1024]:[375,506,768,1024,1280,1440]) await run(width);
 
-const partial=menuNegative||["G64A_EXTRA_ONLY","G64A_RESULT_PROBE","G64A_RESULTS_ONLY","G64A_REPLACEMENT_ONLY","G64A_SPACING_NEGATIVE"].some(key=>process.env[key]==="1");
+const partial=menuNegative||["G64A_EXTRA_ONLY","G64A_SAVE_REPRO","G64A_TOUCH_SAVE_ONLY","G64A_RESULT_PROBE","G64A_RESULTS_ONLY","G64A_REPLACEMENT_ONLY","G64A_SPACING_NEGATIVE"].some(key=>process.env[key]==="1");
 if(!partial){
   // 负对照使用新的无配置进程；每次浏览器已关闭后才启动下一轮。
   for(const flag of ["G64A_ANCHOR_NEGATIVE","G64A_MENU_NEGATIVE"]){
@@ -841,6 +912,6 @@ if(!partial){
     assert(status===0,"完整门槛的独立负对照必须通过",{flag,status});
     counts[flag==="G64A_ANCHOR_NEGATIVE"?"negativeG":"negativeMenu"]=1;
   }
-  assert(counts.a===7&&counts.h===4&&counts.i>=49&&counts.returnChecks>=61&&counts.iv===6&&counts.v===6&&counts.vi===6&&counts.vii===12&&counts.whole===6&&counts.inputAndPointer===6&&counts.negativeH===1,"完整场景数量门槛",counts);
+  assert(counts.a===7&&counts.h===4&&counts.i>=49&&counts.returnChecks>=61&&counts.iv===6&&counts.ivTouch===4&&counts.v===6&&counts.vi===6&&counts.vii===12&&counts.whole===6&&counts.inputAndPointer===6&&counts.negativeH===1,"完整场景数量门槛",counts);
 }
 console.log(JSON.stringify({passed:true,scope:partial?"开发分组检查":"a-h 与 i-viii",resultsAcceptance:!partial,counts}));

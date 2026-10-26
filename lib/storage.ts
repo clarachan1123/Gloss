@@ -462,6 +462,7 @@ export function removeShelfDocument(docId: string): boolean {
     storage.removeItem(STRUCTURE_PREFIX + docId);
     storage.removeItem(SAVED_GLOSS_PREFIX + docId);
     storage.removeItem(EXPLAIN_PREFIX + docId);
+    storage.removeItem("gloss:selection-saved:" + docId);
     delete record.entries[docId];
     storage.setItem(SHELF_KEY, JSON.stringify(record));
     return true;

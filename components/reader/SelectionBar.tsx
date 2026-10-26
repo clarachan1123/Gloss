@@ -1,8 +1,10 @@
+import { useRef } from "react";
 import { MAX_SELECTION_CHARS, selectionSummary, type SourceSelection } from "@/lib/selection";
 export default function SelectionBar({ mobile, started, selection, onReselect, onConfirm, onExit }: {
   mobile: boolean; started: boolean; selection: SourceSelection | null;
-  onReselect: () => void; onConfirm: () => void; onExit: () => void;
+  onReselect: () => void; onConfirm: (pointer: string) => void; onExit: () => void;
 }) {
+  const confirmPointer = useRef<string | null>(null);
   const tooLong = !!selection && selection.chars > MAX_SELECTION_CHARS;
   const message = tooLong ? "选得太长了，请缩短到 1000 字以内" : selection ? "已选『" + selectionSummary(selection.text) + "』"
     : mobile ? started ? "再点终点" : "划选中：先点起点，再点终点" : "划选中：按住鼠标拖过要问的文字";
@@ -11,7 +13,11 @@ export default function SelectionBar({ mobile, started, selection, onReselect, o
     <span className="reader-selection-message" role="status">{message}</span>
     <div className="reader-selection-actions">{selection && <>
       <button type="button" onClick={onReselect}>重选</button>
-      <button type="button" disabled={tooLong} onClick={onConfirm}>确定</button>
+      <button type="button" disabled={tooLong} onPointerDown={event => { confirmPointer.current = event.pointerType; }} onClick={event => {
+        const native = event.nativeEvent as MouseEvent & { pointerType?: string };
+        const pointer = confirmPointer.current ?? (native.pointerType || (event.detail === 0 ? "keyboard" : "mouse"));
+        confirmPointer.current = null; onConfirm(pointer);
+      }}>确定</button>
     </>}<button type="button" data-selection-control onClick={onExit}>退出</button></div>
   </div>;
 }

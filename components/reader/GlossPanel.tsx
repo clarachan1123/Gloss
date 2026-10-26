@@ -99,6 +99,9 @@ export default function GlossPanel({
   savedIndex,
   sentenceIndex,
   explainView = IDLE_EXPLAIN_VIEW,
+  selectionId,
+  title,
+  selectionOnly = false,
   onExplain,
   onExplainRetry,
   onExplainBlocked,
@@ -121,6 +124,9 @@ export default function GlossPanel({
   savedIndex?: number;
   sentenceIndex: number;
   explainView?: ExplainView;
+  selectionId?: string;
+  title?: string;
+  selectionOnly?: boolean;
   onExplain: (index: number) => void;
   onExplainRetry: (index: number) => void;
   onExplainBlocked: (index: number) => void;
@@ -218,12 +224,14 @@ export default function GlossPanel({
       ref={setPanelRef}
       className={`gloss-panel gloss-panel-${presentation}${saved ? " gloss-panel-saved" : ""}`}
       role="region"
-      aria-label="白话"
+      aria-label={selectionOnly ? title ?? "范围白话" : "白话"}
       aria-busy={busy}
       data-state={busy ? "busy" : failure ? "failed" : "done"}
       data-saved-index={savedIndex}
       data-sentence-index={sentenceIndex}
+      data-selection-id={selectionId}
     >
+      {title && <p className="gloss-panel-title">{title}</p>}
       {visible > 0 && (
         <p className="gloss-panel-text">
           {/*
@@ -296,6 +304,7 @@ export default function GlossPanel({
           onExplain={() => onExplain(sentenceIndex)}
           onExplainBlocked={() => onExplainBlocked(sentenceIndex)}
           explainVisible={actionsReady}
+          selectionOnly={selectionOnly}
         />
       )}
     </div>

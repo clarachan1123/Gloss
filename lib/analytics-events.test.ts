@@ -161,3 +161,23 @@ describe("划选服务端调用类型", () => {
     expect(validateAnalyticsEvent({...detail,callKind:"selection"})).toBe(false);
   });
 });
+
+describe("G-64a 划选客户端白名单",()=>{
+  const base={eventId};
+  const cases=[
+    {event:"selection_mode_enter",pointer:"touch"},
+    {event:"selection_confirm",resultKind:"term",charsBucket:"1-12",sentenceCountBucket:"1"},
+    {event:"selection_result",resultKind:"range",outcome:"cached"},
+    {event:"selection_save",resultKind:"term"},
+  ];
+  it.each(cases)("只接受 $event 指定字段",detail=>{
+    expect(CLIENT_EVENTS.has(detail.event)).toBe(true);expect(validateAnalyticsEvent({...base,...detail},true)).toBe(true);
+    for(const extra of [{text:"原文"},{docId:"文档"},{start:0},{sourceHash:"hash"}])expect(validateAnalyticsEvent({...base,...detail,...extra},true)).toBe(false);
+  });
+  it("退出开关丢弃新事件队列",async()=>{
+    const {enqueueAnalytics}=await import("./analytics-local");
+    const memory=new Map<string,string>([["gloss:analytics:optout","1"]]);
+    const store={getItem:(k:string)=>memory.get(k)??null,setItem:(k:string,v:string)=>void memory.set(k,v),removeItem:(k:string)=>void memory.delete(k)} as Storage;
+    for(const detail of cases)expect(enqueueAnalytics(detail,store)).toBeNull();
+  });
+});

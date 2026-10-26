@@ -21,7 +21,15 @@ import {
 } from "react";
 import ContextMenu, { type ContextMenuPoint } from "@/components/reader/ContextMenu";
 import SelectionBar from "./SelectionBar";
-import { normalizeSelection, sourcePointFromGlyphs, type SourcePoint, type SourceSelection, type SourceGlyph } from "@/lib/selection";
+import { buildRangeGlossInput, buildTermInput, resolveWholeSentenceReuse, touchedSelectionSentences, type SelectionInput } from "@/lib/selection-context";
+import { streamTerm, streamRangeGloss } from "@/lib/selection-client";
+import { TERM_PROMPT_VERSION } from "@/lib/prompts/term";
+import { RANGE_PROMPT_VERSION } from "@/lib/prompts/range";
+import { MODEL_FAST } from "@/lib/models";
+import { readSelectionCache, saveSelectionCache, selectionCacheRuntime } from "@/lib/selection-cache";
+import { loadSavedSelections, saveSavedSelection, removeSavedSelection, selectionIdentity, type SavedSelection } from "@/lib/selection-storage";
+
+import { normalizeSelection, sourcePointFromGlyphs, comparePoints, selectionText, SELECTION_PUNCTUATION, type SourcePoint, type SourceSelection, type SourceGlyph } from "@/lib/selection";
 import Notice from "@/components/Notice";
 import SettingsPanel, { MobileReaderSettings } from "@/components/settings/SettingsPanel";
 import { DEFAULT_READER_TYPOGRAPHY, readReaderTypography, validateReaderTypography, writeReaderTypography, type ReaderTypography } from "@/lib/reader-typography";
@@ -37,7 +45,7 @@ import { MAX_AFTER, MAX_BEFORE, MAX_EXPLAIN_CONTEXT_CHARS } from "@/lib/context"
 import { streamExplain, type ExplainInput } from "@/lib/explain-client";
 import { buildStructureInput } from "@/lib/structure-input";
 import { fetchStructure, streamGloss } from "@/lib/gloss-client";
-import { DISMISS_EARLY_MS, emitAnalytics, glossCharsBucket, sentenceCharsBucket } from "@/lib/analytics-events";
+import { DISMISS_EARLY_MS, emitAnalytics, glossCharsBucket, sentenceCharsBucket, selectionCharsBucket, selectionSentenceBucket, type AnalyticsDetail } from "@/lib/analytics-events";
 import { enqueueAnalytics, markAnalyticsOpen, takeReaderEntrySource, type ReaderEntrySource } from "@/lib/analytics-local";
 import { ReadCompleteClock } from "@/lib/analytics-read-complete";
 import { countChars, skippedSummary, type ParsedHeading, type SkippedContent } from "@/lib/parse/validate";
@@ -111,6 +119,18 @@ type ReadAttempt = {
 type GlossShape = "inline" | "bubble";
 type ReadingMode = "reading" | "review";
 
+
+interface SelectionResult {
+  id: string; selection: SourceSelection; index: number; resultKind: "term" | "range";
+  view: GlossView; saved: SavedSelection | null; expanded: boolean; nonMouse: boolean;
+  input: SelectionInput | null; retry: number; promptVersion: string; model: string; actionsVisible?: boolean;
+}
+interface SelectionSlot {
+  result: SelectionResult; panelRef: Ref<HTMLDivElement>;
+  onRetry: () => void; onSave: () => Promise<"saved" | "removed" | StorageErrorCode>;
+  onBeforeReveal: () => CharAnchor | null; onAfterReveal: (anchor: CharAnchor | null) => void;
+}
+
 interface SavedRegion {
   index: number;
   splitAt: number | null;
@@ -136,6 +156,7 @@ export interface Region {
   actionVisible: boolean;
   explainView: ExplainView;
   glossKey?: string;
+  selectionSlot?: SelectionSlot;
 }
 
 /** 视口锚点：段内某个字在 DOM 变化前的视口纵坐标。DOM 变化后把这个字滚回原位 */
@@ -424,6 +445,7 @@ export default function Reader({ docId }: { docId: string }) {
     clearGlossHover();
     const index = Number(panel.dataset.sentenceIndex);
     if (!Number.isInteger(index) || index < 0) return;
+    if (panel.dataset.selectionId) return;
     hoveredGlossRef.current = panel;
     event.currentTarget.querySelectorAll(`.sentence[data-index="${index}"]`).forEach((sentence) => {
       sentence.classList.add("sentence-gloss-hover");
@@ -800,8 +822,8 @@ export default function Reader({ docId }: { docId: string }) {
   const selectionMarkerRef = useRef<HTMLSpanElement>(null);
   const selectionGestureRef = useRef<{ id: number; x: number; y: number; moved: boolean; start: SourcePoint; last: SourcePoint } | null>(null);
   function clearSelection() { setSelectionStart(null); setSelection(null); selectionGestureRef.current = null; }
-  function exitSelection() { selectionModeRef.current = false; setSelectionMode(false); clearSelection(); }
-  function toggleSelection() {
+  function exitSelection() { selectionEntryPointer.current = null; selectionModeRef.current = false; setSelectionMode(false); clearSelection(); }
+  function toggleSelection(event?: ReactMouseEvent<HTMLElement>) {
     if (selectionModeRef.current) { exitSelection(); return; }
     endFontSizeAdjustment();
     clearSentenceHover(); clearGlossHover(); closeContextMenu();
@@ -809,6 +831,9 @@ export default function Reader({ docId }: { docId: string }) {
     window.getSelection()?.removeAllRanges();
     setSelectionMobile(window.innerWidth < 768);
     clearSelection(); selectionModeRef.current = true; setSelectionMode(true);
+    const pointer = selectionEntryPointer.current ?? (event?.detail === 0 ? "keyboard" : "mouse");
+    selectionEntryPointer.current = null;
+    selectionEvent({ event: "selection_mode_enter", pointer: ["mouse", "touch", "pen"].includes(pointer) ? pointer : "keyboard" });
   }
   // 只从真实原文的字框反查，白话、脚注、透明尾巴和空白间隙均不会成为端点。
   function selectionPoint(x: number, y: number): SourcePoint | null {
@@ -868,7 +893,287 @@ export default function Reader({ docId }: { docId: string }) {
     }
   }
   // 本轮确定只退出；执行二、三在此接入所选范围的请求与结果事务。
-  function confirmSelection() { if (selection && selection.chars <= 1000) exitSelection(); }
+
+  const [selectionResults, setSelectionResults] = useState<ReadonlyMap<string, SelectionResult>>(() => new Map());
+  const selectionResultsRef = useRef(selectionResults);
+  const selectionRunsRef = useRef(new Map<string, { controller: AbortController; kind: "term" | "range" }>());
+  const selectionPanelsRef = useRef(new Map<string, HTMLDivElement>());
+  const selectionPanelCallbacks = useRef(new Map<string, (node: HTMLDivElement | null) => void>());
+  const selectionConfirmToken = useRef(0);
+  const selectionEntryPointer = useRef<string | null>(null);
+  const selectionGrowth = useRef<{ anchor: CharAnchor; scrollY: number } | null>(null);
+  function publishSelectionResults(next: ReadonlyMap<string, SelectionResult>) {
+    selectionResultsRef.current = next; setSelectionResults(next);
+  }
+  function selectionVisible(result: SelectionResult, mode = readingMode) { return !result.saved || mode === "review" || result.expanded; }
+  function selectionPanelFor(id: string) {
+    let callback = selectionPanelCallbacks.current.get(id);
+    if (!callback) { callback = node => { if (node) selectionPanelsRef.current.set(id, node); else selectionPanelsRef.current.delete(id); }; selectionPanelCallbacks.current.set(id, callback); }
+    return callback;
+  }
+  function selectionEvent(detail: AnalyticsDetail) {
+    try { if (localStorage.getItem("gloss:analytics:optout") === "1") return; } catch { return; }
+    emitAnalytics(detail);
+  }
+  function abortSelectionResult(id: string) {
+    const run = selectionRunsRef.current.get(id);
+    if (!run) return;
+    selectionRunsRef.current.delete(id); run.controller.abort();
+    selectionEvent({ event: "selection_result", resultKind: run.kind, outcome: "abort" });
+  }
+
+  function selectionClosingAnchor(indexes: readonly number[], preferred: CharAnchor | null): CharAnchor | null {
+    const body = bodyRef.current;
+    if (!body || !indexes.length) return preferred;
+    // 收起后的续排字会回到原行；参照字必须选在这些回接字之外。
+    const returning = (para: number, offset: number) => indexes.some(index => {
+      const sentence = sentences[index];
+      return sentence && sentence.paraIndex === para && offset >= sentence.start + sentence.text.length;
+    });
+    return preferred && !returning(preferred.paraIndex, preferred.offset) ? preferred : anchorAtViewportTop(body, returning);
+  }
+  function stageSelectionResults(next: ReadonlyMap<string, SelectionResult>, anchor?: CharAnchor | null) {
+    const paras = new Set([...selectionResultsRef.current.values(), ...next.values()].map(result => sentences[result.index]?.paraIndex).filter((p): p is number => p !== undefined));
+    const closing = [...selectionResultsRef.current.values()].filter(result => selectionVisible(result) &&
+      (!next.has(result.id) || !selectionVisible(next.get(result.id)!))).map(result => result.index);
+    const preferred = anchor === undefined ? bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null : anchor;
+    setTransaction({ anchor: selectionClosingAnchor(closing, preferred), animateOpen: false, adjustVisibility: false });
+    publishSelectionResults(next);
+    stageLayouts(paras, 0);
+  }
+  function dismissSelectionResults(ids: readonly string[], anchor?: CharAnchor | null) {
+    const next = new Map(selectionResultsRef.current);
+    let changed = false;
+    for (const id of ids) {
+      const result = next.get(id); if (!result || !selectionVisible(result)) continue;
+      if (result.saved && readingMode === "review") continue;
+      abortSelectionResult(id); changed = true;
+      if (result.saved) next.set(id, { ...result, expanded: false, nonMouse: false }); else next.delete(id);
+    }
+    if (changed) stageSelectionResults(next, anchor);
+  }
+  function captureSelectionGrowth(id: string): CharAnchor | null {
+    const body = bodyRef.current, panel = selectionPanelsRef.current.get(id);
+    if (typographyLayoutRef.current) return typographyLayoutRef.current.anchor;
+    if (!body || !panel || measurementRef.current) return null;
+    const anchor = panelGrowthAnchor(body, panel);
+    selectionGrowth.current = anchor ? { anchor, scrollY: window.scrollY } : null;
+    return anchor;
+  }
+  function restoreSelectionGrowth(anchor: CharAnchor | null) {
+    const body = bodyRef.current; if (!body || !anchor) return;
+    const pending = selectionGrowth.current;
+    if (!typographyLayoutRef.current && pending?.anchor === anchor && window.scrollY !== pending.scrollY) {
+      rememberPositionAnchor(body, positionRef.current); return;
+    }
+    restorePanelGrowth(anchor);
+  }
+  async function generateSelectionResult(result: SelectionResult) {
+    if (!result.input) return;
+    abortSelectionResult(result.id);
+    const run = { controller: new AbortController(), kind: result.resultKind };
+    selectionRunsRef.current.set(result.id, run);
+    const current = () => mountedRef.current && selectionRunsRef.current.get(result.id) === run;
+    const update = (view: GlossView) => {
+      if (!current()) return;
+      const entry = selectionResultsRef.current.get(result.id); if (!entry) return;
+      const anchor = captureSelectionGrowth(result.id);
+      if (anchor) setTransaction({ anchor, animateOpen: false, adjustVisibility: false });
+      publishSelectionResults(new Map(selectionResultsRef.current).set(result.id, { ...entry, view: { ...view, revealProgress: entry.view.revealProgress } }));
+    };
+    const cached = await readSelectionCache(docId, result.input);
+    if (!current()) return;
+    if (cached !== null) {
+      update({ status: "done", text: cached, failure: null, instant: true });
+      selectionRunsRef.current.delete(result.id);
+      selectionEvent({ event: "selection_result", resultKind: result.resultKind, outcome: "cached" }); return;
+    }
+    const options = { signal: run.controller.signal, onText: (text: string) => update({ status: "streaming", text, failure: null, instant: false }) };
+    const response = result.input.kind === "term" ? await streamTerm(result.input.input, options) : await streamRangeGloss(result.input.input, options);
+    if (!current()) return;
+    if (response.status === "done") {
+      update({ status: "done", text: response.text, failure: null, instant: false });
+      selectionRunsRef.current.delete(result.id);
+      selectionEvent({ event: "selection_result", resultKind: result.resultKind, outcome: "done" });
+      void saveSelectionCache(docId, result.input, response);
+    } else if (response.status === "failed") {
+      update({ status: "failed", text: response.text, failure: response.failure, instant: false });
+      selectionRunsRef.current.delete(result.id);
+      selectionEvent({ event: "selection_result", resultKind: result.resultKind, outcome: response.failure === "refused" ? "refused" : "error" });
+    } else { abortSelectionResult(result.id); }
+  }
+  function retrySelectionResult(id: string) {
+    const result = selectionResultsRef.current.get(id); if (!result || result.saved) return;
+    if (!result.input) {
+      selectionEvent({ event: "selection_result", resultKind: result.resultKind, outcome: "error" });
+      return;
+    }
+    const next = { ...result, retry: result.retry + 1, view: { ...LOADING_VIEW, revealProgress: { shown: 0 } } };
+    stageSelectionResults(new Map(selectionResultsRef.current).set(id, next)); void generateSelectionResult(next);
+  }
+  async function saveSelectionResult(id: string): Promise<"saved" | "removed" | StorageErrorCode> {
+    const result = selectionResultsRef.current.get(id); if (!doc || !result || result.view.status !== "done") return "E2";
+    try {
+      if (result.saved) {
+        removeSavedSelection(docId, result.saved);
+        const next = new Map(selectionResultsRef.current);
+        for (const [key, entry] of next) if (!entry.saved && key !== id) { abortSelectionResult(key); next.delete(key); }
+        next.set(id, { ...result, saved: null, expanded: true }); stageSelectionResults(next); return "removed";
+      }
+      const entry = await saveSavedSelection(docId, doc.paragraphs, { resultKind: result.resultKind,
+        start: result.selection.start, end: result.selection.end, sourceHash: await sha256(result.selection.text),
+        text: result.view.text, savedAt: Date.now(), promptVersion: result.promptVersion, model: result.model });
+      if (explainContextRef.current.docId !== docId) return "saved";
+      const latest = selectionResultsRef.current.get(id); if (!latest) return "saved";
+      stageSelectionResults(new Map(selectionResultsRef.current).set(id, { ...latest, saved: entry, expanded: true, actionsVisible: true, view: { ...latest.view, text: entry.text, instant: true } }));
+      selectionEvent({ event: "selection_save", resultKind: result.resultKind }); return "saved";
+    } catch (error) { return error instanceof StorageError ? error.code : "E2"; }
+  }
+  useEffect(() => {
+    let cancelled = false;
+    for (const id of selectionRunsRef.current.keys()) abortSelectionResult(id);
+    publishSelectionResults(new Map());
+    if (doc) void loadSavedSelections(docId, doc.paragraphs).then(entries => {
+      if (cancelled) return;
+      const next = new Map<string, SelectionResult>();
+      for (const saved of entries) {
+        const text = selectionText(doc.paragraphs, saved.start, saved.end);
+        const punctuation = saved.resultKind === "term" && SELECTION_PUNCTUATION.test([...text].at(-1) ?? "") ? [...text].at(-1)! : "";
+        const source: SourceSelection = { start: saved.start, end: saved.end, text, kind: saved.resultKind,
+          autoPunctuation: punctuation, chars: countChars(text), sentenceCount: 0 };
+        const touched = touchedSelectionSentences(source, sentences); if (!touched.length) continue;
+        source.sentenceCount = touched.length;
+        const id = selectionIdentity(saved);
+        next.set(id, { id, selection: source, resultKind: saved.resultKind, index: touched.at(-1)!.index,
+          view: { status: "done", text: saved.text, instant: true, failure: null, revealProgress: { shown: [...saved.text].length } },
+          saved, expanded: false, nonMouse: false, input: null, retry: 0, promptVersion: saved.promptVersion, model: saved.model });
+      }
+      if (next.size) {
+        setTransaction({ anchor: bodyRef.current ? anchorAtViewportTop(bodyRef.current) : null, animateOpen: false, adjustVisibility: false });
+        publishSelectionResults(next); setSavedRegions(null);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; for (const id of selectionRunsRef.current.keys()) abortSelectionResult(id); };
+  }, [doc, docId, sentences]);
+
+  async function confirmSelection(pointer: string) {
+    const source = selection, body = bodyRef.current;
+    if (!source || source.chars > 1000 || !doc || !body) return;
+    const token = ++selectionConfirmToken.current;
+    const nonMouse = pointer !== "mouse";
+    selectionEvent({ event: "selection_confirm", resultKind: source.kind === "sentence" ? "whole" : source.kind,
+      charsBucket: selectionCharsBucket(source.chars), sentenceCountBucket: selectionSentenceBucket(source.sentenceCount) });
+    exitSelection();
+    const touched = touchedSelectionSentences(source, sentences);
+    if (!touched.length) return;
+    if (source.kind === "sentence") {
+      dismissSelectionResults([...selectionResultsRef.current.values()].filter(result=>!result.saved).map(result=>result.id));
+      const index = touched[0].index, memo = glossMemoRef.current.get(index), session = glossesRef.current.get(index);
+      let automatic = memo?.source === "preload" ? memo.text : null;
+      if (!automatic && !isSample && !savedGlossesRef.current.has(index) && session?.status !== "done") {
+        automatic = (await preloadGlossCache(docId, [{ index, input: glossInput(sentences, index, structureRef.current) }], structureRef.current)).get(index)?.text ?? null;
+      }
+      if (token !== selectionConfirmToken.current || !mountedRef.current) return;
+      const reuse = resolveWholeSentenceReuse(source, { saved: savedGlossesRef.current.get(index)?.text,
+        session: session ? { text: session.text, complete: session.status === "done" } : memo?.source === "session" ? { text: memo.text, complete: true } : null,
+        automatic, sample: sample?.glosses[index] });
+      if (reuse.status === "reuse" && !savedGlossesRef.current.has(index)) glossMemoRef.current.set(index, { text: reuse.text,
+        hasStructure: structureRef.current !== null, source: "session", shown: true });
+      const target = body.querySelector<HTMLElement>('.sentence[data-index="' + index + '"]');
+      const rect = target?.getClientRects()[0];
+      if (target && rect) toggleSentence(index, target, rect.left + 1, rect.top + 1, nonMouse, reuse.status === "reuse" ? reuse.text : undefined);
+      return;
+    }
+    const resultKind = source.kind, id = selectionIdentity({ resultKind, start: source.start, end: source.end });
+    const existing = selectionResultsRef.current.get(id);
+    const overlapping = touched.map(sentence => sentence.index).filter(index => expansionsRef.current.has(index) && !savedGlossesRef.current.has(index));
+    const closing = [...overlapping, ...[...selectionResultsRef.current.values()].filter(result => !result.saved).map(result => result.index)];
+    const anchor = selectionClosingAnchor(closing, anchorAtViewportTop(body));
+    // 合并与插入共用同一锚定事务；单句已留下记录保持原样。
+    setTransaction({ anchor, animateOpen: false, adjustVisibility: false });
+    collapseIndexes(overlapping, true, anchor);
+    const next = new Map(selectionResultsRef.current);
+    for (const [key, value] of next) if (!value.saved) { abortSelectionResult(key); next.delete(key); }
+    if (existing?.saved) {
+      next.set(id, { ...existing, expanded: true, nonMouse }); stageSelectionResults(next, anchor);
+      selectionEvent({ event: "selection_result", resultKind, outcome: "cached" }); return;
+    }
+    let input: SelectionInput | null = null;
+    try {
+      input = resultKind === "term" ? { kind: "term", input: buildTermInput(source, doc.paragraphs, sentences, structureRef.current) }
+        : { kind: "range", input: buildRangeGlossInput(source, doc.paragraphs, sentences, structureRef.current) };
+    } catch {
+      // 输入超出接口预算时沿用失败面板，不让校验异常越过交互边界。
+    }
+    const runtime = input ? selectionCacheRuntime(input) : { promptVersion: resultKind === "term" ? TERM_PROMPT_VERSION : RANGE_PROMPT_VERSION, model: MODEL_FAST };
+    const result: SelectionResult = { id, selection: source, index: touched.at(-1)!.index, resultKind,
+      view: input ? { ...LOADING_VIEW, revealProgress: { shown: 0 } } : { status: "failed", text: "", failure: "unavailable", instant: true },
+      saved: null, expanded: true, nonMouse, input, retry: 0,
+      promptVersion: runtime.promptVersion, model: runtime.model };
+    next.set(id, result); stageSelectionResults(next, anchor);
+    if (input) void generateSelectionResult(result);
+    else selectionEvent({ event: "selection_result", resultKind, outcome: "error" });
+  }
+
+
+  const selectionJumpRef = useRef<SourcePoint | null>(null);
+  function toggleSelectionAtPoint(point: SourcePoint, x: number, y: number): boolean {
+    const matches = [...selectionResultsRef.current.values()].filter(result => comparePoints(result.selection.start, point) <= 0 && comparePoints(point, result.selection.end) < 0)
+      .sort((a,b) => a.selection.chars - b.selection.chars || (b.saved?.savedAt ?? Infinity) - (a.saved?.savedAt ?? Infinity));
+    const result = matches[0]; if (!result) return false;
+    const body = bodyRef.current;
+    const target = document.elementFromPoint(x,y)?.closest<HTMLElement>(".sentence");
+    const anchor = target ? anchorAtClick(target,x,y) : body ? anchorAtViewportTop(body) : null;
+    if (result.saved && readingMode === "review") stageSelectionResults(new Map(selectionResultsRef.current).set(result.id, { ...result, actionsVisible: !result.actionsVisible }), anchor);
+    else if (selectionVisible(result)) dismissSelectionResults([result.id], anchor);
+    else stageSelectionResults(new Map(selectionResultsRef.current).set(result.id, { ...result, expanded: true, actionsVisible: true,
+      nonMouse: lastPointerDownRef.current?.pointerType !== "mouse" }), anchor);
+    lastPointerDownRef.current = null;
+    return true;
+  }
+  function jumpToSelection(id: string) {
+    const result = selectionResultsRef.current.get(id); if (!result) return;
+    typographyLayoutRef.current = null;
+    selectionJumpRef.current = result.selection.start;
+    stageSelectionResults(new Map(selectionResultsRef.current).set(id, { ...result, expanded: true }), null);
+  }
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body || !doc || typeof CSS === "undefined" || !("highlights" in CSS) || typeof Highlight === "undefined") return;
+    const mouse: Range[] = [], touch: Range[] = [], collapsed: Range[] = [];
+    for (const result of selectionResults.values()) {
+      const ranges = sourceSelectionRanges(body, doc.paragraphs, result.selection);
+      if (selectionVisible(result)) (result.nonMouse ? touch : mouse).push(...ranges);
+      else if (result.saved && readingMode === "reading") collapsed.push(...ranges);
+    }
+    for (const [name,ranges] of [["gloss-result-mouse",mouse],["gloss-result-touch",touch],["gloss-result-saved",collapsed]] as const) {
+      CSS.highlights.delete(name);
+      if (ranges.length) CSS.highlights.set(name,new Highlight(...ranges));
+    }
+    return () => { for (const name of ["gloss-result-mouse","gloss-result-touch","gloss-result-saved"]) CSS.highlights.delete(name); };
+  }, [doc, selectionResults, readingMode, measurement, savedRegions]);
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    const active = [...selectionResults.values()].filter(result => selectionVisible(result) && (!result.saved || readingMode === "reading"));
+    if (!body || !active.length || measurement || !fontsReady) return;
+    const stopObservers: (() => void)[] = [];
+    for (const para of new Set(active.map(result => sentences[result.index].paraIndex))) {
+      const results = active.filter(result => sentences[result.index].paraIndex === para);
+      const paragraphs = new Set(results.flatMap(result => touchedSelectionSentences(result.selection,sentences).map(sentence=>sentence.paraIndex)));
+      const nodes: Element[] = [...body.querySelectorAll<HTMLElement>("[data-reader-block]")].filter(node=>paragraphs.has(Number(node.dataset.para)));
+      nodes.push(...results.flatMap(result=>selectionPanelsRef.current.get(result.id)??[]));
+      const visibility = new Map<Element,boolean|null>(nodes.map(node=>[node,null]));
+      let stopped = false;
+      const observer = new IntersectionObserver(entries=>{
+        if(stopped || measurementRef.current || typographyLayoutRef.current) return;
+        for(const entry of entries) if(visibility.has(entry.target)) visibility.set(entry.target,entry.isIntersecting);
+        if(allObservedTargetsOutside(visibility.values())) { stopped=true;dismissSelectionResults(results.map(result=>result.id)); }
+      });
+      nodes.forEach(node=>observer.observe(node));stopObservers.push(()=>{stopped=true;observer.disconnect();});
+    }
+    return ()=>stopObservers.forEach(stop=>stop());
+  }, [doc,selectionResults,readingMode,measurement,fontsReady,sentences]);
+
   useEffect(() => {
     if (!selectionMode) return;
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); exitSelection(); } };
@@ -950,6 +1255,7 @@ export default function Reader({ docId }: { docId: string }) {
   function visibleIndexes(next = expansionsRef.current, mode = readingMode, expanded = expandedSavedIndexesRef.current) {
     return [...new Set([
       ...next.keys(),
+      ...[...selectionResultsRef.current.values()].filter(result => selectionVisible(result, mode)).map(result => result.index),
       ...[...savedGlossesRef.current.keys()].filter((index) => mode === "review" || expanded.has(index)),
     ])].sort((a, b) => a - b);
   }
@@ -1061,8 +1367,19 @@ export default function Reader({ docId }: { docId: string }) {
         glossKey: item.index + ":" + (retryCounts.get(item.index) ?? 0),
       }].sort((a, b) => a.index - b.index);
     }
+
+    for (const result of selectionResults.values()) {
+      const layout = savedRegions?.get(result.index);
+      if (!layout || !selectionVisible(result)) continue;
+      const para = sentences[result.index]?.paraIndex; if (para === undefined) continue;
+      groups[para] = [...(groups[para] ?? NO_REGIONS), { index: result.index, splitAt: layout.splitAt,
+        view: result.view, saved: !!result.saved, presentation: glossShape, actionVisible: !result.saved || result.actionsVisible === true,
+        explainView: IDLE_EXPLAIN_VIEW, glossKey: result.id + ":" + result.retry,
+        selectionSlot: { result, panelRef: selectionPanelFor(result.id), onRetry: () => retrySelectionResult(result.id),
+          onSave: () => saveSelectionResult(result.id), onBeforeReveal: () => captureSelectionGrowth(result.id), onAfterReveal: restoreSelectionGrowth } }];
+    }
     return groups;
-  }, [activeSavedIndex, expansions, explainViews, glosses, glossShape, retryCounts, savedGlosses, savedRegions, sentences, visibleSavedRegionsByParagraph]);
+  }, [activeSavedIndex, expansions, explainViews, glosses, glossShape, retryCounts, savedGlosses, savedRegions, sentences, visibleSavedRegionsByParagraph, selectionResults]);
 
   const preloadAutoGloss = useCallback(
     (structure: string | null) => {
@@ -1145,7 +1462,7 @@ export default function Reader({ docId }: { docId: string }) {
       const measure = layoutMeasureKey(body);
       const typographyLayout = typographyLayoutRef.current;
       if (typographyLayout) {
-        if (measure !== current.measure && (savedGlossesRef.current.size > 0 || expansionsRef.current.size > 0)) {
+        if (measure !== current.measure && (savedGlossesRef.current.size > 0 || expansionsRef.current.size > 0 || selectionResultsRef.current.size > 0)) {
           pendingMeasureTransactionRef.current = { anchor: typographyLayout.anchor, animateOpen: false, adjustVisibility: false };
           setSavedRegions(null);
           return;
@@ -1160,7 +1477,7 @@ export default function Reader({ docId }: { docId: string }) {
       }
       // 撑开 / 收起已经自己锚定过视口（见下方事务），这里不再二次校正
       if (key === current.layout) return;
-      if (measure !== current.measure && (savedGlossesRef.current.size > 0 || expansionsRef.current.size > 0)) {
+      if (measure !== current.measure && (savedGlossesRef.current.size > 0 || expansionsRef.current.size > 0 || selectionResultsRef.current.size > 0)) {
         // 测量提交不消费本事务；量完、常驻区与 transient 都插回后才由事务 effect 锚定。
         pendingMeasureTransactionRef.current = { anchor: anchorAtViewportTop(body), animateOpen: false };
         setSavedRegions(null);
@@ -1297,6 +1614,7 @@ export default function Reader({ docId }: { docId: string }) {
     const sentenceTarget = target.closest<HTMLElement>(".sentence");
     const panelTarget = target.closest<HTMLElement>(".gloss-panel");
     if (!sentenceTarget && !panelTarget) return;
+    if (panelTarget?.dataset.selectionId) return;
     const index = Number(panelTarget?.dataset.sentenceIndex ?? sentenceTarget?.dataset.index);
     if (!Number.isInteger(index) || index < 0) return;
 
@@ -1313,7 +1631,7 @@ export default function Reader({ docId }: { docId: string }) {
     setReportFeedback(null);
   }
 
-  function open(index: number, target: HTMLElement, clientX: number, clientY: number, nonMouse: boolean) {
+  function open(index: number, target: HTMLElement, clientX: number, clientY: number, nonMouse: boolean, reuse?: string) {
     const body = bodyRef.current;
     const sentence = sentences[index];
     if (!body || !sentence) return;
@@ -1342,6 +1660,8 @@ export default function Reader({ docId }: { docId: string }) {
     const saved = savedGlosses.get(index);
     if (saved) {
       setGloss({ index, view: { status: "done", text: saved.text, failure: null, instant: true } });
+    } else if (reuse !== undefined) {
+      setGloss({ index, view: { status: "done", text: reuse, failure: null, instant: true } });
     } else if (sample) {
       setGloss({ index, view: { status: "done", text: sample.glosses[index], failure: null,
         instant: false, firstChunkNow: true } });
@@ -1391,6 +1711,22 @@ export default function Reader({ docId }: { docId: string }) {
     stageLayouts(paras, Math.min(...indexes), next, readingMode, expanded);
   }
 
+  function toggleSentence(index: number, target: HTMLElement, clientX: number, clientY: number, nonMouse: boolean, reuse?: string) {
+    if (savedGlosses.has(index)) {
+      const anchor = anchorAtClick(target, clientX, clientY);
+      if (readingMode === "reading") {
+        if (expandedSavedIndexes.has(index)) collapseIndexes([index], true, anchor, true);
+        else expandSaved(index, { anchor, showActions: true, nonMouse });
+      } else {
+        commitSaved(activeSavedIndex === index ? null : index, { anchor });
+      }
+    } else if (expansions.has(index)) {
+      collapseIndexes([index], true, anchorAtClick(target, clientX, clientY), true);
+    } else {
+      open(index, target, clientX, clientY, nonMouse, reuse);
+    }
+  }
+
   function handleBodyPointerDown(event: ReactPointerEvent<HTMLElement>) {
     if (selectionModeRef.current) { selectionPointerDown(event); return; }
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>(".sentence[data-index]") : null;
@@ -1403,6 +1739,17 @@ export default function Reader({ docId }: { docId: string }) {
     // G5：用户划选了文字（复制原文），松开鼠标不触发撑开
     if (hasTextSelection()) return;
     const eventTarget = event.target as Element;
+    const selectionPanel = eventTarget.closest<HTMLElement>("[data-selection-id]");
+    if (selectionPanel) {
+      const result = selectionResultsRef.current.get(selectionPanel.dataset.selectionId!);
+      if (result?.saved && !eventTarget.closest("button")) stageSelectionResults(new Map(selectionResultsRef.current).set(result.id, { ...result, actionsVisible: !result.actionsVisible }));
+      return;
+    }
+    const sourcePoint = selectionPoint(event.clientX, event.clientY);
+    if (sourcePoint && toggleSelectionAtPoint(sourcePoint, event.clientX, event.clientY)) return;
+    const clickedSentence = eventTarget.closest<HTMLElement>(".sentence");
+    const clickedPara = clickedSentence?.closest<HTMLElement>("[data-para]")?.dataset.para;
+    dismissSelectionResults([...selectionResultsRef.current.values()].filter(result => clickedPara === undefined || sentences[result.index]?.paraIndex !== Number(clickedPara)).map(result => result.id));
     const savedPanel = eventTarget.closest<HTMLElement>(".gloss-panel-saved");
     if (savedPanel && !eventTarget.closest("button")) {
       const index = Number(savedPanel.dataset.savedIndex);
@@ -1423,19 +1770,7 @@ export default function Reader({ docId }: { docId: string }) {
     if (last && last.index === index && now - last.time < CLICK_DEBOUNCE_MS) return;
     lastToggleRef.current = { index, time: now };
 
-    if (savedGlosses.has(index)) {
-      const anchor = anchorAtClick(target, event.clientX, event.clientY);
-      if (readingMode === "reading") {
-        if (expandedSavedIndexes.has(index)) collapseIndexes([index], true, anchor, true);
-        else expandSaved(index, { anchor, showActions: true, nonMouse });
-      } else {
-        commitSaved(activeSavedIndex === index ? null : index, { anchor });
-      }
-    } else if (expansions.has(index)) {
-      collapseIndexes([index], true, anchorAtClick(target, event.clientX, event.clientY), true);
-    } else {
-      open(index, target, event.clientX, event.clientY, nonMouse);
-    }
+    toggleSentence(index, target, event.clientX, event.clientY, nonMouse);
   }
 
   // 每次撑开 / 收起提交后、浏览器绘制前：锚定视口 → 自动微调滚动 → 启动动画
@@ -1445,9 +1780,11 @@ export default function Reader({ docId }: { docId: string }) {
     if (!body || savedRegions === null || measurement) return;
     const transaction = transactionRef.current;
     const pendingSavedJump = pendingSavedJumpRef.current;
+    const pendingSelectionJump = selectionJumpRef.current;
+    selectionJumpRef.current = null;
     transactionRef.current = null;
     pendingSavedJumpRef.current = null;
-    if (!transaction && pendingSavedJump === null) return;
+    if (!transaction && pendingSavedJump === null && pendingSelectionJump === null) return;
 
     clearAnimation();
 
@@ -1467,6 +1804,12 @@ export default function Reader({ docId }: { docId: string }) {
     rememberPositionAnchor(body, positionRef.current);
     if (typographyLayoutRef.current) typographyLayoutRef.current.scrollY = window.scrollY;
 
+    if (pendingSelectionJump && doc) {
+      const pointRange = sourceSelectionRanges(body, doc.paragraphs, { start: pendingSelectionJump, end: { ...pendingSelectionJump, offset: pendingSelectionJump.offset + String.fromCodePoint(doc.paragraphs[pendingSelectionJump.paraIndex].codePointAt(pendingSelectionJump.offset)!).length } })[0];
+      const rect = pointRange?.getBoundingClientRect();
+      if (rect) window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - mobileReaderTop()), behavior: "instant" });
+      rememberPositionAnchor(body, positionRef.current); return;
+    }
     if (pendingSavedJump !== null && !typographyLayoutRef.current) {
       body.querySelector<HTMLElement>(`.sentence[data-index="${pendingSavedJump}"]`)?.scrollIntoView({
         block: "center",
@@ -1520,20 +1863,22 @@ export default function Reader({ docId }: { docId: string }) {
       window.scrollBy({ top: adjustment, behavior: prefersReducedMotion() ? "instant" : "smooth" });
       if (window.innerWidth < 768) rememberPositionAnchor(body, positionRef.current);
     }
-  }, [activeSavedIndex, expandedSavedIndexes, explainViews, expansions, glosses, glossShape, measurement, readingMode, savedRegions, typography]);
+  }, [activeSavedIndex, expandedSavedIndexes, explainViews, expansions, glosses, glossShape, measurement, readingMode, savedRegions, typography, selectionResults]);
 
   // Esc / 空白批量收临时白话与收起模式的已留下展开，显示模式常驻保留。
   useEffect(() => {
-    if (measurement || !bodyRef.current || (!expansions.size && !expandedSavedIndexes.size && activeSavedIndex === null)) return;
+    if (measurement || !bodyRef.current || (!expansions.size && !expandedSavedIndexes.size && activeSavedIndex === null && !selectionResults.size)) return;
     const dismiss = () => {
       if (selectionModeRef.current) return;
       typographyLayoutRef.current = null;
       collapseIndexes([...expansionsRef.current.keys(), ...expandedSavedIndexesRef.current], true);
+      dismissSelectionResults([...selectionResultsRef.current.keys()]);
       setActiveSavedIndex(null);
     };
     const onDocumentClick = (event: MouseEvent) => {
       if (hasTextSelection()) return;
       const target = event.target as Element | null;
+      if (target?.closest?.("[data-saved-selection-id]")) return;
       if (target?.closest?.(".sentence, .gloss-panel, .feedback-card, .feedback-button, .col-right, [data-reader-settings]")) return;
       dismiss();
     };
@@ -2065,7 +2410,8 @@ export default function Reader({ docId }: { docId: string }) {
   const changeReadingMode = useCallback((next: ReadingMode) => {
     if (next === readingMode) return;
     const body = bodyRef.current;
-    transactionRef.current = { anchor: body ? anchorAtViewportTop(body) : null, animateOpen: false };
+    const closing = next === "reading" ? [...selectionResultsRef.current.values()].filter(result => result.saved && selectionVisible(result)).map(result => result.index) : [];
+    transactionRef.current = { anchor: selectionClosingAnchor(closing, body ? anchorAtViewportTop(body) : null), animateOpen: false };
     try {
       globalThis.localStorage?.setItem(READING_MODE_KEY, next);
     } catch {
@@ -2074,6 +2420,7 @@ export default function Reader({ docId }: { docId: string }) {
     setActiveSavedIndex(null);
     updateExpandedSavedIndexes(new Set());
     updateNonMouseOpenedIndexes(new Set([...nonMouseOpenedIndexesRef.current].filter((index) => !savedGlossesRef.current.has(index))));
+    publishSelectionResults(new Map([...selectionResultsRef.current].map(([id, result]) => [id, result.saved ? { ...result, expanded: false, nonMouse: false, actionsVisible: false } : result])));
     setReadingMode(next);
     stageLayouts(new Set(sentences.map((sentence) => sentence.paraIndex)), 0, expansionsRef.current, next, new Set());
   }, [readingMode]);
@@ -2098,8 +2445,14 @@ export default function Reader({ docId }: { docId: string }) {
   }, [activeSavedIndex, expandedSavedIndexes, readingMode]);
 
 
+
+  const savedItems = [
+    ...[...savedGlosses].map(([index,saved])=>({ key:"sentence:"+index, text:saved.text, point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0}, time:saved.savedAt, index, selectionId:null as string|null })),
+    ...[...selectionResults.values()].filter(result=>result.saved).map(result=>({key:"selection:"+result.id,text:result.saved!.text,point:result.selection.start,time:result.saved!.savedAt,index:result.index,selectionId:result.id as string|null}))
+  ].sort((a,b)=>comparePoints(a.point,b.point)||a.time-b.time);
+
   return (
-    <div className="shell">
+    <div className="shell" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("[data-selection-control]")) selectionEntryPointer.current = event.pointerType; }}>
       <aside className="col col-left">
         <Link href="/" className="wordmark">Gloss</Link>
         <Link href="/" className="reader-shelf-back" style={{ visibility: hasOwnBooks === null ? "hidden" : "visible" }}>
@@ -2168,14 +2521,14 @@ export default function Reader({ docId }: { docId: string }) {
           <h2 id="saved-title" className="side-title">
             留下的白话
           </h2>
-          {savedGlosses.size === 0 ? (
+          {savedItems.length === 0 ? (
             <p className="side-empty">点白话下面的「留下」，这句白话就固定下来，不会再变，并收在这里。</p>
           ) : (
             <ol className="saved-list">
-              {[...savedGlosses.entries()].sort(([a], [b]) => a - b).map(([index, saved]) => (
-                <li key={index}>
-                  <button type="button" className="saved-link" onClick={() => jumpToSaved(index)}>
-                    {saved.text}
+              {savedItems.map(item => (
+                <li key={item.key}>
+                  <button type="button" className="saved-link" data-saved-selection-id={item.selectionId ?? undefined} onClick={event => { if (item.selectionId) { event.stopPropagation(); jumpToSelection(item.selectionId); } else jumpToSaved(item.index); }}>
+                    {item.text}
                   </button>
                 </li>
               ))}
@@ -2307,6 +2660,23 @@ export default function Reader({ docId }: { docId: string }) {
 const NO_PIECES: Piece[] = [];
 const NO_REGIONS: readonly Region[] = [];
 const NO_INDEXES: readonly number[] = [];
+
+
+/** 只在真实原文 Text 内建立 Range，所有偏移都还原为原始 UTF-16 坐标。 */
+export function sourceSelectionRanges(body: HTMLElement, paragraphs: readonly string[], selection: Pick<SourceSelection,"start"|"end">): Range[] {
+  const ranges: Range[] = [];
+  for (const span of body.querySelectorAll<HTMLElement>(".sentence[data-offset]")) {
+    const node=span.firstChild, block=span.closest<HTMLElement>("[data-para]");
+    if(!(node instanceof Text)||!block)continue;
+    const para=Number(block.dataset.para);
+    if(para<selection.start.paraIndex||para>selection.end.paraIndex)continue;
+    const text=paragraphs[para]??"",hidden=text.length-text.trimStart().length,base=Number(span.dataset.offset)+hidden;
+    const from=Math.max(0,para===selection.start.paraIndex?selection.start.offset-base:0);
+    const to=Math.min(node.length,para===selection.end.paraIndex?selection.end.offset-base:node.length);
+    if(to<=from)continue;const range=document.createRange();range.setStart(node,from);range.setEnd(node,to);ranges.push(range);
+  }
+  return ranges;
+}
 
 export function countCompleteSentences(text: string): number {
   return [...text].filter((char) => char === "。" || char === "！" || char === "？").length;
@@ -2656,9 +3026,10 @@ export const Paragraph = memo(function Paragraph({
     );
   }
 
-  const ordered = [...groupRegions(regions).values()].flat();
+  const ordered = [...groupRegions(regions).values()];
   let from = 0;
-  const nodes = ordered.map((region, position) => {
+  const nodes = ordered.map((group, position) => {
+    const region = group[0];
     const sentence = pieces.find((piece) => piece.index === region.index);
     const end = sentence ? sentence.start + sentence.text.trimEnd().length : from;
     const boundary = Math.max(end, region.splitAt ?? paragraphLength(pieces));
@@ -2673,14 +3044,22 @@ export const Paragraph = memo(function Paragraph({
           className={splitFragmentClassName(className, heading !== undefined, position === 0, region.splitAt !== null)}>
           {renderPieces(head, markerIndexes, breatheSentenceIndex, activeIndexes)}
         </Tag>}
-        <GlossPanel key={region.saved ? "saved:" + region.index : region.glossKey ?? glossKey ?? "transient:" + region.index}
-          ref={panelFor ? panelFor(region.index) : region.saved ? undefined : panelRef}
-          view={region.view} onRetry={() => onRetry(region.index)}
-          onBeforeReveal={onBeforeReveal} onAfterReveal={onAfterReveal} saved={region.saved}
-          onSave={() => onSave(region.index)} source={sentences[region.index]?.text} presentation={region.presentation}
-          actionVisible={!region.saved || region.actionVisible} savedIndex={region.saved ? region.index : undefined}
-          sentenceIndex={region.index} explainView={region.explainView} onExplain={onExplain}
-          onExplainRetry={onExplainRetry} onExplainBlocked={onExplainBlocked} />
+
+        {group.map(entry => {
+          const slot = entry.selectionSlot;
+          const result = slot?.result;
+          const title = result?.resultKind === "term" ? "「" + (result.selection.autoPunctuation ? result.selection.text.slice(0,-result.selection.autoPunctuation.length) : result.selection.text) + "」在这里指什么" : undefined;
+          return <GlossPanel key={slot ? entry.glossKey : entry.saved ? "saved:" + entry.index : entry.glossKey ?? glossKey ?? "transient:" + entry.index}
+            ref={slot?.panelRef ?? (panelFor ? panelFor(entry.index) : entry.saved ? undefined : panelRef)}
+            view={entry.view} onRetry={slot?.onRetry ?? (()=>onRetry(entry.index))}
+            onBeforeReveal={slot?.onBeforeReveal ?? onBeforeReveal} onAfterReveal={slot?.onAfterReveal ?? onAfterReveal} saved={entry.saved}
+            onSave={slot?.onSave ?? (()=>onSave(entry.index))} source={result?.selection.text ?? sentences[entry.index]?.text} presentation={entry.presentation}
+            actionVisible={!entry.saved || entry.actionVisible} savedIndex={entry.saved && !slot ? entry.index : undefined}
+            sentenceIndex={entry.index} explainView={entry.explainView} onExplain={onExplain}
+            onExplainRetry={onExplainRetry} onExplainBlocked={onExplainBlocked}
+            selectionId={result?.id} title={title} selectionOnly={!!slot} />;
+        })}
+
       </Fragment>
     );
   });
@@ -2694,7 +3073,13 @@ export const Paragraph = memo(function Paragraph({
 
 // G-63：句序为唯一插入顺序；相同物理边界不再合组。
 export function groupRegions(regions: readonly Region[]): ReadonlyMap<number, readonly Region[]> {
-  return new Map([...regions].sort((a, b) => a.index - b.index).map((region) => [region.index, [region]]));
+  const rank = (region: Region) => !region.selectionSlot ? 0 : region.saved ? 1 : 2;
+  const ordered = [...regions].sort((a,b) => a.index-b.index || rank(a)-rank(b) ||
+    (a.selectionSlot && b.selectionSlot ? comparePoints(a.selectionSlot.result.selection.start,b.selectionSlot.result.selection.start) ||
+      (a.selectionSlot.result.saved?.savedAt ?? Infinity)-(b.selectionSlot.result.saved?.savedAt ?? Infinity) : 0));
+  const groups = new Map<number,Region[]>();
+  for (const region of ordered) groups.set(region.index,[...(groups.get(region.index)??[]),region]);
+  return groups;
 }
 
 function renderPieces(
@@ -2838,7 +3223,7 @@ function anchorAtClick(target: HTMLElement, x: number, y: number): CharAnchor | 
 function mobileReaderTop(): number {
   return window.innerWidth < 768 ? document.querySelector(".col-left")?.getBoundingClientRect().bottom ?? 0 : 0;
 }
-export function anchorAtViewportTop(body: HTMLElement): CharAnchor | null {
+export function anchorAtViewportTop(body: HTMLElement, exclude?: (paraIndex: number, offset: number) => boolean): CharAnchor | null {
   const viewport = window.visualViewport;
   const visibleTop = Math.max(viewport?.offsetTop ?? 0, mobileReaderTop());
   const sheet = document.querySelector<HTMLElement>(".reader-typography-sheet");
@@ -2855,6 +3240,7 @@ export function anchorAtViewportTop(body: HTMLElement): CharAnchor | null {
     const container = span.closest<HTMLElement>("[data-para]");
     if (!(node instanceof Text) || !container) continue;
     for (let c = 0; c < node.length; c++) {
+      if (exclude?.(Number(container.dataset.para), Number(span.dataset.offset) + c)) continue;
       const rect = rectOf(node, c);
       if (rect && rect.top >= visibleTop && rect.bottom <= visibleBottom && node.data[c].trim() &&
         (!popover || Math.min(rect.right, popover.right) <= Math.max(rect.left, popover.left) || Math.min(rect.bottom, popover.bottom) <= Math.max(rect.top, popover.top))) {

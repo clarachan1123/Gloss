@@ -820,3 +820,15 @@ body {
   .col-left .reader-typography-aa { grid-column: 4; }
   .reader-selection-mobile { display: flex; grid-column: 3; grid-row: 1; align-items: center; justify-content: center; gap: 6px; width: 72px; height: 44px; padding: 0 8px; box-sizing: border-box; border: 0; border-radius: 4px; color: var(--ink); background: transparent; font: 14px/1 var(--font-sans-cjk); cursor: pointer; }
 }
+
+/* 划选结果只绘制原文，不改变原文字体或字距。 */
+::highlight(gloss-result-mouse) { color: var(--hover); }
+::highlight(gloss-result-touch) { color: var(--hover); background-color: var(--sentence-active-bg); }
+::highlight(gloss-result-saved) {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.38em;
+  text-decoration-color: color-mix(in srgb, var(--hover) 55%, var(--paper-main));
+}
+.gloss-panel-title { margin: 0 0 8px; font-size: var(--reader-gloss-font-size, 14px); font-weight: 700; color: var(--ink); }

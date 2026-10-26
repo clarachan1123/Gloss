@@ -42,6 +42,10 @@ const fields: Record<string, Record<string, Check>> = {
     aiSegmented: bool,
     warningCodes: warnings,
   },
+  selection_mode_enter: { pointer: oneOf("mouse", "touch", "pen", "keyboard") },
+  selection_confirm: { resultKind: oneOf("whole", "term", "range"), charsBucket: oneOf("1-12", "13-40", "41-150", "151-400", "401-1000"), sentenceCountBucket: oneOf("1", "2-3", "4-5", ">5") },
+  selection_result: { resultKind: oneOf("term", "range"), outcome: oneOf("done", "cached", "refused", "error", "abort") },
+  selection_save: { resultKind: oneOf("term", "range") },
   sentence_click: { sentenceIndex: index, sentenceCharsBucket: sentenceChars, cacheHit: bool },
   sentence_reclick: { sentenceIndex: index, reclickOrdinal: (value) => integer(value) && (value as number) >= 2 },
   gloss_first_token: { sentenceIndex: index, firstTokenMs: finite, cacheHit: (value) => value === false },
@@ -88,6 +92,7 @@ export type AnalyticsEvent = { event: AnalyticsEventName; eventId: string; [key:
 export type AnalyticsDetail = { event: AnalyticsEventName; [key: string]: unknown };
 
 export const CLIENT_EVENTS = new Set([
+  "selection_mode_enter", "selection_confirm", "selection_result", "selection_save",
   "sample_doc_enter", "landing_view", "landing_cta_click",
   "reader_first_seen", "reader_return_7d", "doc_reopen_7d", "doc_upload_attempt", "doc_upload_reject",
   "doc_parse_complete", "sentence_click", "sentence_reclick", "gloss_first_token", "gloss_complete",
@@ -179,4 +184,11 @@ export function sentenceCountBucket(count: number): string {
   if (count <= 2000) return "501-2000";
   if (count <= 5000) return "2001-5000";
   return ">5000";
+}
+
+export function selectionCharsBucket(chars: number): "1-12" | "13-40" | "41-150" | "151-400" | "401-1000" {
+  return chars <= 12 ? "1-12" : chars <= 40 ? "13-40" : chars <= 150 ? "41-150" : chars <= 400 ? "151-400" : "401-1000";
+}
+export function selectionSentenceBucket(sentences: number): "1" | "2-3" | "4-5" | ">5" {
+  return sentences <= 1 ? "1" : sentences <= 3 ? "2-3" : sentences <= 5 ? "4-5" : ">5";
 }

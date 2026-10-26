@@ -11,6 +11,7 @@ export default function ActionRow({
   onExplain,
   onExplainBlocked,
   explainVisible,
+  selectionOnly = false,
 }: {
   saved: boolean;
   disabled: boolean;
@@ -19,6 +20,7 @@ export default function ActionRow({
   onExplain: () => void;
   onExplainBlocked: () => void;
   explainVisible: boolean;
+  selectionOnly?: boolean;
 }) {
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -50,7 +52,7 @@ export default function ActionRow({
       >
         {saved ? "取消留下" : "留下"}
       </button>
-      <button
+      {!selectionOnly && <button
         type="button"
         className="action-row-explain"
         aria-hidden={!explainVisible}
@@ -69,7 +71,7 @@ export default function ActionRow({
         }}
       >
         听不懂
-      </button>
+      </button>}
       {notice && <span className="action-row-notice" role="status">{notice}</span>}
     </div>
   );

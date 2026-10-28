@@ -6,7 +6,7 @@ import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 process.env.G19_IMPORT_ONLY='1';
 const {Cdp,setup,freePort,evaluate,revealControls,change,align}=await import('./verify-g19.mjs');
-const WIDTHS=[375,506,768,1024,1280], SIZES=[15,17.5,18,21];
+const WIDTHS=[375,506,768,1024,1280,1440], SIZES=[15,17.5,18,21];
 const KEY='gloss:settings:reader-typography';
 const DEFAULT={version:1,fontSize:17.5,lineHeight:1.75,lineChars:32,bodyFont:'sans',glossFont:'serif'};
 const EDGE='C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
@@ -42,17 +42,33 @@ function install(){
   g.end=()=>{const t=g.trace;t.stop=true;cancelAnimationFrame(t.raf);for(const o of t.observations??[]){o.scriptAfter=g.characterRect(o.scriptKey);o.productAfter=o.productKey?g.characterRect(o.productKey):null;o.scriptBlockedAfter=g.obstructed(o.scriptKey);o.productBlockedAfter=g.obstructed(o.productKey);o.scrollAfter=scrollY;}return{...t,after:g.raw(t.key)};};
   const scroll=window.scrollTo;window.scrollTo=function(...args){const t=g.trace;if(t&&typeof args[0]==='object'&&args[0].top===0){const target=scrollY+__g19.rect(t.key).y-t.before.y;if(target<0)t.target=target;}return scroll.apply(this,args);};
 }
-async function launch(origin,width,fn){
+async function interceptReplayFault(raw,p,files){
+  const response=await raw('Fetch.getResponseBody',{requestId:p.requestId});
+  const body=response.base64Encoded?Buffer.from(response.body,'base64').toString('utf8'):response.body;
+  const matches=[...body.matchAll(/\(\)=>([A-Za-z_$][\w$]*)\.revealProgress\?\.shown\?\?0/g)];
+  if(!matches.length){await raw('Fetch.continueRequest',{requestId:p.requestId});return;}
+  assert(matches.length===1,'负对照整文件初始化匹配恰好一处',{count:matches.length});
+  const from=matches[0][0],alias=matches[0][1];
+  assert(body.split(from).length===2,'负对照原文恰好一处');
+  const to='()=>(window.__g70?.replayFault?(window.__g70.replayFaultHits=(window.__g70.replayFaultHits??0)+1,0):'+alias+'.revealProgress?.shown??0)';
+  const changed=body.replace(from,to),path=new URL(p.request.url).pathname;
+  files.add(path);assert(files.size===1,'负对照仅修改一个构建模块');
+  console.log(JSON.stringify({faultModule:path,matches:matches.length}));
+  await raw('Fetch.fulfillRequest',{requestId:p.requestId,responseCode:p.responseStatusCode,responseHeaders:(p.responseHeaders??[]).filter(h=>!['content-length','content-encoding'].includes(h.name.toLowerCase())),body:Buffer.from(changed).toString('base64')});
+}
+
+async function launch(origin,width,fn,replayFaultInjection=false){
   const profile=await mkdtemp(join(tmpdir(),'gloss-g70-')),port=await freePort();
   assert(resolve(profile).startsWith(resolve(tmpdir(),'gloss-g70-')),'Safe profile');
   const edge=spawn(EDGE,['--headless=new','--disable-gpu','--no-sandbox','--remote-debugging-port='+port,'--remote-allow-origins=*','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check','--disable-sync','about:blank'],{stdio:['ignore','ignore','pipe'],windowsHide:true});
   let c,browser,passed=false;const errors=[];
   try{let target;const end=Date.now()+20000;while(Date.now()<end){try{target=(await(await fetch('http://127.0.0.1:'+port+'/json')).json()).find(t=>t.type==='page');if(target)break;}catch{}await sleep(100);}assert(target,'Edge target');c=new Cdp(target.webSocketDebuggerUrl);browser=new Cdp((await(await fetch('http://127.0.0.1:'+port+'/json/version')).json()).webSocketDebuggerUrl);
     await c.call('Page.enable');await c.call('Runtime.enable');await c.call('Network.enable');await c.call('Emulation.setFocusEmulationEnabled',{enabled:true});await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+    if(replayFaultInjection)await c.call('Network.setCacheDisabled',{cacheDisabled:true});c.g70FaultFiles=new Set();
     c.g70Diagnostics=[];c.socket.on('message',data=>{const m=JSON.parse(data);if(m.method==='Runtime.consoleAPICalled'&&m.params.args?.[0]?.value==='G70DIAG')c.g70Diagnostics.push(JSON.parse(m.params.args[1].value));});
     const raw=c.call.bind(c);c.call=async(method,params={})=>{if(!['Page.navigate','Page.reload'].includes(method))return raw(method,params);let handler,timer;const loaded=new Promise((r,j)=>{handler=data=>{if(JSON.parse(data).method==='Page.domContentEventFired')r();};c.socket.on('message',handler);timer=setTimeout(()=>j(Error('Navigation DOMContentLoaded timeout')),20000);});try{const result=await raw(method,params);await loaded;await raw('Page.bringToFront');return result;}finally{clearTimeout(timer);c.socket.off('message',handler);}};
-    c.socket.on('message',async data=>{const m=JSON.parse(data);if(m.method!=='Fetch.requestPaused')return;try{const p=new URL(m.params.request.url).pathname;const body=p==='/api/gloss'?FIXED:p==='/api/explain'?[JSON.stringify({type:'sentence',text:FIXED.slice(0,60)}),JSON.stringify({type:'done'}),''].join('\n'):p==='/api/structure'?JSON.stringify({structure:'固定本地结构。',prompt:'structure-v1'}):null;assert(body!==null,'Unexpected API',p);await raw('Fetch.fulfillRequest',{requestId:m.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:p==='/api/explain'?'application/x-ndjson':'text/plain; charset=utf-8'}],body:Buffer.from(body).toString('base64')});}catch(e){errors.push(e.message);}});
-    await c.call('Fetch.enable',{patterns:[{urlPattern:'*/api/*',requestStage:'Request'}]});await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`(${setup.toString()})();(${install.toString()})();(${installReveal.toString()})();`});
+    c.socket.on('message',async data=>{const m=JSON.parse(data);if(m.method!=='Fetch.requestPaused')return;try{const p=new URL(m.params.request.url).pathname;if(replayFaultInjection&&p.endsWith('.js')){await interceptReplayFault(raw,m.params,c.g70FaultFiles);return;}const body=p==='/api/gloss'?FIXED:p==='/api/explain'?[JSON.stringify({type:'sentence',text:FIXED.slice(0,60)}),JSON.stringify({type:'done'}),''].join('\n'):p==='/api/structure'?JSON.stringify({structure:'固定本地结构。',prompt:'structure-v1'}):null;assert(body!==null,'Unexpected API',p);await raw('Fetch.fulfillRequest',{requestId:m.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:p==='/api/explain'?'application/x-ndjson':'text/plain; charset=utf-8'}],body:Buffer.from(body).toString('base64')});}catch(e){errors.push(e.message);}});
+    await c.call('Fetch.enable',{patterns:[{urlPattern:'*/api/*',requestStage:'Request'},...(replayFaultInjection?[{urlPattern:'*/_next/static/chunks/*.js',requestStage:'Response'}]:[])]});await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`(${setup.toString()})();(${install.toString()})();(${installReveal.toString()})();`});
     const nav=async path=>{await c.call('Page.navigate',{url:origin+path});await settle(c);};
     await nav('/');await wait(c,"!!document.querySelector('.landing-secondary')",'landing');
     const inputPath=join(profile,'gloss-g70-import.txt');await writeFile(inputPath,TEXT);
@@ -138,7 +154,9 @@ async function revealChecks(c,nav,own,width,negative=false){
     await evaluate(c,(index,key)=>__g70.beginReveal(index,key),index,ref.key);
     const before=await c.evaluate('__g70.revealTrace.before');assert(before.clock&&before.clock.visibleMs>0,'E clock already accrued real visible time',{width,theme,saved,phase,gesture,before});assert(before.clock.active===!saved,'E expected active or explicitly ended clock',{width,theme,saved,phase,gesture,before});assert(before.scrollY>0,'E non-book-start anchor',{width,theme,saved,phase,gesture,before});
     assert(phase==='complete'?before.count===total:before.count>4&&before.count<total,'E real initial reveal state',{phase,total,before});
+    if(negative)await c.evaluate('__g70.replayFault=true;__g70.replayFaultHits=0');
     await revealGesture(c,width,gesture);await c.evaluate('__g70.gate=Infinity');
+    if(negative){const hits=await c.evaluate('__g70.replayFaultHits??0');assert(c.g70FaultFiles.size===1&&hits>0,'回放负对照唯一模块单处源码注入且运行命中大于0',{modules:c.g70FaultFiles.size,hits,width,theme,saved,phase,gesture});console.log(JSON.stringify({replayInjection:{modules:c.g70FaultFiles.size,hits,width,theme,saved,phase,gesture}}));}
     await wait(c,`document.querySelector('.gloss-panel[data-sentence-index="${index}"]')?.dataset.state==='done'`,'E reveal reaches full text');await settle(c);
     const t=await c.evaluate('__g70.endReveal()'),first=t.frames.find(f=>f.mount>0&&f.count!==null),rows=t.frames.filter(f=>f.mount>0&&f.count!==null),label={width,theme,saved,phase,gesture};
     assert(first&&rows.length,'E actual remount observed',label);
@@ -161,13 +179,14 @@ async function revealChecks(c,nav,own,width,negative=false){
     console.log(JSON.stringify({criterionE:{...label,negative,fall,total,before:before.count,first:first.count,final:rows.at(-1).count,frames:t.frames.length}}));
   }
 }
-async function suite(origin,width,candidate,revealNegative=false){return launch(origin,width,async(c,nav,own)=>{windowDocCache.set(c,await evaluate(c,id=>JSON.parse(localStorage.getItem('gloss:doc:'+id)),own.split('/').at(-1)));const styles=await defaultStates(c,nav,own,width);const pointsResult=await points(c,nav,own);let hashes;if(width===1024)hashes=await layoutHash(c,nav,own);if(candidate){for(const size of SIZES)for(const saved of [false,true])for(const shape of ['inline','bubble']){await reset(c,nav,own,size);await openPanel(c,0);if(saved)await click(c,'.action-row-save');if(shape==='bubble'){await bubble(c,width);}await checkSize(c,size);}await locks(c,nav,own,width);await negative(c,nav,own,width);}if([375,768,1280].includes(width)&&(candidate||revealNegative))await revealChecks(c,nav,own,width,revealNegative);return{styles,points:pointsResult,hashes};});}
+async function suite(origin,width,candidate,revealNegative=false){return launch(origin,width,async(c,nav,own)=>{windowDocCache.set(c,await evaluate(c,id=>JSON.parse(localStorage.getItem('gloss:doc:'+id)),own.split('/').at(-1)));const styles=await defaultStates(c,nav,own,width);const pointsResult=await points(c,nav,own);let hashes;if(width===1024)hashes=await layoutHash(c,nav,own);if(candidate){for(const size of SIZES)for(const saved of [false,true])for(const shape of ['inline','bubble']){await reset(c,nav,own,size);await openPanel(c,0);if(saved)await click(c,'.action-row-save');if(shape==='bubble'){await bubble(c,width);}await checkSize(c,size);}await locks(c,nav,own,width);await negative(c,nav,own,width);}if([375,768,1280].includes(width)&&(candidate||revealNegative))await revealChecks(c,nav,own,width,revealNegative);return{styles,points:pointsResult,hashes};},revealNegative);}
 
 async function diagnose(origin,order){return launch(origin,768,async(c,nav,own)=>{await reset(c,nav,own,17.5);await revealControls(c,768);await align(c,4);const ref=await c.evaluate('__g19.reference()');await evaluate(c,key=>__g70.start(key),ref.key);const steps=[];for(const value of [21,15]){const start=c.g70Diagnostics.length;await change(c,'fontSize',value);steps.push({value,diagnostic:c.g70Diagnostics.slice(start),state:await c.evaluate('({script:__g70.characterRect(__g70.trace.key),scriptBlocked:__g70.obstructed(__g70.trace.key),scrollY,observations:__g70.trace.observations})')});}await settle(c);const trace=await c.evaluate('__g70.end()');const row={origin,order,scriptKey:ref.key,dx:trace.after.x-trace.before.x,dy:trace.after.y-trace.before.y,steps,trace};console.log(JSON.stringify({diagnosis:row}));return row;});}
 if(process.env.G70_DIAG_ONLY==='1'){const rows=[];for(let order=1;order<=6;order++)rows.push(await diagnose(order%2?'http://127.0.0.1:3482':'http://127.0.0.1:3483',order));await writeFile(resolve(import.meta.dirname,'../tmp-g70-diagnosis.json'),JSON.stringify(rows,null,2));console.log('G-70 diagnosis collection completed');}
 else {
 
-for(const width of WIDTHS){console.log(JSON.stringify({width,stage:'baseline-pass-1'}));const b1=await suite('http://127.0.0.1:3483',width,false,true);console.log(JSON.stringify({width,stage:'baseline-pass-2'}));const b2=await suite('http://127.0.0.1:3483',width,false);console.log(JSON.stringify({width,stage:'candidate'}));const a=await suite('http://127.0.0.1:3482',width,true);for(const state of Object.keys(b1.styles)){compareStyles(b1.styles[state],a.styles[state],width+'/'+state);}comparePoints(b1.points,b2.points,a.points,width);if(width===1024){assert(JSON.stringify(a.hashes)===JSON.stringify(b1.hashes),'Default 1024 visible layout hashes',{a:a.hashes,b:b1.hashes});report.hashes.push({width,...a.hashes});}console.log(JSON.stringify({width,completed:true,counts:{A:report.A,B:report.B,C:report.C,D:report.D,E:report.E}}));}
+const baselineOrigin=process.env.G70_BASELINE_ORIGIN??'http://127.0.0.1:3483',candidateOrigin=process.env.G70_CANDIDATE_ORIGIN??'http://127.0.0.1:3482';
+for(const width of WIDTHS){console.log(JSON.stringify({width,stage:'baseline-pass-1'}));const b1=await suite(baselineOrigin,width,false,true);console.log(JSON.stringify({width,stage:'baseline-pass-2'}));const b2=await suite(baselineOrigin,width,false);console.log(JSON.stringify({width,stage:'candidate'}));const a=await suite(candidateOrigin,width,true);for(const state of Object.keys(b1.styles)){compareStyles(b1.styles[state],a.styles[state],width+'/'+state);}comparePoints(b1.points,b2.points,a.points,width);if(width===1024){assert(JSON.stringify(a.hashes)===JSON.stringify(b1.hashes),'Default 1024 visible layout hashes',{a:a.hashes,b:b1.hashes});report.hashes.push({width,...a.hashes});}console.log(JSON.stringify({width,completed:true,counts:{A:report.A,B:report.B,C:report.C,D:report.D,E:report.E}}));}
 console.log(JSON.stringify(report));
 console.log('G-70 gloss-size checks passed');
 

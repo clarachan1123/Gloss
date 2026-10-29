@@ -214,7 +214,7 @@ async function streamingAbove(width, iteration, skipGrowthSnapshot = false) {
           if (!m.params.responseStatusCode || m.params.responseStatusCode !== 200) { await c.call("Fetch.continueResponse", { requestId: m.params.requestId }); return; }
           const response = await c.call("Fetch.getResponseBody", { requestId: m.params.requestId });
           let source = response.base64Encoded ? Buffer.from(response.body, "base64").toString() : response.body;
-          const call = "if (!owner) rememberPositionAnchor(body, positionRef.current);";
+          const call = "if (!owner) (0, __TURBOPACK__imported__module__$5b$project$5d2f$components$2f$reader$2f$readerGeometry$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__[\"rememberPositionAnchor\"])(body, positionRef.current);";
           if (source.includes(call)) { assert(source.split(call).length === 2, "Exactly one growth snapshot call"); source = source.replace(call, "if (!owner) void 0;"); removedCalls++; }
           await c.call("Fetch.fulfillRequest", { requestId: m.params.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "application/javascript" }], body: Buffer.from(source).toString("base64") });
         } catch (error) { errors.push(error.message); await c.call("Fetch.failRequest", { requestId: m.params.requestId, errorReason: "Failed" }).catch(() => {}); }

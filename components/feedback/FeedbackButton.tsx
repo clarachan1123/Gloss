@@ -156,7 +156,7 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
     <button ref={buttonRef} type="button" className="feedback-button" aria-label="体验反馈" aria-expanded={open} aria-haspopup="dialog" onClick={() => {
       if (open) close();
       else { setStatus(value => value === "success" ? "idle" : value); setOpen(true); }
-    }}>体验反馈</button>
+    }}>{placement === "shelf" ? <><svg className="feedback-shelf-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg><span className="feedback-desktop-label">体验反馈</span><span className="feedback-mobile-label">反馈</span></> : "体验反馈"}</button>
     {open && createPortal(<div ref={cardRef} className="feedback-card" role="dialog" aria-label="体验反馈" tabIndex={-1}
       onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
       onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>

@@ -59,7 +59,7 @@ export function markSampleBreathed(): void {
   catch { /* 本次会话仍会停止动效。 */ }
 }
 
-/** 公共内容文件只在阅读页请求；句序与随书白话必须完全对齐。 */
+/** 公共内容文件在阅读页或书架示例详情按需请求；句序与随书白话必须完全对齐。 */
 export function parseSampleContent(value: unknown): SampleBook | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const data = value as Record<string, unknown>;

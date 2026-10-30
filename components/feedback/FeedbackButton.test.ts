@@ -226,3 +226,11 @@ it("抽屉交接复用 reader 反馈卡，关闭焦点回顶栏 Aa", async () =>
     expect(dialog()).toBeNull(); expect(document.activeElement).toBe(aa);
   } finally { aa.remove(); }
 });
+
+it("书架按钮提供装饰图标、双端标签和固定无障碍名称", async () => {
+  await act(async () => root.render(createElement(FeedbackButton, { placement: "shelf" })));
+  expect(button().getAttribute("aria-label")).toBe("体验反馈");
+  expect(button().querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+  expect(button().querySelector('.feedback-mobile-label')?.textContent).toBe('反馈');
+  await click(button()); expect(dialog()).not.toBeNull();
+});

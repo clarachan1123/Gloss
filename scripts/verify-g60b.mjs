@@ -155,8 +155,8 @@ function space(page) {
     return {viewport:document.documentElement.clientWidth,back:b,backText:text(back),mode:m,modeButtons:buttons,modeRightSpace:c.right-parseFloat(cs.paddingRight)-buttons.at(-1).right,body:rect(document.querySelector(".reader-body"))};
   }
   if(page==="shelf") {
-    const h=document.querySelector(".shelf-heading h1"), r=document.createRange(); r.selectNode(h.firstChild);
-    return {viewport:document.documentElement.clientWidth,heading:rect(document.querySelector(".shelf-heading")),title:rect(h),titleText:rect(r),remaining:rect(h).right-rect(r).right};
+    const h=document.querySelector(".shelf-heading .wordmark"), r=document.createRange(); r.selectNode(h.firstChild);
+    return {viewport:document.documentElement.clientWidth,heading:rect(document.querySelector(".shelf-heading")),wordmark:rect(h),wordmarkText:rect(r),feedback:rect(document.querySelector('.shelf-heading .feedback-button'))};
   }
   return {header:rect(document.querySelector(".landing-header")),wordmark:rect(document.querySelector(".landing-header .wordmark")),viewport:document.documentElement.clientWidth,primary:rect(document.querySelector(".landing-primary")),secondary:rect(document.querySelector(".landing-secondary")),feedback:rect(document.querySelector(".landing-feedback"))};
 }
@@ -189,7 +189,7 @@ function buttonBoxes() {
       if(ownText||control||background||border)overlap(el.getBoundingClientRect(),el.tagName+"."+el.className);
     }
   }
-  return {button:plain(b),text:button.textContent,clientWidth:document.documentElement.clientWidth,height:innerHeight,intersections};
+  return {button:plain(b),text:button.closest('.shelf-heading') ? button.getAttribute("aria-label") : button.textContent,clientWidth:document.documentElement.clientWidth,height:innerHeight,intersections};
 }
 async function originalSnapshot(cdp) {
   return cdp.evaluate("window.__g59.snapshot('.reader-body').chars.filter(c=>c.y>=scrollY&&c.y<scrollY+innerHeight)");
@@ -218,7 +218,14 @@ async function checks(cdp,width,page) {
   assert(box.text==="体验反馈","button label");
   assert(box.button.x>=0&&box.button.y>=0&&box.button.right<=box.clientWidth&&box.button.bottom<=box.height,"button viewport "+JSON.stringify(box));
   assert(box.intersections.length===0,"button overlap "+JSON.stringify({width,page,...box}));
-  if(page==="shelf") assert(await cdp.evaluate("document.querySelector('.shelf-heading h1').textContent==='我的书架'"),"shelf title");
+  if(page==="shelf") {
+    const shelfFacts=()=>evalFn(cdp,()=>{const h=document.querySelector('.shelf-heading h1'),b=document.querySelector('.feedback-button'),n=document.querySelector('.shelf-count'),r=b.getBoundingClientRect(),a=n.getBoundingClientRect(),header=document.querySelector('.shelf-heading').getBoundingClientRect();return h.textContent==='我的书架'&&getComputedStyle(h).clipPath==='inset(50%)'&&h.getBoundingClientRect().width===1&&r.right===header.right-(innerWidth<768?12:0)&&r.left>=0&&(innerWidth<768||a.right<=r.left);});
+    assert(await shelfFacts(),'书架读屏标题与页头按钮');
+    await cdp.evaluate("document.querySelector('.shelf-heading h1').style.clipPath='none'");
+    assert(!await shelfFacts(),'页头负对照未检出');
+    await cdp.evaluate("document.querySelector('.shelf-heading h1').style.removeProperty('clip-path')");
+    console.log(JSON.stringify({shelfHeaderNegativeDetected:true,width}));
+  }
   if(page==="landing") {
     const read=()=>evalFn(cdp,()=>[...document.querySelectorAll(".landing-primary,.landing-secondary")].map(el=>{const r=el.getBoundingClientRect();return[r.x,r.y,r.width,r.height];}));
     const before=await read();
@@ -313,6 +320,7 @@ async function run(width, page) {
       await waitForValue(()=>cdp.evaluate("location.pathname.startsWith('/read/')&&location.pathname!='/read/sample'"),"txt import");
       await navigate(cdp,ORIGIN+"/"); await ready(cdp,".shelf-heading");
     }
+    if(page==='reader')await ready(cdp,'.reader-body');
     console.log(JSON.stringify({width,page,space:await evalFn(cdp,space,page)}));
     if(!MEASURE) await checks(cdp,width,page);
     await assertSinglePage(browser,target.id,"finish:single-page");
@@ -324,5 +332,6 @@ async function run(width, page) {
     await rm(p,{recursive:true,force:true}).catch(e=>console.warn("Profile cleanup: "+e.code));
   }
 }
+await run(1440,"shelf");
 for (const width of WIDTHS) for (const page of (process.argv.includes("--measure-landing") ? ["landing"] : ["reader","shelf","landing"])) await run(width,page);
 console.log(MEASURE?"G-60b baseline measurements complete":"G-60b checks passed");

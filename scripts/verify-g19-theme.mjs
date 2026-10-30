@@ -1,5 +1,5 @@
 /** Invalid-key production service. All color expectations come from the target theme block. */
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,8 +17,6 @@ const DIRECTIONS=[['parchment','moon-white'],['moon-white','eye-green'],['eye-gr
 const WIDTHS=(process.env.G19_THEME_WIDTHS??'375,506,768,1024,1280').split(',').map(Number);
 const CSS=await readFile(join(ROOT,'styles/tokens.css'),'utf8');
 const TOKENS=Object.fromEntries(THEMES.map(t=>{const p=CSS.indexOf(`[data-theme="${t}"]`),b=CSS.slice(p,CSS.indexOf('}',p));return[t,Object.fromEntries([...b.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map(m=>[m[1],m[2]]))];}));
-const mainShelf=execFileSync('git',['-C',ROOT,'show','origin/main:styles/shelf.css'],{encoding:'utf8'});
-const MAIN_LEDGE=/\.shelf-ledge\s*\{[^}]+\}/.exec(mainShelf)[0];
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const assert=(v,label,detail)=>{if(!v)throw Error(label+(detail===undefined?'':': '+JSON.stringify(detail)));};
 async function wait(c,expression){for(let i=0;i<200;i++){if(await c.evaluate(expression))return;await pause(100);}throw Error('Timeout: '+expression);}
@@ -67,27 +65,26 @@ async function hover(c,width,theme,from){
   await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});await settle(c);
 }
 async function ledge(c,width,theme,from,baseline=false){
-  const result=await evaluate(c,(theme,from,tokens,mainRule,baseline)=>{
-    const el=document.querySelector('.shelf-ledge'),css=getComputedStyle(el);
-    const snapshot=()=>{const s=getComputedStyle(el);return{gradient:s.backgroundImage,edge:s.borderTopColor,shadow:s.boxShadow};};
-    const current=snapshot(),rgba=s=>{let m=/color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\/\s*([\d.]+)\)/.exec(s);
-      if(m)return[...m.slice(1,4).map(v=>Math.round(Number(v)*255)),Number(m[4])];
-      m=/rgba?\(([^)]+)\)/.exec(s);const n=m[1].split(',').map(Number);return[...n.slice(0,3),n[3]??1];};
-    const parts=Object.fromEntries(['top','mid','bottom','edge','shadow'].map(part=>[part,css.getPropertyValue('--shelf-ledge-'+part).trim()]));
-    const rgb=hex=>'rgb('+[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)).join(', ')+')';
-    const expected=Object.fromEntries(['top','mid','bottom','edge','shadow'].map(part=>[part,rgb(tokens[theme]['--shelf-ledge-'+part])]));
-    const actualShadow=rgba(current.shadow),shadowExpected=[...['--shelf-ledge-shadow'].flatMap(k=>[1,3,5].map(i=>parseInt(tokens[theme][k].slice(i,i+2),16))),.62];
-    const passed=['top','mid','bottom'].every(part=>current.gradient.includes(expected[part]))&&current.edge===expected.edge&&JSON.stringify(actualShadow)===JSON.stringify(shadowExpected)&&Object.keys(parts).every(part=>parts[part]===expected[part]);
-    let main=null,mainEquivalent=null;
-    if(baseline){const style=document.createElement('style');style.textContent=mainRule;document.head.append(style);main=snapshot();style.remove();
-      mainEquivalent=current.gradient===main.gradient&&current.edge===main.edge&&JSON.stringify(rgba(current.shadow))===JSON.stringify(rgba(main.shadow));}
-    return{parts,expected,current,shadowRGBA:actualShadow,passed,main,mainEquivalent};
-  },theme,from,TOKENS,MAIN_LEDGE,baseline);
-  originalChecks+=5;console.log(JSON.stringify({width,direction:from+'>'+theme,element:'书架层板五项',...result}));assert(result.passed,'Ledge target tokens',result);
-  if(baseline)assert(result.mainEquivalent,'Parchment ledge differs from main',result);
+  const facts=()=>evaluate(c,(theme,width)=>{
+    const expected=theme==='dark'?['#5E4D3A','#4F4030','#4A3A2A','#3A2D20']:['#E6D9C2','#D9C7A8','#C9B08C','#B39874'];
+    const color=value=>{const el=document.createElement('i');el.style.color=value;document.body.append(el);const result=getComputedStyle(el).color;el.remove();return result;};
+    if(width<768){const arrow=document.querySelector('.mobile-arrow');return{passed:!document.querySelector('.shelf-ledge,.book-spine')&&!!arrow&&getComputedStyle(arrow).color===color({parchment:'#A39B8E','moon-white':'#98989C','eye-green':'#91978E',dark:'#8F877B'}[theme])};}
+    const top=getComputedStyle(document.querySelector('.shelf-ledge-top')),front=getComputedStyle(document.querySelector('.shelf-ledge-front'));
+    const gradient=(a,b)=>`linear-gradient(${color(a)}, ${color(b)})`,grain=color('rgba(90,60,30,.06)'),transparent=color('transparent');
+    const expectedFront=`repeating-linear-gradient(0deg, ${grain} 0px, ${grain} 1px, ${transparent} 1px, ${transparent} 4px), ${gradient(expected[2],expected[3])}`;
+    return{top:top.backgroundImage,front:front.backgroundImage,shadow:front.boxShadow,passed:top.height==='8px'&&front.height==='22px'&&top.backgroundImage===gradient(expected[0],expected[1])&&front.backgroundImage===expectedFront&&front.boxShadow===color('rgba(70,50,25,.55)')+' 0px 26px 30px -18px'};
+  },theme,width);
+  const result=await facts();
+  originalChecks+=5;console.log(JSON.stringify({width,theme,ledge:result}));assert(result.passed,'Ledge target tokens',result);
+  if(baseline&&width>=768){
+    await c.evaluate("document.querySelector('.shelf-ledge').style.setProperty('--shelf-ledge-front-a','#ff0000')");
+    const changed=!(await facts()).passed;
+    await c.evaluate("document.querySelector('.shelf-ledge').style.removeProperty('--shelf-ledge-front-a')");
+    assert(changed,'层板负对照未检出');console.log(JSON.stringify({ledgeNegativeDetected:changed}));
+  }
 }
 async function pages(c,width,from,to){
-  await c.call('Page.navigate',{url:ORIGIN+'/'});await wait(c,"!!document.querySelector('.shelf-ledge')");await settle(c);
+  await c.call('Page.navigate',{url:ORIGIN+'/'});await wait(c,"!!document.querySelector('.shelf-page')");await settle(c);
   await colors(c,to,from,'shelf',width);await ledge(c,width,to,from,to==='parchment');
   await c.evaluate("localStorage.removeItem('gloss:doc:g19-owned');localStorage.removeItem('gloss:shelf:v1')");
   await c.call('Page.navigate',{url:ORIGIN+'/'});await wait(c,"!!document.querySelector('.landing-demo-visible')");await settle(c);
@@ -145,12 +142,12 @@ async function surfaceChecks(c,width,theme){
   await evaluate(c,()=>{const t=document.querySelector('.feedback-form textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'甲'.repeat(1001));t.dispatchEvent(new Event('input',{bubbles:true}));});await settle(c);
   await expectRoles(c,theme,[['超字数','.feedback-error','color','--text-error']],'feedback-error');
   await c.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");await settle(c);
-  await c.call('Page.navigate',{url:ORIGIN+'/'});await wait(c,"!!document.querySelector('.book-spine')");await settle(c);
-  await expectRoles(c,theme,[['书架','.shelf-page','color','--ink'],['导入虚线','.import-spine','borderTopColor','--import-border']],'shelf');await ledge(c,width,theme,theme);originalChecks-=5;
-  await c.evaluate("document.querySelector('.book-spine').click()");await settle(c);
-  await evaluate(c,()=>document.querySelector('.remove-book').click());await settle(c);
+  await c.call('Page.navigate',{url:ORIGIN+'/'});await wait(c,"!!document.querySelector('.shelf-page')");await settle(c);
+  await expectRoles(c,theme,[['书架','.shelf-page','color','--ink'],['导入虚线',width<768?'.mobile-list-heading button':'.import-spine',width<768?'color':'borderTopColor',width<768?'--hover':'--shelf-import-border']],'shelf');await ledge(c,width,theme,theme);originalChecks-=5;
+  await c.evaluate("document.querySelector('.book-slot,.mobile-book').focus()");await settle(c);
+  await evaluate(c,()=>{const book=document.querySelector('.book-slot,.mobile-book');book.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));});await wait(c,"!!document.querySelector('.spine-menu')");await evaluate(c,()=>[...document.querySelectorAll('.spine-menu button')].find(b=>b.textContent==='从书架移除').click());await settle(c);
   await expectRoles(c,theme,[['移除遮罩','.remove-confirm','backgroundColor','--overlay-remove'],['次按钮','.remove-confirm button','borderTopColor','--control-border']],'remove');
-  await c.evaluate("document.querySelector('.remove-confirm button').click();document.querySelector('.import-spine').click()");await settle(c);
+  await c.evaluate("document.querySelector('.remove-confirm button').click();document.querySelector('.import-spine,.mobile-list-heading button').click()");await settle(c);
   await expectRoles(c,theme,[['导入背板','.import-backdrop','backgroundColor','--overlay-import'],['导入框','.import-panel textarea','backgroundColor','--input-bg'],['上传虚线','label[class*=fileLabel]','borderTopColor','--upload-border'],['关闭描边','.import-close','borderTopColor','--control-border']],'import');
   if(theme==='dark'){
     await c.evaluate("document.querySelector('.import-panel textarea').focus({preventScroll:true})");

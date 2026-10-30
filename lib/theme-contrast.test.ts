@@ -195,28 +195,11 @@ describe("G-13 书架色板对比度", () => {
     if (!match) throw new Error(`缺少书色 ${index}`);
     return match[1];
   });
-  const inkOnDark = /--shelf-ink-on-dark:\s*(#[0-9A-Fa-f]{6})/.exec(CSS)?.[1] ?? "";
-  const inkOnDarkMuted = /--shelf-ink-on-dark-muted:\s*(#[0-9A-Fa-f]{6})/.exec(CSS)?.[1] ?? "";
-  const cover = /--shelf-cover:\s*(#[0-9A-Fa-f]{6})/.exec(CSS)?.[1] ?? "";
-  const mix = (paper: string, book: string) => {
-    const channels = [0, 1, 2].map((i) => Math.round(parseInt(paper.slice(1 + i * 2, 3 + i * 2), 16) * .94 + parseInt(book.slice(1 + i * 2, 3 + i * 2), 16) * .06));
-    return `#${channels.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
-  };
-
-  it.each(THEMES)("%s：每个书色混入页面背景后，正文与次级字均达 AA", (theme) => {
-    const c = themeColors(theme);
-    for (const book of books) {
-      const background = mix(c["--paper-main"], book);
-      expect(contrast(c["--ink"], background)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
-      expect(contrast(c["--gloss"], background)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
-    }
+  const gold = /--shelf-text:\s*(#[0-9A-Fa-f]{6})/.exec(CSS)?.[1] ?? "";
+  it("新金字在全部十一种书色上达到 AA", () => {
+    for (const book of books) expect(contrast(book, gold)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 
-  it("每个书脊与书名、导入年月、选中封面与封面字均达 AA", () => {
-    for (const book of books) expect(contrast(book, inkOnDark)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
-    for (const book of books) expect(contrast(book, inkOnDarkMuted)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
-    expect(contrast(cover, inkOnDark)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
-  });
 });
 
 /**
@@ -272,10 +255,12 @@ describe("G-19 完整主题", () => {
     if (theme === "dark") expect(luminance(c["--paper-main"])).toBeLessThan(luminance(c["--paper-side"]));
     else expect(luminance(c["--paper-main"])).toBeGreaterThan(luminance(c["--paper-side"]));
   });
-  it.each(THEMES)("%s：层板五项均在本主题定义", theme => {
+  it.each(THEMES)("%s：层板六项均在本主题定义", theme => {
     const start = CSS.indexOf(`[data-theme="${theme}"]`), block = CSS.slice(start, CSS.indexOf("}", start));
-    for (const part of ["top", "mid", "bottom", "edge", "shadow"])
+    for (const part of ["top-a", "top-b", "front-a", "front-b"])
       expect(block).toMatch(new RegExp(`--shelf-ledge-${part}:\\s*#[0-9a-fA-F]{6};`));
+    for (const part of ["grain", "shadow"])
+      expect(block).toMatch(new RegExp(`--shelf-ledge-${part}:\\s*rgba\\([^;]+\\);`));
   });
 });
 

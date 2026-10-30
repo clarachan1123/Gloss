@@ -33,11 +33,6 @@
   --selection-bg: #E8DCB5;
   --selection-start-bg: #D2BE84;
   --tool-active-bg: #E6E1D6;
-  --shelf-ledge-top: #E5DFC8;
-  --shelf-ledge-mid: #F1EBD9;
-  --shelf-ledge-bottom: #DDD2B1;
-  --shelf-ledge-edge: #D9D1B5;
-  --shelf-ledge-shadow: #4B3D1E;
   --input-bg: var(--paper-main);
   --placeholder: var(--gloss);
   --control-border: var(--rule);
@@ -58,6 +53,14 @@
   --swatch-parchment: #F8F6F0;
   --swatch-moon-white: #F5F5F7;
   --swatch-eye-green: #EDF2EA;
+  --shelf-ledge-top-a: #E6D9C2;
+  --shelf-ledge-top-b: #D9C7A8;
+  --shelf-ledge-front-a: #C9B08C;
+  --shelf-ledge-front-b: #B39874;
+  --shelf-ledge-grain: rgba(90,60,30,.06);
+  --shelf-ledge-shadow: rgba(70,50,25,.55);
+  --shelf-import-border: #BFB49B;
+  --shelf-list-arrow: #A39B8E;
 }
 
 /* 月白 */
@@ -75,11 +78,6 @@
   --selection-bg: #D8D8E2;
   --selection-start-bg: #C4C4D2;
   --tool-active-bg: #DCDCE2;
-  --shelf-ledge-top: #E2E2E8;
-  --shelf-ledge-mid: #E7E7EC;
-  --shelf-ledge-bottom: #CECED7;
-  --shelf-ledge-edge: #CDCDD4;
-  --shelf-ledge-shadow: #3B3B43;
   --input-bg: var(--paper-main);
   --placeholder: var(--gloss);
   --control-border: var(--rule);
@@ -100,6 +98,14 @@
   --swatch-parchment: #F8F6F0;
   --swatch-moon-white: #F5F5F7;
   --swatch-eye-green: #EDF2EA;
+  --shelf-ledge-top-a: #E6D9C2;
+  --shelf-ledge-top-b: #D9C7A8;
+  --shelf-ledge-front-a: #C9B08C;
+  --shelf-ledge-front-b: #B39874;
+  --shelf-ledge-grain: rgba(90,60,30,.06);
+  --shelf-ledge-shadow: rgba(70,50,25,.55);
+  --shelf-import-border: #B1B1B7;
+  --shelf-list-arrow: #98989C;
 }
 
 /* 护眼绿 */
@@ -117,11 +123,6 @@
   --selection-bg: #CBD8C3;
   --selection-start-bg: #B6C8AB;
   --tool-active-bg: #D5DDD0;
-  --shelf-ledge-top: #D5DFD0;
-  --shelf-ledge-mid: #DFE7DB;
-  --shelf-ledge-bottom: #C1D0BA;
-  --shelf-ledge-edge: #C2CEBC;
-  --shelf-ledge-shadow: #2F3D29;
   --input-bg: var(--paper-main);
   --placeholder: var(--gloss);
   --control-border: var(--rule);
@@ -142,6 +143,14 @@
   --swatch-parchment: #F8F6F0;
   --swatch-moon-white: #F5F5F7;
   --swatch-eye-green: #EDF2EA;
+  --shelf-ledge-top-a: #E6D9C2;
+  --shelf-ledge-top-b: #D9C7A8;
+  --shelf-ledge-front-a: #C9B08C;
+  --shelf-ledge-front-b: #B39874;
+  --shelf-ledge-grain: rgba(90,60,30,.06);
+  --shelf-ledge-shadow: rgba(70,50,25,.55);
+  --shelf-import-border: #A6B2A1;
+  --shelf-list-arrow: #91978E;
 }
 
 
@@ -161,11 +170,6 @@
   --selection-bg: #4A4238;
   --selection-start-bg: #5E5446;
   --tool-active-bg: #34302C;
-  --shelf-ledge-top: #5E4D3A;
-  --shelf-ledge-mid: #4A3A2A;
-  --shelf-ledge-bottom: #3A2D20;
-  --shelf-ledge-edge: #4F4030;
-  --shelf-ledge-shadow: #463219;
   --input-bg: var(--paper-side);
   --placeholder: #8F877B;
   --control-border: #4A443D;
@@ -186,6 +190,14 @@
   --swatch-parchment: #F8F6F0;
   --swatch-moon-white: #F5F5F7;
   --swatch-eye-green: #EDF2EA;
+  --shelf-ledge-top-a: #5E4D3A;
+  --shelf-ledge-top-b: #4F4030;
+  --shelf-ledge-front-a: #4A3A2A;
+  --shelf-ledge-front-b: #3A2D20;
+  --shelf-ledge-grain: rgba(90,60,30,.06);
+  --shelf-ledge-shadow: rgba(70,50,25,.55);
+  --shelf-import-border: #5A5349;
+  --shelf-list-arrow: #8F877B;
 }
 
 /*
@@ -267,3 +279,13 @@ html[data-theme-transition] {
 @property --swatch-parchment { syntax: "<color>"; inherits: true; initial-value: #F8F6F0; }
 @property --swatch-moon-white { syntax: "<color>"; inherits: true; initial-value: #F5F5F7; }
 @property --swatch-eye-green { syntax: "<color>"; inherits: true; initial-value: #EDF2EA; }
+
+:root {
+ --shelf-text:#F4E3BA; --shelf-gold:#C8B07A;
+ --shelf-cloth-dark:rgba(0,0,0,.38); --shelf-cloth-light:rgba(255,255,255,.08); --shelf-cloth-mid:rgba(0,0,0,.14); --shelf-cloth-edge:rgba(0,0,0,.42);
+ --shelf-cloth-thread-light:rgba(255,255,255,.035); --shelf-cloth-thread-dark:rgba(0,0,0,.05);
+ --shelf-binding-shadow:inset 0 1px 0 rgba(255,255,255,.08),2px 0 3px rgba(0,0,0,.18);
+ --shelf-binding-dark:rgba(0,0,0,.45); --shelf-binding-light:rgba(255,255,255,.06); --shelf-binding-edge:rgba(0,0,0,.25);
+ --shelf-frame-outer:rgba(200,176,122,.75); --shelf-frame-inner:rgba(200,176,122,.4); --shelf-frame-border:rgba(200,176,122,.7);
+ --shelf-thumb-shadow:0 10px 14px -10px rgba(0,0,0,.5);
+}

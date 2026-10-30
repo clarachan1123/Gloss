@@ -17,6 +17,8 @@
 .shelf-overflowing { mask-image:linear-gradient(to right,var(--ink) calc(100% - 32px),transparent); }
 .shelf { position:relative; margin:116px auto 0; width:100%; overflow-x:auto; padding-bottom:32px; }
 .shelf-track { position:relative; display:flex; align-items:end; width:max-content; min-width:min(1120px,calc(100vw - 64px)); margin:auto; padding:0 32px 30px; box-sizing:border-box; }
+.shelf-track { justify-content:center; }
+.shelf-overflowing .shelf-track { justify-content:flex-start; }
 .book-slot { display:block; flex:0 0 var(--book-width); width:var(--book-width); height:var(--book-height); text-decoration:none; color:var(--shelf-text); }
 .book-slot-open { flex-basis:304px; width:304px; height:410px; padding:0 2px; box-sizing:border-box; z-index:2; }
 .book-slot:focus-visible,.import-spine:focus-visible,.mobile-book:focus-visible,.mobile-current:focus-visible { outline:2px solid var(--focus-strong); outline-offset:4px; }

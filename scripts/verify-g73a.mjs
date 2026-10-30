@@ -63,6 +63,31 @@ try{
  await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`window.__shelfVisibleAt=null;const observer=new MutationObserver(()=>{const shelf=document.querySelector('.book-slot,.mobile-current');if(shelf&&shelf.getBoundingClientRect().width>0){observer.disconnect();requestAnimationFrame(()=>window.__shelfVisibleAt=performance.now());}});observer.observe(document,{childList:true,subtree:true});`});
  await c.call('Page.navigate',{url:'http://127.0.0.1:3493/'});await wait(c,"document.readyState==='complete'");
  await c.evaluate(`(()=>{for(let n=0;n<20;n++){const id='probe'+n;localStorage.setItem('gloss:doc:'+id,JSON.stringify({version:1,docId:id,paragraphs:['本地测试正文。'],headings:[],footnotes:[],meta:{format:'txt',fileName:n===1?'这是一本很长很长很长很长很长很长很长很长很长很长很长很长很长很长很长的书.txt':'测试书'+n+'.txt',charCount:7},savedAt:100+n}));}localStorage.setItem('gloss:shelf:v1',JSON.stringify({version:1,migratedAt:1,entries:Object.fromEntries(Array.from({length:20},(_,n)=>['probe'+n,{docId:'probe'+n,title:n===1?'这是一本很长很长很长很长很长很长很长很长很长很长很长很长很长很长很长的书':'测试书'+n,author:null,addedAt:100+n,lastOpenedAt:1000+n,colorId:'book-'+n%11,widthSeed:n}]))}));})()`);
+ const originalBooks=await run(()=>Object.fromEntries(Object.entries(localStorage)));
+ const margins=()=>{const first=document.querySelector('.book-slot').getBoundingClientRect(),last=document.querySelector('.import-spine').getBoundingClientRect(),board=document.querySelector('.shelf-ledge').getBoundingClientRect();return{left:first.left-board.left,right:board.right-last.right};};
+ const centered=()=>{const first=document.querySelector('.book-slot').getBoundingClientRect(),last=document.querySelector('.import-spine').getBoundingClientRect(),board=document.querySelector('.shelf-ledge').getBoundingClientRect();return Math.abs((first.left-board.left)-(board.right-last.right))<=1;};
+ for(const width of [1024,1280,1440])for(const count of [2,6]){
+  await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});
+  await run(count=>{for(const key of Object.keys(localStorage))if(key.startsWith('gloss:doc:'))localStorage.removeItem(key);const entries={};for(let n=0;n<count-1;n++){const id='center'+n;localStorage.setItem('gloss:doc:'+id,JSON.stringify({version:1,docId:id,paragraphs:['居中验证。'],headings:[],footnotes:[],meta:{format:'txt',fileName:'居中.txt',charCount:5},savedAt:1}));entries[id]={docId:id,title:'居中验证'+n,author:null,addedAt:1,lastOpenedAt:2,colorId:'book-0',widthSeed:n};}localStorage.setItem('gloss:shelf:v1',JSON.stringify({version:1,migratedAt:1,entries}));},count);
+  await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});await reload();
+  await check('居中 合着 '+width+'/'+count,centered);console.log(JSON.stringify({center:{width,count,state:'closed',...await run(margins)}}));
+  if(width===1024&&count===2)await negative('居中',centered,()=>document.querySelector('.shelf-track').style.justifyContent='flex-start',()=>document.querySelector('.shelf-track').style.removeProperty('justify-content'));
+  const point=await run(()=>{const r=document.querySelector('.book-slot').getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+100};});
+  await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});await wait(c,"!!document.querySelector('.book-cover')");await sleep(400);
+  const hit=await run(p=>{const el=document.elementFromPoint(p.x,p.y)?.closest('.book-slot'),open=document.querySelector('.book-slot-open'),r=open.getBoundingClientRect();return{id:el?.dataset.docId,open:open.dataset.docId,pointer:p,rect:{left:r.left,right:r.right,top:r.top,bottom:r.bottom}};},point);
+  console.log(JSON.stringify({center:{width,count,state:'open',...await run(margins)},hit}));assert(hit.id==='center0'&&hit.open==='center0','居中导致鼠标下换书，停止');scenes++;
+  await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x+1,y:point.y});await sleep(200);await check('居中翻开不连锁 '+width+'/'+count,()=>document.querySelector('.book-slot-open').dataset.docId==='center0');
+  await check('居中 翻开 '+width+'/'+count,centered);
+ }
+ await run(values=>{localStorage.clear();for(const [key,value]of Object.entries(values))localStorage.setItem(key,value);},originalBooks);
+ // 十九本自有书加示例共二十本，取最大书脊宽，保证 1440 宽也形成溢出。
+ await run(()=>{localStorage.removeItem('gloss:doc:probe19');const shelf=JSON.parse(localStorage.getItem('gloss:shelf:v1'));delete shelf.entries.probe19;for(const entry of Object.values(shelf.entries))entry.widthSeed=8;localStorage.setItem('gloss:shelf:v1',JSON.stringify(shelf));});
+ for(const width of [1024,1280,1440]){
+  await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});await reload();
+  const result=await run(()=>{const shelf=document.querySelector('.shelf'),track=document.querySelector('.shelf-track'),board=document.querySelector('.shelf-ledge').getBoundingClientRect(),first=document.querySelector('.book-slot').getBoundingClientRect(),padding=parseFloat(getComputedStyle(track).paddingLeft);shelf.scrollLeft=50;return{left:first.left-board.left,padding,scrollLeft:shelf.scrollLeft,overflow:track.scrollWidth>shelf.clientWidth};});
+  console.log(JSON.stringify({overflowAlignment:{width,...result}}));assert(result.overflow&&result.left<=result.padding&&result.scrollLeft>0,'溢出左排及横滚');scenes++;
+ }
+ await run(values=>{localStorage.clear();for(const [key,value]of Object.entries(values))localStorage.setItem(key,value);},originalBooks);
  for(const theme of ['parchment','moon-white','eye-green','dark'])for(const width of [375,390,430,1024,1280,1440]){
  await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
  await c.evaluate(`localStorage.setItem('gloss:settings:appearance','${theme==='dark'?'dark':'light'}');localStorage.setItem('gloss:settings:theme','${theme==='dark'?'parchment':theme}')`);
@@ -119,6 +144,7 @@ try{
  for(const method of ['Escape','outside','scroll']){
   await run(()=>document.querySelector('.book-cover').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:400,clientY:400})));await wait(c,"!!document.querySelector('.spine-menu')");
   if(method==='Escape')await key('Escape');else if(method==='scroll')await run(()=>window.dispatchEvent(new Event('scroll')));else await run(()=>document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})));
+  await wait(c,"!document.querySelector('.spine-menu')");
   await check('菜单关闭与焦点 '+method,()=>!document.querySelector('.spine-menu')&&document.activeElement===document.querySelector('.book-slot-open'));
  }
  for(const [width,selector,entry,open] of [[1280,'.book-slot','cover',false],[1280,'.book-slot','cover',true],[1280,'.continue-reading','continue',false],[375,'.mobile-current','continue',false],[375,'.mobile-book','cover',false],[1280,'.book-slot[data-doc-id="sample"]',null,true]]){

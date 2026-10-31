@@ -284,3 +284,12 @@ describe("G-64a 划选颜色对比度", () => {
     it(theme, () => { const c = themeColors(theme); for (const [fg,bg] of [["--text-body","--selection-bg"],["--text-body","--selection-start-bg"],["--ink","--tool-active-bg"]] as const) expect(contrast(c[fg],c[bg])).toBeGreaterThanOrEqual(4.5); });
   }
 });
+
+describe("G-73b 落地页主题", () => {
+  it.each(THEMES)("%s：阴影显式定义，描边与反色文字达到 AA", theme => {
+    const start = CSS.indexOf(`[data-theme="${theme}"]`), block = CSS.slice(start, CSS.indexOf("}", start));
+    expect(block).toContain("--shadow-landing-demo: rgba(75,61,30,.28);");
+    const c = themeColors(theme);
+    expect(contrast(c["--ink"], c["--paper-main"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+  });
+});

@@ -158,7 +158,7 @@ function space(page) {
     const h=document.querySelector(".shelf-heading .wordmark"), r=document.createRange(); r.selectNode(h.firstChild);
     return {viewport:document.documentElement.clientWidth,heading:rect(document.querySelector(".shelf-heading")),wordmark:rect(h),wordmarkText:rect(r),feedback:rect(document.querySelector('.shelf-heading .feedback-button'))};
   }
-  return {header:rect(document.querySelector(".landing-header")),wordmark:rect(document.querySelector(".landing-header .wordmark")),viewport:document.documentElement.clientWidth,primary:rect(document.querySelector(".landing-primary")),secondary:rect(document.querySelector(".landing-secondary")),feedback:rect(document.querySelector(".landing-feedback"))};
+  return {header:rect(document.querySelector(".landing-header")),wordmark:rect(document.querySelector(".landing-header .wordmark")),viewport:document.documentElement.clientWidth,primary:rect(document.querySelector(".landing-primary")),secondary:rect(document.querySelector(".landing-secondary")),feedback:rect(document.querySelector(".landing-header .feedback-button"))};
 }
 
 function buttonBoxes() {
@@ -189,7 +189,7 @@ function buttonBoxes() {
       if(ownText||control||background||border)overlap(el.getBoundingClientRect(),el.tagName+"."+el.className);
     }
   }
-  return {button:plain(b),text:button.closest('.shelf-heading') ? button.getAttribute("aria-label") : button.textContent,clientWidth:document.documentElement.clientWidth,height:innerHeight,intersections};
+  return {button:plain(b),text:button.closest('.shelf-heading,.landing-header') ? button.getAttribute("aria-label") : button.textContent,clientWidth:document.documentElement.clientWidth,height:innerHeight,intersections};
 }
 async function originalSnapshot(cdp) {
   return cdp.evaluate("window.__g59.snapshot('.reader-body').chars.filter(c=>c.y>=scrollY&&c.y<scrollY+innerHeight)");

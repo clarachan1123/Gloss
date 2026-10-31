@@ -76,3 +76,17 @@
 .spine-menu { position: fixed; z-index: 30; top: 0; left: 0; width: 180px; padding: 12px; color: var(--ink); background: var(--paper-main); border: 1px solid var(--rule); writing-mode: horizontal-tb; font-size: 13px; }.spine-menu button { margin: 8px 4px 0 0; color: var(--ink); background: transparent; border: 0; cursor: pointer; font-family: var(--font-serif); }.spine-menu .color-swatch { width: 18px; height: 18px; padding: 0; border: 1px solid var(--paper-main); outline: 1px solid var(--rule); }
 .remove-confirm { position: fixed; z-index: 10; inset: 0; display: grid; place-content: center; padding: 24px; background: var(--overlay-remove); }.remove-confirm > * { max-width: 440px; margin: 0; padding: 28px; background: var(--paper-main); }.remove-confirm div { display: flex; justify-content: end; gap: 12px; }.remove-confirm button { padding: 8px 14px; border: 1px solid var(--control-border); background: var(--paper-main); color: var(--ink); font-family: var(--font-serif); }.remove-confirm button:last-child { color: var(--paper-main); background: var(--ink); }
 [data-theme="dark"] .import-drop-hint { border-color: var(--import-border); }
+
+@media(max-width:767.98px) {
+  .mobile-swipe { position:relative; overflow:hidden; margin:0 20px; touch-action:pan-y pinch-zoom; }
+  .mobile-swipe:has(.mobile-current) { margin-top:6px; border-radius:8px; }
+  .mobile-swipe .mobile-book,.mobile-swipe .mobile-current { margin:0; }
+  .mobile-swipe-front { position:relative; background:var(--paper-main); transition:transform 180ms ease-out; }
+  .mobile-swipe-dragging .mobile-swipe-front { transition:none; }
+  .mobile-swipe-actions { position:absolute; inset:0 0 0 auto; display:flex; }
+  .mobile-swipe-actions button { width:72px; border:0; border-left:1px solid var(--rule); background:var(--paper-side); color:var(--ink); font:14px var(--font-serif); cursor:pointer; }
+  .mobile-more { position:absolute; right:0; top:0; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); border:0; }
+  .mobile-more:focus-visible { width:auto; height:auto; padding:8px; clip-path:none; background:var(--paper-main); color:var(--ink); font:13px var(--font-serif); }
+  .mobile-more:focus-visible,.mobile-swipe-actions button:focus-visible { outline:2px solid var(--focus-strong); outline-offset:-3px; }
+}
+@media(prefers-reduced-motion:reduce) { .mobile-swipe-front { transition:none; } }

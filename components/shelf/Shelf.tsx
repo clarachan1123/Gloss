@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import FeedbackButton from "@/components/feedback/FeedbackButton";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import Upload from "@/components/Upload";
 import Landing from "@/components/landing/Landing";
@@ -54,12 +54,65 @@ function computeLastRead(entry: ShelfEntry): string {
   }
 }
 
+// 卡片和书单共用一套手势，父级只保留一个展开标识。
+function MobileSwipe({ id, title, sample, open, onOpen, onColor, onRemove, children }: {
+  id: string; title: string; sample: boolean; open: boolean; onOpen: (id: string | null) => void;
+  onColor: (button: HTMLButtonElement) => void; onRemove: () => void; children: ReactNode;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  const firstAction = useRef<HTMLButtonElement>(null);
+  const gesture = useRef<{ x: number; y: number; axis: "pending" | "x" | "y"; dx: number; startOpen: boolean } | null>(null);
+  const suppressClick = useRef(false);
+  const [drag, setDrag] = useState<number | null>(null);
+  const width = sample ? 72 : 144;
+  const start = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !event.isPrimary || (event.target as Element).closest("button")) return;
+    suppressClick.current = false;
+    gesture.current = { x: event.clientX, y: event.clientY, axis: "pending", dx: 0, startOpen: open };
+  };
+  const move = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const g = gesture.current;
+    if (!g) return;
+    const dx = event.clientX - g.x, dy = event.clientY - g.y;
+    // 短横移也不能被浏览器合成为进入阅读页的点击。
+    if (Math.abs(dx) >= 1 && Math.abs(dx) > 1.25 * Math.abs(dy)) suppressClick.current = true;
+    if (g.axis === "pending" && Math.max(Math.abs(dx), Math.abs(dy)) >= 10) {
+      g.axis = Math.abs(dx) > 1.25 * Math.abs(dy) ? "x" : "y";
+      if (g.axis === "x") { suppressClick.current = true; event.currentTarget.setPointerCapture?.(event.pointerId); }
+    }
+    if (g.axis !== "x") return;
+    g.dx = dx;
+    setDrag(Math.max(-width, Math.min(0, (g.startOpen ? -width : 0) + dx)));
+  };
+  const finish = (cancelled: boolean) => {
+    const g = gesture.current;
+    if (g?.axis === "x") onOpen(!cancelled && (g.startOpen ? g.dx < 48 : g.dx <= -48) ? id : null);
+    gesture.current = null; setDrag(null);
+  };
+  return <div ref={root} className={`mobile-swipe${open ? " mobile-swipe-open" : ""}${drag !== null ? " mobile-swipe-dragging" : ""}`} data-swipe-id={id}
+    onPointerDown={start} onPointerMove={move} onPointerUp={() => finish(false)} onPointerCancel={() => finish(true)}
+    onClickCapture={event => {
+      if ((event.target as Element).closest("button")) return;
+      if (suppressClick.current || open) { event.preventDefault(); event.stopPropagation(); suppressClick.current = false; onOpen(null); }
+    }}>
+    <div className="mobile-swipe-actions" inert={!open}>
+      {!sample && <button ref={firstAction} type="button" onClick={event => onColor(event.currentTarget)}>换颜色</button>}
+      <button ref={sample ? firstAction : undefined} type="button" onClick={onRemove}>移除</button>
+    </div>
+    <div className="mobile-swipe-front" style={{ transform: `translateX(${drag ?? (open ? -width : 0)}px)` }}>
+      {children}
+      <button className="mobile-more" type="button" aria-label={`《${title}》更多操作`} aria-expanded={open} disabled={open} onClick={() => { onOpen(id); window.setTimeout(() => firstAction.current?.focus(), 0); }}>更多操作</button>
+    </div>
+  </div>;
+}
+
 export default function Shelf() {
   const [status, setStatus] = useState<"loading" | "ready" | "unavailable">("loading");
   const [entries, setEntries] = useState<ShelfEntry[]>([]);
   const [hasOwnBooks, setHasOwnBooks] = useState(false);
   const [desktop, setDesktop] = useState<boolean | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [swipeId, setSwipeId] = useState<string | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [menuPoint, setMenuPoint] = useState({ x: 0, y: 0 });
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -91,10 +144,23 @@ export default function Shelf() {
   useEffect(() => { refresh(); }, []);
   useEffect(() => {
     const media = window.matchMedia("(min-width: 768px)");
-    const sync = () => { setDesktop(media.matches); setPreviewId(null); setMenuId(null); if (previewTimer.current !== null) window.clearTimeout(previewTimer.current); };
+    const sync = () => { setDesktop(media.matches); setSwipeId(null); setPreviewId(null); setMenuId(null); if (previewTimer.current !== null) window.clearTimeout(previewTimer.current); };
     sync(); media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
   }, []);
+  useEffect(() => {
+    if (!swipeId) return;
+    const close = () => setSwipeId(null);
+    const outside = (event: globalThis.PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest(`[data-swipe-id="${swipeId}"]`)) close();
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    document.addEventListener("pointerdown", outside);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", escape);
+    window.addEventListener("pagehide", close);
+    return () => { document.removeEventListener("pointerdown", outside); window.removeEventListener("scroll", close, true); window.removeEventListener("keydown", escape); window.removeEventListener("pagehide", close); };
+  }, [swipeId]);
   useEffect(() => () => {
     if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
 
@@ -254,16 +320,20 @@ export default function Shelf() {
     shelfRef.current?.focus();
   }
 
+  const mobileSwipe = (entry: ShelfEntry, child: ReactNode) => <MobileSwipe key={entry.docId} id={entry.docId} title={entry.title} sample={entry.docId === SAMPLE_DOC_ID} open={swipeId === entry.docId} onOpen={setSwipeId}
+    onColor={button => { const r = button.getBoundingClientRect(); setSwipeId(null); setMenuPoint({ x: r.left, y: r.bottom }); setMenuId(entry.docId); }}
+    onRemove={() => { setSwipeId(null); setConfirmingId(entry.docId); }}>{child}</MobileSwipe>;
+
   const importDialog = showImport && <div className="import-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeImport(); }}><section ref={importPanelRef} className={`import-panel${draggingImport ? " import-panel-dragging" : ""}`} role="dialog" aria-modal="true" aria-labelledby="import-title" tabIndex={-1} onDragOver={importDragOver} onDragLeave={importDragLeave} onDrop={importDrop}><header><h2 id="import-title">导入新书</h2><button type="button" className="import-close" aria-label="关闭导入新书弹窗" onClick={closeImport}>×</button></header><div className="import-drop-hint" aria-hidden="true">松开以上传文件</div><Upload droppedFile={droppedFile} onDroppedFileHandled={() => setDroppedFile(null)} onStorageFull={() => { closeImport(); shelfRef.current?.focus(); }} /><button type="button" className="paste-link" onClick={() => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()}>改用粘贴文本</button></section></div>;
 
   if (status === "loading" || desktop === null) return <main className="shelf-loading" aria-label="正在读取书架" />;
   if (status === "unavailable") return <main className="shelf-unavailable" role="alert">当前浏览器禁止本地存储，无法读取书架。</main>;
-  if (!hasOwnBooks) return <><Landing onImport={() => setShowImport(true)} importButtonRef={importRef} />{importDialog}</>;
+  if (!hasOwnBooks) return <><Landing onImport={() => setShowImport(true)} importButtonRef={importRef} importOpen={showImport} />{importDialog}</>;
 
   return (
     <main className="shelf-page">
       <header className="shelf-heading"><span className="wordmark">GLOSS</span><h1 className="shelf-sr-only">我的书架</h1><div className="shelf-heading-right"><span className="shelf-count">本地书架 {entries.length} 本</span><FeedbackButton placement="shelf" /></div></header>
-      {recent && <Link className={desktop ? "continue-reading" : "mobile-current"} href={`/read/${recent.docId}`} onNavigate={() => enterFromShelf(recent, "continue")}><span className="continue-cover cloth" style={bookStyle(recent)} /><span className="continue-copy">{!desktop && <small>正在读</small>}<strong>{desktop ? `接着读《${recent.title}》` : recent.title}</strong><small>{recentRead}</small>{!desktop && <b>接着读 <span aria-hidden="true">→</span></b>}</span>{desktop && <span className="continue-action">继续阅读 <span aria-hidden="true">→</span></span>}</Link>}
+      {recent && (desktop ? <Link className={desktop ? "continue-reading" : "mobile-current"} href={`/read/${recent.docId}`} onNavigate={() => enterFromShelf(recent, "continue")}><span className="continue-cover cloth" style={bookStyle(recent)} /><span className="continue-copy">{!desktop && <small>正在读</small>}<strong>{desktop ? `接着读《${recent.title}》` : recent.title}</strong><small>{recentRead}</small>{!desktop && <b>接着读 <span aria-hidden="true">→</span></b>}</span>{desktop && <span className="continue-action">继续阅读 <span aria-hidden="true">→</span></span>}</Link> : mobileSwipe(recent, <Link className={desktop ? "continue-reading" : "mobile-current"} href={`/read/${recent.docId}`} onNavigate={() => enterFromShelf(recent, "continue")}><span className="continue-cover cloth" style={bookStyle(recent)} /><span className="continue-copy">{!desktop && <small>正在读</small>}<strong>{desktop ? `接着读《${recent.title}》` : recent.title}</strong><small>{recentRead}</small>{!desktop && <b>接着读 <span aria-hidden="true">→</span></b>}</span>{desktop && <span className="continue-action">继续阅读 <span aria-hidden="true">→</span></span>}</Link>))}
       {desktop ? <section className={`shelf${overflowing ? " shelf-overflowing" : ""}`} ref={shelfRef} tabIndex={-1} aria-label="我的书架"><div className="shelf-track" ref={trackRef}>
         {entries.map(entry => {
           const open = previewId === entry.docId;
@@ -273,8 +343,8 @@ export default function Shelf() {
           </Link>;
         })}
         <button ref={importRef} type="button" className="import-spine" aria-label="导入新书" onClick={() => setShowImport(true)}><b>＋</b><span>导入新书</span><small>DOCX<br/>TXT<br/>PDF</small></button><div className="shelf-ledge"><div className="shelf-ledge-top"/><div className="shelf-ledge-front"/></div>
-      </div></section> : <section className="mobile-books" ref={shelfRef} tabIndex={-1}><div className="mobile-list-heading"><span>全部 · {entries.length} 本 · 按最近打开</span><button ref={importRef} onClick={() => setShowImport(true)}>＋ 导入新书</button></div>{[...entries].filter(entry => entry.docId !== recent?.docId).sort((a,b) => a.docId === SAMPLE_DOC_ID ? 1 : b.docId === SAMPLE_DOC_ID ? -1 : b.lastOpenedAt - a.lastOpenedAt).map(entry => <Link key={entry.docId} ref={node => { if (node) spineRefs.current.set(entry.docId,node); else spineRefs.current.delete(entry.docId); }} data-doc-id={entry.docId} className="mobile-book" href={`/read/${entry.docId}`} onNavigate={() => enterFromShelf(entry,"cover")} onContextMenu={event => openBookMenu(entry,event)}><span className="mobile-thumb cloth" style={bookStyle(entry)}/><span className="mobile-book-copy"><strong>{entry.title}</strong><small>{entry.docId === SAMPLE_DOC_ID ? "瞿秋白 · 示例" : `${entry.author ? entry.author + " · " : ""}${entry.lastOpenedAt === entry.addedAt ? `还没打开 · 导入于 ${new Date(entry.addedAt).getMonth()+1} 月 ${new Date(entry.addedAt).getDate()} 日` : relativeTime(entry.lastOpenedAt)}`}</small></span><span className="mobile-arrow" aria-hidden="true">›</span></Link>)}</section>}
-      {menuId && entries.find((entry) => entry.docId === menuId) && createPortal(<div ref={menuRef} className="spine-menu" role="menu">{menuId !== SAMPLE_DOC_ID && <><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(menuId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div></>}<button type="button" onClick={() => { setMenuId(null); setConfirmingId(menuId); }}>从书架移除</button></div>, document.body)}
+      </div></section> : <section className="mobile-books" ref={shelfRef} tabIndex={-1}><div className="mobile-list-heading"><span>全部 · {entries.length} 本 · 按最近打开</span><button ref={importRef} onClick={() => setShowImport(true)}>＋ 导入新书</button></div>{[...entries].filter(entry => entry.docId !== recent?.docId).sort((a,b) => a.docId === SAMPLE_DOC_ID ? 1 : b.docId === SAMPLE_DOC_ID ? -1 : b.lastOpenedAt - a.lastOpenedAt).map(entry => mobileSwipe(entry, <Link key={entry.docId} ref={node => { if (node) spineRefs.current.set(entry.docId,node); else spineRefs.current.delete(entry.docId); }} data-doc-id={entry.docId} className="mobile-book" href={`/read/${entry.docId}`} onNavigate={() => enterFromShelf(entry,"cover")}><span className="mobile-thumb cloth" style={bookStyle(entry)}/><span className="mobile-book-copy"><strong>{entry.title}</strong><small>{entry.docId === SAMPLE_DOC_ID ? "瞿秋白 · 示例" : `${entry.author ? entry.author + " · " : ""}${entry.lastOpenedAt === entry.addedAt ? `还没打开 · 导入于 ${new Date(entry.addedAt).getMonth()+1} 月 ${new Date(entry.addedAt).getDate()} 日` : relativeTime(entry.lastOpenedAt)}`}</small></span><span className="mobile-arrow" aria-hidden="true">›</span></Link>))}</section>}
+      {menuId && entries.find((entry) => entry.docId === menuId) && createPortal(<div ref={menuRef} className="spine-menu" role="menu">{menuId !== SAMPLE_DOC_ID && <><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(menuId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div></>}{desktop && <button type="button" onClick={() => { setMenuId(null); setConfirmingId(menuId); }}>从书架移除</button>}</div>, document.body)}
       {desktop && displayed && <section className="book-detail"><div><h2>{displayed.title}</h2><p>{displayed.docId === SAMPLE_DOC_ID ? "瞿秋白 · 《社会哲学概论》1924 · 示例" : `${displayed.author ? displayed.author + " · " : ""}导入于 ${importDate(displayed.addedAt)}${details?.id === displayed.docId && details.format ? " · " + (details.format === "paste" ? "粘贴" : details.format) : ""}`}</p><dl>{displayed.docId !== SAMPLE_DOC_ID && <div><dt>上次读到</dt><dd>{displayed.lastOpenedAt === displayed.addedAt ? "还没打开过" : displayedRead}</dd></div>}{details?.id === displayed.docId && details.count !== undefined && <div><dt>已存白话</dt><dd>{details.count ? `${details.count} 处` : "还没有"}</dd></div>}{details?.id === displayed.docId && details.chars !== undefined && <div><dt>全文</dt><dd>{details.chars < 10000 ? `${details.chars} 字` : `${(details.chars/10000).toFixed(1)} 万字`}</dd></div>}</dl></div><button className="remove-book" onClick={() => setConfirmingId(displayed.docId)}>从书架移除</button></section>}
       {confirmingId && <section className="remove-confirm" role="dialog" aria-modal="true"><p>确定移除《{entries.find((item) => item.docId === confirmingId)?.title}》吗？{confirmingId === SAMPLE_DOC_ID ? "移除后不再出现在书架上，阅读位置与已存白话会保留。" : "移除后会删除这本书的正文、阅读位置、结构摘要、已存白话、整句理解和自动白话缓存。"}</p><div><button type="button" onClick={() => setConfirmingId(null)}>取消</button><button type="button" onClick={() => { const entry = entries.find((item) => item.docId === confirmingId); if (entry) void remove(entry); }}>确认移除</button></div></section>}
       {importDialog}

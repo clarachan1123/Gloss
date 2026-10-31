@@ -142,9 +142,9 @@ function pageSetup() {
     });
     const list=lists[0];
     const steps=[...(list?.querySelectorAll('li')??[])].map(el=>({rect:rect(el),current:el.classList.contains('landing-step-current')||el.classList.contains('landing-demo-step-current'),ariaCurrent:el.getAttribute('aria-current'),completed:el.classList.contains('landing-step-completed')||el.classList.contains('landing-demo-step-completed')}));
-    const selectors=['.landing-header .wordmark','.landing-copy h1','.landing-subtitle','.landing-steps','.landing-actions','.landing-primary','.landing-secondary','.landing-secondary-group small','.landing-supplement','.landing-demo-header','.landing-demo-header small','.landing-demo-header button','.landing-feedback .feedback-button','.landing-demonstration'];
-    const narrow=innerWidth<960;
-    const references=narrow?selectors.filter(selector=>selector!=='.landing-steps'):selectors;
+    const selectors=['.landing-header .wordmark','.landing-copy h1','.landing-subtitle','.landing-steps','.landing-actions','.landing-primary','.landing-secondary','.landing-formats','.landing-demo-header','.landing-demo-header small','.landing-demo-header button','.landing-header .feedback-button','.landing-demonstration'];
+    const narrow=innerWidth<1000;
+    const references=narrow?selectors.filter(selector=>selector!=='.landing-steps'&&selector!=='.landing-formats'):selectors.filter(selector=>selector!=='.landing-subtitle');
     const elements=references.map(selector=>({selector,rect:rect(document.querySelector(selector))}));
     const parts=narrow?document.querySelectorAll('.landing-demo-step'):document.querySelectorAll('.landing-step,.landing-step-question,.landing-step-answer');
     for(const [index,el] of [...parts].entries())elements.push({selector:'step-part-'+index,rect:rect(el)});
@@ -183,7 +183,7 @@ function metrics(frames,width,run,commits) {
   for(const frame of frames) {
     check(frame.totalLists===2&&frame.listCount===1&&frame.steps.length===2,'one visible steps list',width,run,frame);
     check(frame.steps.every(step=>(step.ariaCurrent==='step')===step.current),'step aria-current agrees with class',width,run,frame.steps);
-    if(width<960) {
+    if(width<1000) {
       minStepsHeight=Math.min(minStepsHeight,frame.compact.height);maxStepsHeight=Math.max(maxStepsHeight,frame.compact.height);
       stepsHeightDelta=maxStepsHeight-minStepsHeight;
       check(stepsHeightDelta<.5,'compact steps height',width,run,{before:first.compact,after:frame.compact,stepsHeightDelta});
@@ -250,7 +250,7 @@ function metrics(frames,width,run,commits) {
     check(added===4||frame.explain===EXPECTED_EXPLANATION&&added>0&&added<=4,'explain chunk',width,run,added);oldText=frame.explain;
   }
   check(e2===(run==='replay'?1:0),'e2 reset count',width,run,e2);
-  return {run,a,b,c,d,e,e2,f:{x:fx,y:fy},g:true,h:true,i:true,oneVisible:true,...(width<960?{viewportMoving:true,viewportExplain:true,stepsHeightDelta}:{})};
+  return {run,a,b,c,d,e,e2,f:{x:fx,y:fy},g:true,h:true,i:true,oneVisible:true,...(width<1000?{viewportMoving:true,viewportExplain:true,stepsHeightDelta}:{})};
 }
 async function waitFinal(cdp) {
   await waitForValue(()=>cdp.evaluate("(()=>{const f=window.__g62.sample();if(!f||f.phase!=='settled')return false;const frames=window.__g62.frames;if(frames.at(-1)?.phase!=='settled')return false;const start=frames.findLast((f,i)=>f.phase==='settled'&&frames[i-1]?.phase!=='settled');return start&&f.t-start.t>=1250;})()"),'G-62 settled movement');
@@ -270,7 +270,7 @@ async function run(width,reduce=false) {
     cdp=new Cdp(target.webSocketDebuggerUrl);browser=new Cdp(version.webSocketDebuggerUrl);
     cdp.socket.on('message',data=>{const m=JSON.parse(data);if(m.method==='Network.requestWillBeSent'&&new URL(m.params.request.url).pathname.startsWith('/api/'))api.push(m.params.request.url);});
     await cdp.call('Page.enable');await cdp.call('Runtime.enable');await cdp.call('Network.enable');
-    await cdp.call('Emulation.setDeviceMetricsOverride',{width,height:width<960&&!reduce?1:width<960?812:900,deviceScaleFactor:1,mobile:false});
+    await cdp.call('Emulation.setDeviceMetricsOverride',{width,height:width<1000&&!reduce?1:width<1000?812:900,deviceScaleFactor:1,mobile:false});
     await cdp.call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:reduce?'reduce':'no-preference'}]});
     await cdp.call('Page.addScriptToEvaluateOnNewDocument',{source:'('+pageSetup.toString()+')();'});
     await assertSinglePage(browser,target.id,'start:single-page');
@@ -278,7 +278,7 @@ async function run(width,reduce=false) {
     await waitForValue(()=>cdp.evaluate('!!window.__g62.firstVisible'),'first visible demo frame');
     await cdp.evaluate('document.fonts.ready',true);
     let spacerHeight=0;
-    if(width<960) {
+    if(width<1000) {
       // A 1px navigation viewport keeps the native 50% observer below threshold.
       // Only the measured run uses 812px; no product timer or observer is replaced.
       await cdp.evaluate(`(()=>{
@@ -306,7 +306,7 @@ async function run(width,reduce=false) {
       await clickReplay(cdp);
       const final=await cdp.evaluate('window.__g62.sample()');
       check(final.totalLists===2&&final.listCount===1&&final.steps.length===2,'one visible steps list',width,'reduce replay',final);
-      if(width<960)check(Math.abs(final.compact.height-first.compact.height)<.5,'compact steps height reduce',width,'reduce',{first:first.compact,final:final.compact});
+      if(width<1000)check(Math.abs(final.compact.height-first.compact.height)<.5,'compact steps height reduce',width,'reduce',{first:first.compact,final:final.compact});
       check(!final.pointer&&final.explain===EXPECTED_EXPLANATION&&final.steps[1].current&&final.animations===0,'k replay',width,'reduce');
       check(final.overflow<=0&&final.bodyOverflow<=0,'i reduce',width,'reduce');
       check(!await cdp.evaluate('document.hidden||window.__g62.hidden'),'hidden reduce',width,'reduce');
@@ -314,11 +314,11 @@ async function run(width,reduce=false) {
       await assertSinglePage(browser,target.id,'reduce:single-page');
       return {k:true,j:api.length,spacerHeight};
     }
-    if(width>=960)await cdp.evaluate("(()=>{const stage=document.querySelector('.landing-demo-stage');window.scrollTo({top:stage.getBoundingClientRect().top+scrollY-20,behavior:'instant'});})()");
+    if(width>=1000)await cdp.evaluate("(()=>{const stage=document.querySelector('.landing-demo-stage');window.scrollTo({top:stage.getBoundingClientRect().top+scrollY-20,behavior:'instant'});})()");
     await cdp.evaluate("window.__g62.frames=[];window.__g62.commits=[];window.__g62.armed=true");
     const geometry=await cdp.evaluate("(()=>{const copy=document.querySelector('.landing-copy').getBoundingClientRect(),card=document.querySelector('.landing-demonstration').getBoundingClientRect(),layout=getComputedStyle(document.querySelector('.landing-layout')),page=getComputedStyle(document.querySelector('.landing-page'));return{copy:{x:copy.x,y:copy.y,right:copy.right,width:copy.width},card:{x:card.x,y:card.y,width:card.width},gap:parseFloat(layout.columnGap),padding:parseFloat(getComputedStyle(document.querySelector('.landing-copy')).paddingTop),left:page.paddingLeft,right:page.paddingRight,gutter:getComputedStyle(document.documentElement).scrollbarGutter};})()");
-    check(geometry.gutter==='stable'&&geometry.left==='20px'&&geometry.right==='20px','layout gutter and margins',width,'first',geometry);
-    if(width>=960)check(Math.abs(geometry.copy.y-geometry.card.y)<.5&&Math.abs(geometry.card.x-geometry.copy.right-56)<.5&&Math.abs(geometry.copy.width/geometry.card.width-.9/1.1)<.01&&geometry.padding===56,'two columns',width,'first',geometry);
+    check(geometry.gutter==='stable'&&geometry.left==='0px'&&geometry.right==='0px','layout gutter and margins',width,'first',geometry);
+    if(width>=1000)check(Math.abs(geometry.card.x-geometry.copy.right-72)<.5&&Math.abs(geometry.copy.width/geometry.card.width-5/6)<.01&&geometry.padding===0,'two columns',width,'first',geometry);
     else check(geometry.card.y>geometry.copy.y,'single column',width,'first',geometry);
     await waitFinal(cdp);
     await assertSinglePage(browser,target.id,'first:single-page');

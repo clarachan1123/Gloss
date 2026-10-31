@@ -42,6 +42,7 @@
   --upload-border: var(--rule);
   --overlay-remove: rgba(33,33,33,.18);
   --overlay-import: color-mix(in srgb, var(--ink) 28%, transparent);
+  --shadow-landing-demo: rgba(75,61,30,.28);
   --shadow-context: color-mix(in srgb, var(--ink) 18%, transparent);
   --shadow-import: color-mix(in srgb, var(--ink) 32%, transparent);
   --surface-highlight: #FFFFFF;
@@ -87,6 +88,7 @@
   --upload-border: var(--rule);
   --overlay-remove: rgba(33,33,33,.18);
   --overlay-import: color-mix(in srgb, var(--ink) 28%, transparent);
+  --shadow-landing-demo: rgba(75,61,30,.28);
   --shadow-context: color-mix(in srgb, var(--ink) 18%, transparent);
   --shadow-import: color-mix(in srgb, var(--ink) 32%, transparent);
   --surface-highlight: #FFFFFF;
@@ -132,6 +134,7 @@
   --upload-border: var(--rule);
   --overlay-remove: rgba(33,33,33,.18);
   --overlay-import: color-mix(in srgb, var(--ink) 28%, transparent);
+  --shadow-landing-demo: rgba(75,61,30,.28);
   --shadow-context: color-mix(in srgb, var(--ink) 18%, transparent);
   --shadow-import: color-mix(in srgb, var(--ink) 32%, transparent);
   --surface-highlight: #FFFFFF;
@@ -179,6 +182,7 @@
   --upload-border: #5A5349;
   --overlay-remove: rgba(0,0,0,.55);
   --overlay-import: rgba(0,0,0,.55);
+  --shadow-landing-demo: rgba(75,61,30,.28);
   --shadow-context: rgba(0,0,0,.18);
   --shadow-import: rgba(0,0,0,.32);
   --surface-highlight: var(--paper-side);
@@ -289,3 +293,5 @@ html[data-theme-transition] {
  --shelf-frame-outer:rgba(200,176,122,.75); --shelf-frame-inner:rgba(200,176,122,.4); --shelf-frame-border:rgba(200,176,122,.7);
  --shelf-thumb-shadow:0 10px 14px -10px rgba(0,0,0,.5);
 }
+
+@property --shadow-landing-demo { syntax: "<color>"; inherits: true; initial-value: rgba(75,61,30,.28); }

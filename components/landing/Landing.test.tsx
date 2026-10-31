@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import Landing from "./Landing";
 
 const demoMode = vi.hoisted(() => ({ real: false }));
+vi.mock("next/font/local", () => ({ default: () => ({ className: "title-font-test" }) }));
 vi.mock("./LandingDemo", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./LandingDemo")>();
   return { ...actual, default: (props: Parameters<typeof actual.default>[0]) => demoMode.real ? createElement(actual.default, props) : createElement("div", { "data-demo-stub": true }) };
@@ -38,7 +39,7 @@ it("G-52 Strict Mode 重放挂载只记录一次 landing_view；次按钮只派�
 });
 
 
-it("G-57 按钮及小字在 DOM 中位于演示之前，窄屏自然顺排，宽屏左右两栏顶端对齐", async () => {
+it("G-73b 单组按钮在演示后，平板与电脑由网格排序，手机吸底", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const host = document.createElement("div");
   document.body.append(host);
@@ -47,31 +48,32 @@ it("G-57 按钮及小字在 DOM 中位于演示之前，窄屏自然顺排，宽
     await act(async () => { root.render(createElement(Landing, { onImport: () => {}, importButtonRef: createRef<HTMLButtonElement>() })); });
     const actions = host.querySelector(".landing-actions")!;
     const demo = host.querySelector(".landing-demonstration")!;
-    expect(actions.compareDocumentPosition(demo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(actions.querySelector(".landing-secondary-group small")?.textContent).toBe("支持 docx、txt、文字版 PDF，也可以直接粘贴。");
-    expect([...host.querySelectorAll("a, button")].filter(element => !element.closest("[inert]")).map((element) => element.textContent)).toEqual(["读一段示例", "导入自己的书", "再看一遍", "体验反馈"]);
+    expect(demo.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(actions.querySelector(".landing-secondary-group small")?.textContent).toBe("docx · txt · PDF · 粘贴");
+    expect([...host.querySelectorAll("a, button")].filter(element => !element.closest("[inert]")).map((element) => element.textContent)).toEqual(["体验反馈体验反馈", "再看一遍", "读一段示例 →", "导入自己的书"]);
     const { readFileSync } = await import("node:fs");
     const path = await import("node:path");
     const css = readFileSync(path.resolve(process.cwd(), "styles/landing.css"), "utf8");
-    expect(css).toMatch(/@media \(min-width: 960px\)/);
-    expect(css).toContain("grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr)");
-    expect(css).toContain("gap: 56px");
-    expect(css).toContain("align-items: start");
-    expect(css).toContain(".landing-copy { padding-top: 56px; }");
-    expect(css).toContain("max-width: 76rem");
+    expect(css).toMatch(/@media \(min-width: 1000px\)/);
+    expect(css).toContain("grid-template-columns: minmax(0, 5fr) minmax(0, 6fr)");
+    expect(css).toContain("column-gap:72px");
+    expect(css).toContain("--landing-hero-top");
+    expect(css).not.toContain("padding-top: 56px");
+    expect(css).toContain("max-width:1312px");
     expect(css).toContain(":root:has(.landing-page) { scrollbar-gutter: stable; }");
-    expect(css).not.toContain("grid-template-areas");
+    expect(css).toContain("grid-template-areas");
     expect(css).not.toContain("overflow-x: hidden");
-    expect(host.querySelector(".landing-header .wordmark")?.textContent).toBe("Gloss");
-    expect(host.querySelector(".landing-copy .landing-supplement")).not.toBeNull();
+    expect(host.querySelector(".landing-header .wordmark")?.textContent).toBe("GLOSS");
+    expect(host.querySelector(".landing-supplement")).toBeNull();
+    expect(host.querySelector(".landing-formats")?.textContent).toContain("书和白话只存在你的浏览器里");
     expect(host.querySelector(".landing-demo-header")?.textContent).toContain("再看一遍");
     const compact = host.querySelector("ol.landing-demo-steps")!;
     expect(host.querySelector(".landing-demo-header")!.nextElementSibling).toBe(compact);
     expect(compact.nextElementSibling?.matches("[data-demo-stub]")).toBe(true);
     expect(compact.querySelector("a,button,input,[tabindex]")).toBeNull();
-    const texts = ["句子太绕、结构复杂？点一下句子，转成大白话", "还是不懂？点「听不懂」，结合前后文讲清这句"];
+    const texts = ["句子太绕、结构复杂？点一下句子，原地转成大白话", "还是不懂？点「听不懂」，结合前后文讲清这一句"];
     expect([...host.querySelectorAll(".landing-step")].map(el => el.querySelector("div")?.textContent)).toEqual(texts);
-    expect([...compact.querySelectorAll(".landing-demo-step-text")].map(el => el.textContent)).toEqual(texts);
+    expect([...compact.querySelectorAll(".landing-demo-step-text")].map(el => el.textContent)).toEqual(["点一下句子，转成大白话", "还不懂？点「听不懂」，结合前后文讲清"]);
     for (const list of [host.querySelector(".landing-steps > ol")!, compact]) {
       expect(list.querySelectorAll("li")).toHaveLength(2);
       expect([...list.querySelectorAll("li > span:first-child")].map(el => [el.textContent, el.getAttribute("aria-hidden")])).toEqual([["1", "true"], ["2", "true"]]);
@@ -153,7 +155,7 @@ it("G-62 同一次 act 提交指针移动与当前步骤；连播解释、重播
 it("G-62 减少动态效果终态有两个 inert 演示按钮，真实入口列表仍精确", async () => {
   const { host, root } = await mountRealLanding(true);
   try {
-    expect([...host.querySelectorAll("a, button")].filter(el => !el.closest("[inert]")).map(el => el.textContent)).toEqual(["读一段示例", "导入自己的书", "再看一遍", "体验反馈"]);
+    expect([...host.querySelectorAll("a, button")].filter(el => !el.closest("[inert]")).map(el => el.textContent)).toEqual(["体验反馈体验反馈", "再看一遍", "读一段示例 →", "导入自己的书"]);
     const buttons = [...host.querySelectorAll(".landing-demo-panel-play button")];
     expect(buttons.map(el => el.textContent)).toEqual(["留下", "听不懂"]);
     expect(buttons.every(el => !!el.closest("[inert]"))).toBe(true);
@@ -190,5 +192,22 @@ it.each([true, false])("G-62b 隐藏步骤不写零高度并清除 positioned，
     expect(slider.style.height).toBe("80px");
     expect(slider.style.opacity).toBe("1");
     expect(slider.dataset.positioned).toBe("true");
+  } finally { await act(async () => root.unmount()); host.remove(); }
+});
+
+it("G-73b 标题只强调第二个哪句，导入弹窗隐藏按钮且关闭恢复", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
+  const ref = createRef<HTMLButtonElement>();
+  try {
+    await act(async () => root.render(createElement(Landing, { onImport: () => {}, importButtonRef: ref, importOpen: true })));
+    expect(host.querySelector("h1")?.textContent).toBe("哪句不懂，点哪句。");
+    expect(host.querySelectorAll("h1 em")).toHaveLength(1);
+    expect(host.querySelector("h1 > span:last-child em")?.textContent).toBe("哪句");
+    expect(host.querySelector(".landing-page")?.classList.contains("landing-import-open")).toBe(true);
+    expect(host.querySelector(".landing-action-area")?.hasAttribute("inert")).toBe(true);
+    await act(async () => root.render(createElement(Landing, { onImport: () => {}, importButtonRef: ref, importOpen: false })));
+    expect(host.querySelector(".landing-action-area")?.hasAttribute("inert")).toBe(false);
+    expect(host.querySelectorAll(".landing-secondary")).toHaveLength(1); expect(ref.current).toBe(host.querySelector(".landing-secondary"));
   } finally { await act(async () => root.unmount()); host.remove(); }
 });

@@ -234,3 +234,12 @@ it("书架按钮提供装饰图标、双端标签和固定无障碍名称", asyn
   expect(button().querySelector('.feedback-mobile-label')?.textContent).toBe('反馈');
   await click(button()); expect(dialog()).not.toBeNull();
 });
+
+it("落地页图标与完整手机标签不改变发送来源", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 })); vi.stubGlobal("fetch", fetchMock);
+  await act(async () => root.render(createElement(FeedbackButton, { appearance: "landing" })));
+  expect(button().querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+  expect(button().querySelector(".feedback-mobile-label")?.textContent).toBe("体验反馈");
+  await click(button()); await edit(bodyInput(), "测试"); await click(sendButton());
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body).source).toBe("landing");
+});

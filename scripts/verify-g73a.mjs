@@ -31,7 +31,7 @@ const currentOrder=()=>document.querySelector('.mobile-current')?.getAttribute('
 const key=async(name)=>{await c.call('Input.dispatchKeyEvent',{type:'keyDown',key:name,code:name});await c.call('Input.dispatchKeyEvent',{type:'keyUp',key:name,code:name});};
 async function reload(){await c.call('Page.reload');await wait(c,"!!document.querySelector('.shelf-page')");await sleep(400);}
 async function snapshot(name){const image=await c.call('Page.captureScreenshot',{format:'png'});await writeFile(join(shotDir,name+'.png'),Buffer.from(image.data,'base64'));shots++;}
-const shotDir=resolve('tmp-g73a-shots');await mkdir(shotDir,{recursive:true});
+const shotDir=resolve('tmp-g73b-shots/g73a');await mkdir(shotDir,{recursive:true});
 try{
  let tabs;for(let n=0;n<200;n++){try{tabs=await(await fetch(`http://127.0.0.1:${port}/json`)).json();if(tabs.some(t=>t.type==='page'))break;}catch{}await sleep(50);}
  assert(tabs.filter(t=>t.type==='page').length===1,'只有一个页面');c=new Cdp(tabs.find(t=>t.type==='page').webSocketDebuggerUrl);
@@ -94,15 +94,15 @@ try{
  await c.call('Page.reload');await wait(c,"!!document.querySelector('.shelf-page')");await sleep(400);
  const snap=async state=>{const image=await c.call('Page.captureScreenshot',{format:'png'});await writeFile(join(shotDir,`${theme}-${width}-${state}.png`),Buffer.from(image.data,'base64'));shots++;};
  await check('读屏标题 '+theme+width,hiddenHeading);await check('十一书色对比度 '+theme+width,goldContrast);
- if(width<768){assert(await c.evaluate("!document.querySelector('.book-spine,.book-cover,.shelf-ledge,.book-detail')&&document.documentElement.scrollWidth<=document.documentElement.clientWidth"),'手机结构及溢出');assert(await c.evaluate("document.querySelector('.mobile-current').getAttribute('href')==='/read/probe19'&&document.querySelectorAll('.mobile-book').length===20&&document.querySelector('.mobile-book:last-child').dataset.docId==='sample'"),'手机顺序');scenes+=2;await snap('closed');
- await c.evaluate("document.querySelector('.mobile-book').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:350,clientY:850}))");
+ if(width<768){assert(await c.evaluate("!document.querySelector('.book-spine,.book-cover,.shelf-ledge,.book-detail')&&document.documentElement.scrollWidth<=document.documentElement.clientWidth"),'手机结构及溢出');assert(await c.evaluate("document.querySelector('.mobile-current').getAttribute('href')==='/read/probe19'&&document.querySelectorAll('.mobile-book').length===20&&document.querySelector('.mobile-books .mobile-swipe:last-child .mobile-book').dataset.docId==='sample'"),'手机顺序');scenes+=2;await snap('closed');
+ await c.evaluate("document.querySelector('.mobile-books .mobile-more').click();document.querySelector('.mobile-books .mobile-swipe-actions button').click()");
  }else{assert(await c.evaluate("!document.querySelector('.book-slot-open,.book-detail')"),'初始全合');scenes++;await snap('closed');
  const p=await c.evaluate("(()=>{const r=document.querySelector('.book-slot').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+100}})()");await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',...p});await wait(c,"!!document.querySelector('.book-cover')");await sleep(400);await snap('open');
  await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});await sleep(200);assert(await c.evaluate("document.querySelectorAll('.book-cover').length===1"),'移开保持');scenes++;
  await c.evaluate("document.querySelectorAll('.book-slot')[1].focus()");assert(await c.evaluate("document.activeElement===document.querySelectorAll('.book-slot')[1]&&document.activeElement.classList.contains('book-slot-open')"),'键盘焦点');scenes++;
  await c.evaluate("document.querySelector('.book-cover').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:500,clientY:400}))");}
  await wait(c,"!!document.querySelector('.spine-menu')");assert(await c.evaluate("!document.querySelector('.book-detail')&&(()=>{const r=document.querySelector('.spine-menu').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight})()"),'菜单与详情');scenes++;await snap('menu');
- await c.evaluate("[...document.querySelectorAll('.spine-menu button')].find(b=>b.textContent==='从书架移除').click()");await wait(c,"!!document.querySelector('.remove-confirm')");await snap('remove');await c.evaluate("document.querySelector('.remove-confirm button').click()");
+ await c.evaluate("innerWidth<768?(()=>{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));document.querySelector('.mobile-books .mobile-more').click();document.querySelectorAll('.mobile-books .mobile-swipe-actions button')[1].click();})():[...document.querySelectorAll('.spine-menu button')].find(b=>b.textContent==='从书架移除').click()");await wait(c,"!!document.querySelector('.remove-confirm')");await snap('remove');await c.evaluate("document.querySelector('.remove-confirm button').click()");
  await c.evaluate("document.querySelector('.import-spine,.mobile-list-heading button').click()");await wait(c,"!!document.querySelector('.import-panel')");await snap('import');await c.evaluate("document.querySelector('.import-close').click()");
  }
  // 负对照复用正对照函数，并在每次检出后恢复原样。
@@ -112,7 +112,7 @@ try{
  await negative('手机溢出',mobileLayout,()=>document.querySelector('.mobile-books').style.width='1200px',()=>document.querySelector('.mobile-books').style.removeProperty('width'));
  await negative('手机顺序',currentOrder,()=>document.querySelector('.mobile-current').setAttribute('href','/read/wrong'),()=>document.querySelector('.mobile-current').setAttribute('href','/read/probe19'));
  await negative('金字对比度',goldContrast,()=>document.documentElement.style.setProperty('--shelf-text','#000000'),()=>document.documentElement.style.removeProperty('--shelf-text'));
- await run(()=>document.querySelector('.mobile-book').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:370,clientY:890})));
+ await run(()=>{document.querySelector('.mobile-books .mobile-more').click();document.querySelector('.mobile-books .mobile-swipe-actions button').click();});
  await wait(c,"!!document.querySelector('.spine-menu')");
  await negative('菜单边界',menuBounds,()=>{window.oldMenuLeft=document.querySelector('.spine-menu').style.left;document.querySelector('.spine-menu').style.left='-500px';},()=>document.querySelector('.spine-menu').style.left=window.oldMenuLeft);
  await key('Escape');await check('手机 Esc 焦点恢复',()=>!document.querySelector('.spine-menu')&&document.activeElement===document.querySelector('.mobile-book'));

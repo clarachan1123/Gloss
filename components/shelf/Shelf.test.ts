@@ -11,6 +11,7 @@ import { takeReaderEntrySource } from "@/lib/analytics-local";
 import { SAMPLE_SHELF_ENTRY } from "@/lib/sample";
 import Shelf, { enterFromShelf } from "./Shelf";
 
+vi.mock("next/font/local", () => ({ default: () => ({ className: "title-font-test" }) }));
 vi.mock("@/components/landing/LandingDemo", () => ({ default: () => createElement("div", { "data-demo-stub": true }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {} }) }));
 
@@ -80,6 +81,62 @@ describe("G-73a 响应式书架与详情", () => {
       expect([...container.querySelectorAll<HTMLElement>(".mobile-book")].map(el => el.dataset.docId)).toEqual(["own-0", "sample"]);
       expect(container.querySelector(".mobile-book small")?.textContent).not.toContain("已存");
       expect(load).not.toHaveBeenCalled(); expect(saved).not.toHaveBeenCalled();
+    } finally { await cleanup(); }
+  });
+
+  it("G-73b 书单与正在读共用展开状态，原生长按、键盘入口、色板与确认框", async () => {
+    const { container, cleanup } = await setup(false);
+    try {
+      const rows = [...container.querySelectorAll<HTMLElement>(".mobile-swipe")];
+      expect(rows).toHaveLength(3);
+      const more = (row: HTMLElement) => row.querySelector<HTMLButtonElement>(".mobile-more")!;
+      const opened = () => container.querySelectorAll(".mobile-swipe-open");
+      const native = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      rows[1].querySelector("a")!.dispatchEvent(native); expect(native.defaultPrevented).toBe(false);
+      await act(async () => more(rows[0]).click());
+      expect(opened()).toHaveLength(1); expect(more(rows[0]).disabled).toBe(true);
+      await act(async () => more(rows[1]).click());
+      expect(opened()).toHaveLength(1); expect(rows[0].classList.contains("mobile-swipe-open")).toBe(false);
+      const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+      await act(async () => rows[1].querySelector("a")!.dispatchEvent(click));
+      expect(click.defaultPrevented).toBe(true); expect(opened()).toHaveLength(0);
+      await act(async () => more(rows[1]).click());
+      await act(async () => rows[1].querySelector<HTMLButtonElement>(".mobile-swipe-actions button")!.click());
+      expect(document.querySelectorAll(".spine-menu .color-swatch")).toHaveLength(11);
+      expect(document.querySelector(".spine-menu")?.textContent).not.toContain("从书架移除");
+      await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      await act(async () => more(rows[2]).click());
+      expect(rows[2].querySelectorAll(".mobile-swipe-actions button")).toHaveLength(1);
+      await act(async () => rows[2].querySelector<HTMLButtonElement>(".mobile-swipe-actions button")!.click());
+      expect(container.querySelector(".remove-confirm")).not.toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>(".remove-confirm button")!.click());
+      expect(container.querySelectorAll(".mobile-swipe")).toHaveLength(3);
+    } finally { await cleanup(); }
+  });
+  it.each([[-47, 0, false], [-48, 0, true], [-9, 0, false], [-40, 60, false], [-48, 45, false]])("G-73b 手势方向与阈值 dx=%s dy=%s", async (dx, dy, expanded) => {
+    const { container, cleanup } = await setup(false);
+    try {
+      const row = container.querySelector<HTMLElement>(".mobile-swipe")!;
+      const send = async (type: string, x: number, y: number) => { await act(async () => row.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, pointerType: "touch", button: 0, clientX: x, clientY: y }))); };
+      await send("pointerdown", 200, 100); await send("pointermove", 200 + dx, 100 + dy); await send("pointerup", 200 + dx, 100 + dy);
+      expect(row.classList.contains("mobile-swipe-open")).toBe(expanded);
+      if (Math.abs(dx) >= 1 && dy === 0) {
+        const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+        await act(async () => row.querySelector("a")!.dispatchEvent(click)); expect(click.defaultPrevented).toBe(true);
+      }
+    } finally { await cleanup(); }
+  });
+  it.each(["scroll", "outside", "Escape", "pagehide"])("G-73b %s 收回", async method => {
+    const { container, cleanup } = await setup(false);
+    try {
+      await act(async () => container.querySelector<HTMLButtonElement>(".mobile-more")!.click());
+      expect(container.querySelector(".mobile-swipe-open")).not.toBeNull();
+      await act(async () => {
+        if (method === "outside") document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+        else if (method === "Escape") window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        else window.dispatchEvent(new Event(method));
+      });
+      expect(container.querySelector(".mobile-swipe-open")).toBeNull();
     } finally { await cleanup(); }
   });
 

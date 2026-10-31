@@ -4,7 +4,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 import { FEEDBACK_BODY_MAX, FEEDBACK_CONTACT_MAX, feedbackLength } from "@/lib/feedback";
 
-export default function FeedbackButton({ placement = "inline", openRequest = 0, returnFocus }: {
+export default function FeedbackButton({ placement = "inline", openRequest = 0, returnFocus, appearance }: {
+  appearance?: "landing";
   placement?: "reader" | "shelf" | "inline"; openRequest?: number; returnFocus?: () => HTMLElement | null;
 }) {
   const [open, setOpen] = useState(false);
@@ -152,11 +153,11 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
     }
   };
 
-  return <span className={"feedback-entry feedback-" + placement} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
+  return <span className={"feedback-entry feedback-" + (appearance ?? placement)} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
     <button ref={buttonRef} type="button" className="feedback-button" aria-label="体验反馈" aria-expanded={open} aria-haspopup="dialog" onClick={() => {
       if (open) close();
       else { setStatus(value => value === "success" ? "idle" : value); setOpen(true); }
-    }}>{placement === "shelf" ? <><svg className="feedback-shelf-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg><span className="feedback-desktop-label">体验反馈</span><span className="feedback-mobile-label">反馈</span></> : "体验反馈"}</button>
+    }}>{placement === "shelf" || appearance === "landing" ? <><svg className="feedback-shelf-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg><span className="feedback-desktop-label">体验反馈</span><span className="feedback-mobile-label">{appearance === "landing" ? "体验反馈" : "反馈"}</span></> : "体验反馈"}</button>
     {open && createPortal(<div ref={cardRef} className="feedback-card" role="dialog" aria-label="体验反馈" tabIndex={-1}
       onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
       onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>

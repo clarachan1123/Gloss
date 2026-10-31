@@ -26,6 +26,19 @@ function geometry(){
  const row=document.querySelector('.landing-demo-visible .action-row'),current=document.querySelector('.landing-demo-step-current');
  return{viewport:{width:innerWidth,height:innerHeight},actions:rect(area),tailPadding:parseFloat(getComputedStyle(layout).paddingBottom),tailSpace:document.documentElement.scrollHeight-(card.getBoundingClientRect().bottom+scrollY),reservedHeight:parseFloat(document.querySelector('.landing-page').style.getPropertyValue('--landing-actions-height')),card:rect(card),stage:rect(stage),row:row?rect(row):null,current:current?rect(current):null,scrollY};
 }
+// 在手机真实布局视口内检查底板命中与不透明覆盖，不把原生滚动条算作页面内容。
+function boardFacts(){
+ const board=document.querySelector('.landing-action-area'),r=board.getBoundingClientRect(),color=getComputedStyle(board).backgroundColor;
+ const values=color.match(/[\d.]+/g)?.map(Number)??[];
+ const alpha=color==='transparent'?0:values.length===4?values[3]:1;
+ const width=document.documentElement.clientWidth,points=[];
+ for(let y=0;y<6;y++)for(let x=0;x<6;x++){
+  const px=(x+.5)*width/6,py=r.top+(y+.5)*(innerHeight-r.top)/6;
+  const top=document.elementsFromPoint(px,py)[0];points.push({x:px,y:py,covered:!!top&&(top===board||board.contains(top))});
+ }
+ return {alpha,bottom:r.bottom,height:r.height,left:r.left,right:r.right,viewportWidth:width,viewportHeight:innerHeight,points};
+}
+const boardValid=f=>f.alpha===1&&Math.abs(f.bottom-f.viewportHeight)<=.5&&Math.abs(f.left)<=.5&&Math.abs(f.right-f.viewportWidth)<=.5&&f.points.length>=30&&f.points.every(p=>p.covered);
 try{
  let target;const deadline=Date.now()+20000;
  while(Date.now()<deadline){const response=await fetch(`http://127.0.0.1:${port}/json`).catch(()=>null);if(response){const pages=(await response.json()).filter(t=>t.type==='page');assert(pages.length===1,'启动只有一个页面',pages.length);target=pages[0];break;}await sleep(100);}
@@ -52,12 +65,23 @@ try{
  // 先用减少动态效果记录三种手机高度，避免把自动播放准备过程算成产品结论。
  await c.call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
  for(const [width,height] of [[375,667],[390,844],[430,932]]){
-  await c.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+  await c.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:true});
   await c.call('Page.navigate',{url:origin+'/'});await wait("!!document.querySelector('.landing-demo-visible .action-row')",'演示终态');await c.evaluate('document.fonts.ready');
   const value=await evaluate(geometry);console.log(JSON.stringify({footerMeasurement:value}));
   scenes++;assert(Math.abs(value.actions.height-value.reservedHeight)<.5&&value.tailPadding>=value.actions.height+24,'实测等高尾部留白',value);passed++;
   await c.evaluate("scrollTo({top:document.documentElement.scrollHeight,behavior:'instant'})");await sleep(100);
   const end=await evaluate(geometry);scenes++;assert(end.row.y>=0&&end.row.bottom<=end.actions.y,'末尾操作行能滚至吸底区上方',end);passed++;
+  for(const position of ['top','middle','bottom']){
+   await evaluate(position=>scrollTo({top:position==='top'?0:position==='middle'?(document.documentElement.scrollHeight-innerHeight)/2:document.documentElement.scrollHeight,behavior:'instant'}),position);await sleep(100);
+   const facts=await evaluate(boardFacts);scenes++;assert(boardValid(facts),'底板全宽不透明覆盖 '+width+'/'+position,facts);passed++;
+   console.log(JSON.stringify({boardCoverage:{width,height,position,samples:facts.points.length,passed:true,boardHeight:facts.height}}));
+   await snap(`${width}-${height}-board-${position}`);
+  }
+  for(const [property,value]of[['background','transparent'],['bottom','24px']]){
+   const previous=await evaluate((property,value)=>{const b=document.querySelector('.landing-action-area'),old=b.style.cssText;b.style.setProperty(property,value,'important');return old;},property,value);
+   try{negatives++;assert(!boardValid(await evaluate(boardFacts)),'底板负对照未检出 '+property);detected++;}
+   finally{await evaluate(previous=>document.querySelector('.landing-action-area').style.cssText=previous,previous);}
+  }
   await snap(`${width}-${height}-reduce-footer`);
  }
  await c.call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});

@@ -87,7 +87,7 @@
 /* 阅读页底部入口独立于列表滚动区域。 */
 .feedback-reader .feedback-shelf-icon { display: none; }
 @media (min-width: 1000px) {
-  .col-left > .feedback-reader { order: 3; height: auto; flex-shrink: 0; padding-top: 20px; }
+  .col-left > .feedback-reader { order: 3; height: auto; flex-shrink: 0; }
   .feedback-reader > .feedback-button { position: static; display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 40px; border: 1px solid var(--ink); background: transparent; color: var(--ink); }
   .feedback-reader .feedback-shelf-icon { display: block; }
   .feedback-reader > .feedback-button:hover { background: var(--paper-main); color: var(--ink); }

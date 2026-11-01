@@ -882,3 +882,26 @@ body {
   .reader-book-stats strong { font-size: 15px; font-weight: 400; font-variant-numeric: tabular-nums; }
   .reader-sidebar-content .saved-link[data-jump-highlight="true"] { border-left-color: var(--hover); }
 }
+
+/* 宽屏左栏逐项按设计稿对齐；书名字体规则保持原样。 */
+@media (min-width: 1000px) {
+  .shell > .col-left { padding: 28px 28px 32px; }
+  .col-left > .reader-shelf-back { display: flex; align-items: center; min-height: 36px; padding-right: 80px; font-size: 13px; color: var(--gloss); }
+  .reader-sidebar-brand { display: flex; align-items: center; height: 36px; font-size: 14px; letter-spacing: .3em; }
+  .reader-sidebar-content [aria-labelledby="doc-title"] > .side-title { font-size: 12px; letter-spacing: .12em; color: var(--gloss); font-weight: 400; margin: 0 0 8px; padding-bottom: 0; border-bottom: 0; text-decoration: none; }
+  .reader-book-title { margin: 0; }
+  .reader-book-stats { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); gap: 18px; }
+  .reader-book-stats span { letter-spacing: .08em; }
+  .reader-book-stats strong { margin-top: 4px; }
+  .reader-sidebar-content #toc-title { font-size: 11px; letter-spacing: .1em; color: var(--gloss); font-weight: 400; margin: 0 0 12px; padding-bottom: 10px; border-bottom: 1px solid var(--rule); }
+  .reader-sidebar-content .side-empty { font-size: 13px; line-height: 1.7; color: var(--gloss); }
+  .reader-saved-heading { justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--rule); margin-bottom: 14px; }
+  .reader-saved-heading .side-title { font-size: 11px; letter-spacing: .1em; color: var(--gloss); font-weight: 400; }
+  .reader-sidebar-mode .mode-options { border: 1px solid var(--rule); border-radius: 0; }
+  .reader-sidebar-mode .mode-option { border: 0; border-radius: 0; padding: 0 10px; min-height: 28px; font-size: 12px; background: transparent; color: var(--gloss); }
+  .reader-sidebar-mode .mode-option[aria-pressed="true"] { background: var(--paper-main); color: var(--ink); }
+  .reader-sidebar-content .saved-link { padding: 8px 0 8px 12px; line-height: 1.7; color: var(--ink); }
+  .reader-sidebar-content .saved-list li + li { margin-top: 0; }
+  .col-left > .feedback-reader { align-self: flex-start; padding-top: 40px; }
+  .col-left > .feedback-reader > .feedback-button { display: inline-flex; width: auto; gap: 8px; min-height: 36px; padding: 0 14px; font-size: 13px; border: 1px solid var(--ink); background: transparent; }
+}

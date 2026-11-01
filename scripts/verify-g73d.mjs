@@ -1,6 +1,6 @@
 // G-73d：生产构建双副本几何、左栏与抽屉手势验证。
 import {spawn,execFileSync} from 'node:child_process';
-const titleBaselineCss=execFileSync('git',['show','952cf21:styles/reader.css'],{encoding:'utf8'});
+const titleBaselineCss=execFileSync('git',['show','183a6ca:styles/reader.css'],{encoding:'utf8'});
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -59,8 +59,38 @@ async function sidebar(){
 }
 async function revisedSidebar(){
  const title=()=>{const s=getComputedStyle(document.querySelector('.reader-book-title'));return [s.fontWeight,s.fontSize,s.fontFamily];};
- const current=await ev(title);await ev(css=>{const e=document.createElement('style');e.id='title-baseline';e.textContent=css;document.head.append(e);},titleBaselineCss);const previous=await ev(title);await ev(()=>document.querySelector('#title-baseline').remove());assert(JSON.stringify(current)===JSON.stringify(previous),'书名保持952cf21计算样式');
+ const current=await ev(title);await ev(css=>{const e=document.createElement('style');e.id='title-baseline';e.textContent=css;document.head.append(e);},titleBaselineCss);const previous=await ev(title);await ev(()=>document.querySelector('#title-baseline').remove());assert(JSON.stringify(current)===JSON.stringify(previous),'书名保持183a6ca计算样式');
  assert(await ev(()=>{const doc=document.querySelector('#doc-title'),stats=document.querySelector('.reader-book-stats'),cells=[...stats.children];return getComputedStyle(doc).borderBottomWidth==='0px'&&getComputedStyle(stats).justifyContent==='flex-start'&&getComputedStyle(stats).columnGap==='18px'&&cells.map(e=>e.querySelector('span').textContent).join(',')==='全文字数,段,句'&&cells.every(e=>{const n=e.querySelector('strong'),l=e.querySelector('span'),s=getComputedStyle(n);return getComputedStyle(e).borderRightWidth==='0px'&&l.getBoundingClientRect().top<n.getBoundingClientRect().top&&getComputedStyle(l).fontSize==='11px'&&s.fontSize==='15px'&&s.fontWeight==='400'&&s.fontVariantNumeric.includes('tabular-nums');})&&[...document.querySelectorAll('.reader-sidebar-content .side-title,.saved-link')].every(e=>getComputedStyle(e).fontWeight==='400');}),'新版栏目数字与字重');scenes+=2;
+}
+// 数值均直接检查计算样式，颜色通过现有变量解析后比较。
+async function detailedSidebar(){
+ const result=await ev(()=>{
+  const errors=[],s=q=>getComputedStyle(document.querySelector(q));
+  const color=token=>{const e=document.createElement('span');e.style.color=`var(${token})`;document.body.append(e);const value=getComputedStyle(e).color;e.remove();return value;};
+  const rule=color('--rule'),gloss=color('--gloss'),ink=color('--ink'),paper=color('--paper-main');
+  const check=(q,expected)=>{const elements=[...document.querySelectorAll(q)];for(const e of elements){const c=getComputedStyle(e);for(const [k,v]of Object.entries(expected))if(c[k]!==v)errors.push(`${q} ${k}: ${c[k]} != ${v}`);}return elements.length;};
+  check('.col-left',{paddingTop:'28px',paddingRight:'28px',paddingBottom:'32px',paddingLeft:'28px'});
+  check('.reader-sidebar-content',{marginTop:'40px'});check('.reader-sidebar-content .side-section:not(:first-child)',{marginTop:'40px'});check('.col-left>.feedback-reader',{paddingTop:'40px',alignSelf:'flex-start'});
+  check('.reader-shelf-back',{fontSize:'13px',color:gloss,minHeight:'36px',alignItems:'center'});
+  check('.reader-sidebar-brand',{fontSize:'14px',letterSpacing:'4.2px',alignItems:'center'});
+  const back=document.querySelector('.reader-shelf-back').getBoundingClientRect(),brand=document.querySelector('.reader-sidebar-brand').getBoundingClientRect();if(back.top+back.height/2!==brand.top+brand.height/2)errors.push('顶行垂直居中');
+  const probe=document.createElement('span');probe.style.fontFamily='var(--font-display)';document.body.append(probe);if(s('.reader-sidebar-brand').fontFamily!==getComputedStyle(probe).fontFamily)errors.push('GLOSS字体');probe.remove();
+  check('#doc-title',{fontSize:'12px',letterSpacing:'1.44px',color:gloss,fontWeight:'400',marginTop:'0px',marginRight:'0px',marginBottom:'8px',marginLeft:'0px',paddingBottom:'0px',borderBottomWidth:'0px',textDecorationLine:'none'});
+  check('.reader-book-title',{marginTop:'0px',marginRight:'0px',marginBottom:'0px',marginLeft:'0px'});
+  check('.reader-book-stats',{marginTop:'18px',paddingTop:'14px',borderTopWidth:'1px',borderTopColor:rule,columnGap:'18px',rowGap:'18px',justifyContent:'flex-start'});
+  check('.reader-book-stats span',{fontSize:'11px',letterSpacing:'0.88px',color:gloss});check('.reader-book-stats strong',{fontSize:'15px',marginTop:'4px',fontWeight:'400',fontVariantNumeric:'tabular-nums'});
+  check('#toc-title',{fontSize:'11px',letterSpacing:'1.1px',color:gloss,fontWeight:'400',marginTop:'0px',marginRight:'0px',marginBottom:'12px',marginLeft:'0px',paddingBottom:'10px',borderBottomWidth:'1px',borderBottomColor:rule});
+  check('.side-empty',{fontSize:'13px',lineHeight:'22.1px',color:gloss});
+  check('.reader-saved-heading',{display:'flex',justifyContent:'space-between',alignItems:'center',paddingBottom:'8px',borderBottomWidth:'1px',borderBottomColor:rule,marginBottom:'14px'});
+  check('#saved-title',{fontSize:'11px',letterSpacing:'1.1px',color:gloss,fontWeight:'400'});
+  check('.reader-sidebar-mode .mode-options',{borderTopWidth:'1px',borderRightWidth:'1px',borderBottomWidth:'1px',borderLeftWidth:'1px',borderTopColor:rule,borderRadius:'0px'});
+  check('.reader-sidebar-mode .mode-option',{fontSize:'12px',paddingTop:'0px',paddingRight:'10px',paddingBottom:'0px',paddingLeft:'10px',minHeight:'28px',borderTopWidth:'0px',borderRightWidth:'0px',borderBottomWidth:'0px',borderLeftWidth:'0px',borderRadius:'0px'});
+  check('.reader-sidebar-mode .mode-option[aria-pressed=true]',{color:ink,backgroundColor:paper});check('.reader-sidebar-mode .mode-option[aria-pressed=false]',{color:gloss,backgroundColor:'rgba(0, 0, 0, 0)'});
+  check('.saved-link',{paddingTop:'8px',paddingRight:'0px',paddingBottom:'8px',paddingLeft:'12px',borderLeftWidth:'2px',borderLeftColor:rule,fontSize:'13px',lineHeight:'22.1px',color:ink,whiteSpace:'nowrap',textOverflow:'ellipsis'});check('.saved-list li',{marginTop:'0px'});
+  check('.feedback-reader>.feedback-button',{display:'inline-flex',columnGap:'8px',minHeight:'36px',paddingTop:'0px',paddingRight:'14px',paddingBottom:'0px',paddingLeft:'14px',fontSize:'13px',borderTopWidth:'1px',borderTopColor:ink,backgroundColor:'rgba(0, 0, 0, 0)'});
+  const button=document.querySelector('.feedback-reader>.feedback-button'),r=button.getBoundingClientRect(),col=document.querySelector('.col-left').getBoundingClientRect();if(r.left!==col.left+28||r.width>=col.width-56)errors.push('反馈非满宽且靠左');
+  return errors;
+ });assert(result.length===0,'设计稿逐项计算样式 '+JSON.stringify(result));scenes+=9;
 }
 // 条目跳转使用原生鼠标输入，覆盖页面事件委托的真实传播路径。
 async function realClick(sel){
@@ -111,7 +141,12 @@ try{
  for(let i=0;i<2;i++){assert(same(pair[0][i],pair[1][i]),'几何差异 '+JSON.stringify({width,theme,kind,mode,position:i,maxDelta}));scenes++;}
  console.log(JSON.stringify({width,theme,kind,mode,geometry:2,maxDelta}));
  }
- for(const theme of ['parchment','moon-white','eye-green','dark']){await load(3507,1280,theme,'long','reading');await sidebar();await revisedSidebar();}
+ for(const theme of ['parchment','moon-white','eye-green','dark']){
+ await load(3507,1280,theme,'long','reading');await sidebar();await revisedSidebar();await detailedSidebar();
+ await ev(()=>{localStorage.removeItem('gloss:saved:g73d');localStorage.removeItem('gloss:selection-saved:g73d');const doc=JSON.parse(localStorage.getItem('gloss:doc:g73d'));doc.headings=[];localStorage.setItem('gloss:doc:g73d',JSON.stringify(doc));});
+ await c.call('Page.reload');await wait(()=>c.evaluate("document.querySelector('.reader-body')?.getAttribute('data-measuring')==='false'&&document.querySelectorAll('.saved-link').length===0&&document.querySelectorAll('.reader-sidebar-content .side-empty').length===2"),'空目录与空列表就绪');await settle();await detailedSidebar();
+ await load(3507,1280,theme,'long','reading');
+ }
  const baseline=await ev(geometry);await ev(()=>{const e=document.querySelector('.shell');window.__tracks=getComputedStyle(e).gridTemplateColumns;const tracks=__tracks.split(' ');tracks[0]=(parseFloat(tracks[0])+1)+'px';tracks[1]=(parseFloat(tracks[1])-1)+'px';e.style.gridTemplateColumns=tracks.join(' ');});assert(!same(baseline,await ev(geometry),false),'轨道+1px 未检出');negatives++;await ev(()=>document.querySelector('.shell').style.removeProperty('grid-template-columns'));assert(same(baseline,await ev(geometry),false),'轨道恢复');
  await jumpHighlights();
  for(const kind of ['feedback','settings']){await load(3507,375,'parchment','sample','review');await gestures(kind);}

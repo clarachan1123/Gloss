@@ -1792,7 +1792,7 @@ export default function Reader({ docId }: { docId: string }) {
     const onDocumentClick = (event: MouseEvent) => {
       if (hasTextSelection()) return;
       const target = event.target as Element | null;
-      if (target?.closest?.("[data-saved-selection-id]")) return;
+      if (target?.closest?.("[data-saved-selection-id], .saved-link")) return;
       if (target?.closest?.(".sentence, .gloss-panel, .feedback-card, .feedback-button, .col-right, [data-reader-settings]")) return;
       dismiss();
     };
@@ -2391,10 +2391,42 @@ export default function Reader({ docId }: { docId: string }) {
 
 
 
+  const [savedJumpKey, setSavedJumpKey] = useState<string | null>(null);
   const savedItems = [
     ...[...savedGlosses].map(([index,saved])=>({ key:"sentence:"+index, text:saved.text, point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0}, time:saved.savedAt, index, selectionId:null as string|null })),
     ...[...selectionResults.values()].filter(result=>result.saved).map(result=>({key:"selection:"+result.id,text:result.saved!.text,point:result.selection.start,time:result.saved!.savedAt,index:result.index,selectionId:result.id as string|null}))
   ].sort((a,b)=>comparePoints(a.point,b.point)||a.time-b.time);
+
+  const highlightedSaved = savedItems.find(item => item.key === savedJumpKey);
+  const highlightedSavedVisible = !!highlightedSaved && (highlightedSaved.selectionId
+    ? !!selectionResults.get(highlightedSaved.selectionId) && selectionVisible(selectionResults.get(highlightedSaved.selectionId)!)
+    : readingMode === "review" || expandedSavedIndexes.has(highlightedSaved.index));
+  useEffect(() => {
+    if (!savedJumpKey) return;
+    if (!highlightedSavedVisible) { setSavedJumpKey(null); return; }
+    // 仅用户的滚动意图清除高亮，程序滚动不会触发这些入口。
+    const clear = () => setSavedJumpKey(null);
+    const pointerScroll = (event: Event) => {
+      const target = event.target as Element | null;
+      if (target?.closest?.(".col-left,.col-right,[data-reader-settings],input,textarea,select,[contenteditable=true]")) return;
+      clear();
+    };
+    const keyScroll = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || !["ArrowUp","ArrowDown","PageUp","PageDown","Home","End"," "].includes(event.key)) return;
+      const target = event.target as Element | null;
+      if (target?.closest?.("input,textarea,select,[contenteditable=true]") || (event.key === " " && target?.closest?.("button,a"))) return;
+      clear();
+    };
+    const resize = () => { if (window.innerWidth < 1000) clear(); };
+    window.addEventListener("wheel", pointerScroll, { passive: true });
+    window.addEventListener("touchmove", pointerScroll, { passive: true });
+    window.addEventListener("keydown", keyScroll);
+    window.addEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("wheel", pointerScroll); window.removeEventListener("touchmove", pointerScroll);
+      window.removeEventListener("keydown", keyScroll); window.removeEventListener("resize", resize);
+    };
+  }, [savedJumpKey, highlightedSavedVisible]);
 
   return (
     <div className="shell" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("[data-selection-control]")) selectionEntryPointer.current = event.pointerType; }}>
@@ -2440,7 +2472,7 @@ export default function Reader({ docId }: { docId: string }) {
             <p className="side-stats">{documentStats(doc, sentences.length)}</p>
             <div className="reader-book-stats">{documentStats(doc, sentences.length).split(" · ").map(part => {
               const [number, label] = part.split(" ");
-              return <div key={label}><strong>{number}</strong><span>{label}</span></div>;
+              return <div key={label}><strong>{number}</strong><span>{label === "字" ? "全文字数" : label}</span></div>;
             })}</div>
             {skippedLine && <p className="side-skipped">{skippedLine}</p>}
           </section>
@@ -2484,7 +2516,7 @@ export default function Reader({ docId }: { docId: string }) {
             <ol className="saved-list">
               {savedItems.map(item => (
                 <li key={item.key}>
-                  <button type="button" className="saved-link" data-saved-selection-id={item.selectionId ?? undefined} onClick={event => { if (item.selectionId) { event.stopPropagation(); jumpToSelection(item.selectionId); } else jumpToSaved(item.index); }}>
+                  <button type="button" className="saved-link" data-jump-highlight={savedJumpKey === item.key && highlightedSavedVisible || undefined} data-saved-selection-id={item.selectionId ?? undefined} onClick={event => { if (window.innerWidth >= 1000) setSavedJumpKey(item.key); if (item.selectionId) { event.stopPropagation(); jumpToSelection(item.selectionId); } else jumpToSaved(item.index); }}>
                     {item.text}
                   </button>
                 </li>

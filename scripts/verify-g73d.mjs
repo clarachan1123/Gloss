@@ -1,5 +1,6 @@
 // G-73d：生产构建双副本几何、左栏与抽屉手势验证。
-import {spawn} from 'node:child_process';
+import {spawn,execFileSync} from 'node:child_process';
+const titleBaselineCss=execFileSync('git',['show','952cf21:styles/reader.css'],{encoding:'utf8'});
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -56,6 +57,35 @@ async function sidebar(){
  await negative('向下开',upward,()=>{const card=document.querySelector('.feedback-card');window.__top=card.style.top;card.style.top=document.querySelector('.feedback-button').getBoundingClientRect().bottom+8+'px';card.dataset.side='below';},()=>{const card=document.querySelector('.feedback-card');card.style.top=__top;card.dataset.side='above';});
  await click('.feedback-close');scenes++;
 }
+async function revisedSidebar(){
+ const title=()=>{const s=getComputedStyle(document.querySelector('.reader-book-title'));return [s.fontWeight,s.fontSize,s.fontFamily];};
+ const current=await ev(title);await ev(css=>{const e=document.createElement('style');e.id='title-baseline';e.textContent=css;document.head.append(e);},titleBaselineCss);const previous=await ev(title);await ev(()=>document.querySelector('#title-baseline').remove());assert(JSON.stringify(current)===JSON.stringify(previous),'书名保持952cf21计算样式');
+ assert(await ev(()=>{const doc=document.querySelector('#doc-title'),stats=document.querySelector('.reader-book-stats'),cells=[...stats.children];return getComputedStyle(doc).borderBottomWidth==='0px'&&getComputedStyle(stats).justifyContent==='flex-start'&&getComputedStyle(stats).columnGap==='18px'&&cells.map(e=>e.querySelector('span').textContent).join(',')==='全文字数,段,句'&&cells.every(e=>{const n=e.querySelector('strong'),l=e.querySelector('span'),s=getComputedStyle(n);return getComputedStyle(e).borderRightWidth==='0px'&&l.getBoundingClientRect().top<n.getBoundingClientRect().top&&getComputedStyle(l).fontSize==='11px'&&s.fontSize==='15px'&&s.fontWeight==='400'&&s.fontVariantNumeric.includes('tabular-nums');})&&[...document.querySelectorAll('.reader-sidebar-content .side-title,.saved-link')].every(e=>getComputedStyle(e).fontWeight==='400');}),'新版栏目数字与字重');scenes+=2;
+}
+// 条目跳转使用原生鼠标输入，覆盖页面事件委托的真实传播路径。
+async function realClick(sel){
+ await ev(sel=>document.querySelector(sel).scrollIntoView({block:'nearest',behavior:'instant'}),sel);await settle();
+ const p=await ev(sel=>{const r=document.querySelector(sel).getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};},sel);
+ await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...p});
+ await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...p});await settle();
+}
+async function jumpHighlights(){
+ await click('.reader-sidebar-mode .mode-option:first-child');await click('.reader-sidebar-mode .mode-option:last-child');
+ const active=()=>[...document.querySelectorAll('.saved-link[data-jump-highlight="true"]')].map(e=>e.dataset.savedSelectionId||'sentence');
+ const single='.saved-link:not([data-saved-selection-id])',selection='.saved-link[data-saved-selection-id]';
+ for(const sel of [single,selection]){
+ await realClick(sel);assert((await ev(active)).length===1,'跳转高亮');if(sel===single){assert(await ev(()=>!!document.querySelector('.gloss-panel-saved[data-sentence-index="0"]')&&!document.querySelector('.sentence[data-index="0"]').classList.contains('sentence-saved-collapsed')),'真实点击单句保持展开');scenes++;}await ev(()=>{scrollBy(0,10);dispatchEvent(new Event('scroll'));});await settle();assert((await ev(active)).length===1,'程序滚动保留');scenes++;
+ await ev(()=>window.dispatchEvent(new WheelEvent('wheel',{deltaY:100})));await settle();assert((await ev(active)).length===0,'用户滚轮清除');scenes++;
+ await realClick(sel);await realClick(sel===single?selection:single);assert((await ev(active)).length===1&&(await ev(active))[0]===(sel===single?await ev(()=>document.querySelector('.saved-link[data-saved-selection-id]').dataset.savedSelectionId):'sentence'),'高亮移到另一条');scenes++;
+ await click('.reader-sidebar-mode .mode-option:first-child');await click('.reader-sidebar-mode .mode-option:last-child');assert((await ev(active)).length===0,'收起清除高亮');scenes++;
+ }
+ // 临时改变页面标记模拟故障；每次恢复原标记并重走真实清除路径。
+ await realClick(single);await ev(()=>window.dispatchEvent(new WheelEvent('wheel',{deltaY:100})));await settle();
+ await negative('滚动不清除',()=>!document.querySelector('[data-jump-highlight="true"]'),()=>document.querySelector('.saved-link').setAttribute('data-jump-highlight','true'),()=>document.querySelector('.saved-link').removeAttribute('data-jump-highlight'));
+ await realClick(single);await negative('程序滚动误清除',()=>!!document.querySelector('[data-jump-highlight="true"]'),()=>document.querySelector('[data-jump-highlight]').removeAttribute('data-jump-highlight'),()=>document.querySelector('.saved-link').setAttribute('data-jump-highlight','true'));
+ await click('.reader-sidebar-mode .mode-option:first-child');await click('.reader-sidebar-mode .mode-option:last-child');
+ await negative('收起不清除',()=>!document.querySelector('[data-jump-highlight="true"]'),()=>document.querySelector('.saved-link').setAttribute('data-jump-highlight','true'),()=>document.querySelector('.saved-link').removeAttribute('data-jump-highlight'));
+}
 // 合成完整触摸链路并固定事件时间，避免机器速度影响甩动边界。
 async function drag(sel,distance,fast=false){await ev((sel,distance,fast)=>{const target=document.querySelector(sel);const duration=fast?20:1000;for(const [type,y,time]of [['touchstart',0,0],['touchmove',distance,duration],['touchend',distance,duration+1]]){const e=new Event(type,{bubbles:true,cancelable:true});Object.defineProperties(e,{touches:{value:type==='touchend'?[]:[{clientY:y}]},timeStamp:{value:time+1000}});target.dispatchEvent(e);}},sel,distance,fast);await settle();}
 async function openSettings(){await click('.reader-typography-aa');}
@@ -81,8 +111,9 @@ try{
  for(let i=0;i<2;i++){assert(same(pair[0][i],pair[1][i]),'几何差异 '+JSON.stringify({width,theme,kind,mode,position:i,maxDelta}));scenes++;}
  console.log(JSON.stringify({width,theme,kind,mode,geometry:2,maxDelta}));
  }
- for(const theme of ['parchment','moon-white','eye-green','dark']){await load(3507,1280,theme,'long','reading');await sidebar();}
+ for(const theme of ['parchment','moon-white','eye-green','dark']){await load(3507,1280,theme,'long','reading');await sidebar();await revisedSidebar();}
  const baseline=await ev(geometry);await ev(()=>{const e=document.querySelector('.shell');window.__tracks=getComputedStyle(e).gridTemplateColumns;const tracks=__tracks.split(' ');tracks[0]=(parseFloat(tracks[0])+1)+'px';tracks[1]=(parseFloat(tracks[1])-1)+'px';e.style.gridTemplateColumns=tracks.join(' ');});assert(!same(baseline,await ev(geometry),false),'轨道+1px 未检出');negatives++;await ev(()=>document.querySelector('.shell').style.removeProperty('grid-template-columns'));assert(same(baseline,await ev(geometry),false),'轨道恢复');
+ await jumpHighlights();
  for(const kind of ['feedback','settings']){await load(3507,375,'parchment','sample','review');await gestures(kind);}
  // 控件误关闭负对照采用真实点击关闭入口，原“仍打开”判据应失败。
  await load(3507,375,'parchment','sample','review');await openSettings();await ev(()=>document.querySelector('.reader-size-stepper button').addEventListener('touchend',()=>document.querySelector('.reader-typography-sheet-header button').click(),{once:true}));await drag('.reader-size-stepper button',100);assert(!await ev(()=>!!document.querySelector('.reader-typography-sheet')),'控件误关闭未检出');negatives++;await openSettings();await drag('.reader-size-stepper button',100);assert(await ev(()=>!!document.querySelector('.reader-typography-sheet')),'控件恢复');

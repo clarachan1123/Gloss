@@ -871,3 +871,14 @@ body {
 .reader-typography-sheet[data-dragging] { transition: none; }
 .reader-typography-sheet-header { touch-action: pan-x; }
 @media (prefers-reduced-motion: reduce) { .reader-typography-sheet { transition: none; } }
+
+/* 数字区与跳转标记只作用于新版左栏。 */
+@media (min-width: 1000px) {
+  .reader-sidebar-content [aria-labelledby="doc-title"] > .side-title { border-bottom: 0; font-weight: 400; }
+  .reader-sidebar-content .side-title, .reader-sidebar-content .saved-link { font-weight: 400; }
+  .reader-book-stats { justify-content: flex-start; gap: 18px; }
+  .reader-book-stats > div { display: flex; flex-direction: column; flex: 0 0 auto; min-width: 0; padding: 0; text-align: left; border: 0; }
+  .reader-book-stats span { order: -1; }
+  .reader-book-stats strong { font-size: 15px; font-weight: 400; font-variant-numeric: tabular-nums; }
+  .reader-sidebar-content .saved-link[data-jump-highlight="true"] { border-left-color: var(--hover); }
+}

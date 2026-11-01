@@ -1589,6 +1589,19 @@ describe("G-69 非鼠标打开来源", () => {
     await act(async () => host.querySelector<HTMLElement>(".saved-link")!.click()); await flush(); expect(active()).toEqual([]);
     await act(async () => root.render(createElement(Reader, { docId: "missing-g69" }))); await flush(); expect(active()).toEqual([]);
   });
+  it("G73dBubble 收起模式点击单句留下条目保持展开", async () => {
+    await storage.saveSavedGloss("g69", segmentParagraphs(["甲乙。丙丁。", "戊己。"]).sentences[0], "已留下。");
+    localStorage.setItem("gloss:settings:reading-mode", "review"); await mount();
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>(".mode-option")].find(e=>e.textContent?.trim()==="收起")!.click()); await flush();
+    await click(1);
+    await act(async () => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done())))); await flush();
+    expect(host.querySelector('.reader-body')?.getAttribute('data-measuring')).toBe('false');
+    expect(host.querySelector('.sentence[data-index="0"]')?.classList.contains("sentence-saved-collapsed")).toBe(true);
+    await act(async () => host.querySelector<HTMLElement>(".saved-link")!.click()); await flush();
+    expect(host.querySelector('.sentence[data-index="0"]')?.classList.contains("sentence-saved-collapsed")).toBe(false);
+    await flush();
+    expect(host.querySelector('.sentence[data-index="0"]')?.classList.contains("sentence-saved-collapsed")).toBe(false);
+  });
   it("新活动规则只改两种颜色，透明尾巴不接受活动标记", () => {
     const css = readFileSync(path.resolve(process.cwd(), "styles/reader.css"), "utf8");
     const rule = css.match(/\.reader-body \.sentence\.sentence-active,\s*\.reader-body\.reader-body-sample-breathing \.sentence\.sentence-active\s*\{([^}]+)\}/);
@@ -1746,4 +1759,20 @@ it("G73d 设置慢拖79px回弹后第一次关闭恢复焦点", async () => {
     await click(host.querySelector('.reader-typography-sheet-header button')!);
     expect(host.querySelector('.reader-typography-sheet')).toBeNull();expect(document.activeElement).toBe(aa);expect(aa.getAttribute('aria-expanded')).toBe('false');
   } finally {await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals();}
+});
+
+it("G73d 条目程序滚动保留高亮、用户滚动清除", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT",true);vi.stubGlobal("innerWidth",1280);
+  const text="甲乙。",sourceHash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text))),b=>b.toString(16).padStart(2,"0")).join("");
+  localStorage.setItem("gloss:doc:jump-test",JSON.stringify({version:1,docId:"jump-test",paragraphs:[text],headings:[],footnotes:[],meta:{format:"txt",fileName:"测试.txt"},savedAt:1}));
+  localStorage.setItem("gloss:saved:jump-test",JSON.stringify({version:1,entries:[{paraIndex:0,start:0,sourceHash,text:"测试白话",savedAt:1,kind:"saved"}]}));
+  const host=document.createElement("div");document.body.append(host);const root=createRoot(host);
+  try {
+    await act(async()=>{root.render(createElement(Reader,{docId:"jump-test"}));});
+    for(let i=0;i<20;i++)await act(async()=>{await Promise.resolve();});
+    const item=host.querySelector<HTMLButtonElement>(".saved-link")!;
+    await act(async()=>{item.click();});expect(item.dataset.jumpHighlight).toBe("true");
+    await act(async()=>{window.dispatchEvent(new Event("scroll"));});expect(item.dataset.jumpHighlight).toBe("true");
+    await act(async()=>{window.dispatchEvent(new WheelEvent("wheel",{deltaY:100}));});expect(item.dataset.jumpHighlight).toBeUndefined();
+  }finally{await act(async()=>root.unmount());host.remove();localStorage.clear();vi.unstubAllGlobals();}
 });

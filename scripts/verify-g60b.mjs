@@ -104,7 +104,8 @@ window.__g59.snapshot = function(selector) {
   if(!scope) throw new Error('Missing original text scope');
   const chars = [];
   for(const span of scope.querySelectorAll('.sentence')) {
-    if(getComputedStyle(span).visibility !== 'visible' || span.closest('[inert]')) continue;
+    const inert = span.closest('[inert]');
+    if(getComputedStyle(span).visibility !== 'visible' || (inert && inert !== scope.closest('[inert]'))) continue;
     const node = span.firstChild, para = span.closest('[data-para]');
     if(!(node instanceof Text) || !para) throw new Error('Invalid real sentence');
     let local = 0;
@@ -135,14 +136,16 @@ async function ready(cdp, selector) {
   await waitForValue(() => cdp.evaluate("!!document.querySelector(" + JSON.stringify(selector) + ")"), selector);
   await cdp.evaluate("document.fonts.ready", true);
   await cdp.evaluate("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))", true);
+  // 卡片入场结束后取样，边界判据与原超时保持不变。
+  await cdp.evaluate("Promise.all((document.querySelector('.feedback-card')?.getAnimations()??[]).map(a=>a.finished.catch(()=>{})))", true);
 }
 async function click(cdp, selector) {
   if(selector==='.feedback-button'&&await cdp.evaluate("innerWidth<768&&!!document.querySelector('.reader-body-reader')")){
-    if(await cdp.evaluate("!!document.querySelector('.feedback-card')"))selector='.reader-typography-aa';
+    if(await cdp.evaluate("!!document.querySelector('.feedback-card')"))selector='.feedback-backdrop';
     else {if(!await cdp.evaluate("!!document.querySelector('.reader-typography-sheet')"))await click(cdp,'.reader-typography-aa');
       await cdp.evaluate("document.querySelector('.reader-settings-feedback').scrollIntoView({block:'nearest'})");selector='.reader-settings-feedback';}
   }
-  const p = await evalFn(cdp, s => { const r = document.querySelector(s).getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; }, selector);
+  const p = await evalFn(cdp, s => { if(s===".feedback-backdrop")return{x:1,y:1}; const r = document.querySelector(s).getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; }, selector);
   await cdp.call("Input.dispatchMouseEvent", {type:"mousePressed",button:"left",clickCount:1,...p});
   await cdp.call("Input.dispatchMouseEvent", {type:"mouseReleased",button:"left",clickCount:1,...p});
 }
@@ -240,11 +243,20 @@ async function checks(cdp,width,page) {
     await evalFn(cdp,()=>document.querySelector('.sentence[data-index="0"]').click());
     await waitForValue(()=>cdp.evaluate("!!document.querySelector('.gloss-panel[data-state=done]')"),"sample gloss");
     await cdp.evaluate("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))",true);
+    // 先完成既有读完计时，再开始反馈操作的零事件观测窗口。
+    await waitForValue(()=>cdp.evaluate("feedbackEvents.some(e=>e.event==='gloss_read_complete'&&e.sentenceIndex===0)"),"sample gloss read complete");
     before=await originalSnapshot(cdp);
   }
   await cdp.evaluate("feedbackEvents=[]");
   await click(cdp,".feedback-button"); await ready(cdp,".feedback-card textarea");
   await cardBounds(cdp);
+  assert(await cdp.evaluate("feedbackEvents.length===0"),"feedback analytics negative baseline");
+  await cdp.evaluate("window.__g73cNegative={event:'g73c_negative'};dispatchEvent(new CustomEvent('gloss:analytics',{detail:window.__g73cNegative}))");
+  assert(!await cdp.evaluate("feedbackEvents.length===0"),"feedback analytics negative undetected");
+  // 只移除本次故障注入对象，期间的任何真实事件都保留。
+  await cdp.evaluate("const i=feedbackEvents.indexOf(window.__g73cNegative);if(i<0)throw Error('negative event missing');feedbackEvents.splice(i,1);delete window.__g73cNegative");
+  console.log(JSON.stringify({feedbackAnalyticsNegativeDetected:true,width,page}));
+
   if(page==="reader") {
     await cdp.evaluate("document.querySelector('.feedback-card textarea').focus()");
     await cdp.call("Input.insertText",{text:"测试"});
@@ -254,7 +266,7 @@ async function checks(cdp,width,page) {
     await compareOriginal(cdp,before);
     assert(await cdp.evaluate("document.querySelectorAll('.gloss-panel').length===1"),"typing collapsed gloss");
     await click(cdp,".feedback-send");
-    await waitForValue(()=>cdp.evaluate("document.querySelector('.feedback-card').textContent.includes('没发出去，可以稍后再试，或加微信 Claraiing')"),"disabled feedback failure");
+    await waitForValue(()=>cdp.evaluate("document.querySelector('.feedback-card').textContent.includes('没发出去，内容还在。稍后再试，或加微信：Claraiing')"),"disabled feedback failure");
     assert(await cdp.evaluate("feedbackResponses.length===1&&feedbackResponses[0]===503"),"feedback must return 503");
     assert(await cdp.evaluate("document.querySelector('.feedback-card textarea').value")===draft,"failure lost draft");
     await compareOriginal(cdp,before); await cardBounds(cdp);
@@ -270,9 +282,10 @@ async function checks(cdp,width,page) {
   for(const method of ["escape","button","outside"]) {
     if(method!=="escape") { await click(cdp,".feedback-button"); await ready(cdp,".feedback-card"); }
     if(method==="escape") await key(cdp,"Escape","Escape");
-    else if(method==="button") await click(cdp,".feedback-button");
+    else if(method==="button") await click(cdp,await cdp.evaluate("innerWidth<768")?".feedback-backdrop":".feedback-button");
     else {
-      const point=page==="reader"?await evalFn(cdp,()=>{
+      const mobile=await cdp.evaluate("innerWidth<768");
+      const point=mobile?{x:1,y:1}:page==="reader"?await evalFn(cdp,()=>{
         for(const span of document.querySelectorAll('.reader-body .sentence:not([data-index="0"])')) {
           if(getComputedStyle(span).visibility!=="visible")continue;
           const node=span.firstChild;
@@ -285,6 +298,7 @@ async function checks(cdp,width,page) {
         }
         throw new Error("No visible outside sentence");
       }):{x:1,y:1};
+      if(mobile) assert(await evalFn(cdp,p=>document.elementFromPoint(p.x,p.y)?.classList.contains("feedback-backdrop"),point),"mobile outside targets backdrop");
       await cdp.call("Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...point});
       await cdp.call("Input.dispatchMouseEvent",{type:"mouseReleased",button:"left",clickCount:1,...point});
     }

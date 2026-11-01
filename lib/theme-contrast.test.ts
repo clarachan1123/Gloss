@@ -293,3 +293,22 @@ describe("G-73b 落地页主题", () => {
     expect(contrast(c["--ink"], c["--paper-main"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 });
+
+describe("G-73c 反馈角色", () => {
+  it.each(THEMES)("%s：显式 token、实际文字配对与过渡", theme => {
+    const start = CSS.indexOf(`[data-theme="${theme}"]`), block = CSS.slice(start, CSS.indexOf("}", start));
+    const value = (name: string): string => {
+      const raw = new RegExp(name + ":\\s*([^;]+);").exec(block)?.[1]?.trim();
+      if (!raw) throw Error("缺少 " + name);
+      const alias = /^var\((--[\w-]+)\)$/.exec(raw);
+      return alias ? value(alias[1]) : raw;
+    };
+    for (const token of ["--shadow-feedback", "--overlay-feedback", "--feedback-input-bg", "--feedback-error", "--feedback-placeholder"]) {
+      expect(block).toContain(token + ":");
+      expect(CSS).toContain("@property " + token);
+      expect(CSS.slice(CSS.indexOf("html[data-theme-transition]"))).toContain(token);
+    }
+    for (const [fg, bg] of [["--feedback-placeholder","--feedback-input-bg"],["--ink","--feedback-input-bg"],["--feedback-error","--feedback-input-bg"],["--feedback-error","--paper-main"],["--gloss","--paper-main"],["--paper-main","--hover"]])
+      expect(contrast(value(fg), value(bg))).toBeGreaterThanOrEqual(4.5);
+  });
+});

@@ -214,6 +214,8 @@ try{
  }
 
  await c.call('Emulation.setDeviceMetricsOverride',{width:375,height:667,deviceScaleFactor:1,mobile:false});
+ // 等待视口切换后的两帧布局，原判据与置零负对照保持不变。
+ await c.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
  await negative('尾部留白',()=>{const h=document.querySelector('.landing-action-area').getBoundingClientRect().height;return parseFloat(getComputedStyle(document.querySelector('.landing-layout')).paddingBottom)>=h+24;},'.landing-layout','padding-bottom','0px');
  // 导入浮层隐藏吸底区，关闭后恢复焦点；事件只在本地捕获。
  await c.call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});

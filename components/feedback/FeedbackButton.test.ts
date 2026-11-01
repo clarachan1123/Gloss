@@ -135,7 +135,7 @@ it("复制、正文句子上点外关闭及 Esc 关闭保留撑开区且零埋�
 
 const sendButton = () => dialog()!.querySelector<HTMLButtonElement>(".feedback-send")!;
 const bodyInput = () => dialog()!.querySelector<HTMLTextAreaElement>('textarea[aria-label="意见"]')!;
-const contactInput = () => dialog()!.querySelector<HTMLInputElement>('input[aria-label="联系方式（选填）"]')!;
+const contactInput = () => dialog()!.querySelector<HTMLInputElement>('input[type="text"]')!;
 async function edit(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
   const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   await act(async () => {
@@ -165,7 +165,7 @@ it("直接发送失败保留草稿，关闭再打开仍保留；手动再发生�
   await mount(); await click(button());
   await edit(bodyInput(), "测试"); await edit(contactInput(), "邮箱");
   await click(sendButton());
-  expect(dialog()!.textContent).toContain("没发出去，可以稍后再试，或加微信 Claraiing");
+  expect(dialog()!.textContent).toContain("没发出去，内容还在。稍后再试，或加微信：Claraiing");
   expect(bodyInput().value).toBe("测试");
   await click(button()); await click(button());
   expect(bodyInput().value).toBe("测试"); expect(contactInput().value).toBe("邮箱");
@@ -205,17 +205,17 @@ it("15秒无响应显示失败并保留草稿，不自动重试", async () => {
   await mount(); await click(button()); await edit(bodyInput(), "测试"); await click(sendButton());
   await act(async () => vi.advanceTimersByTime(14_999)); expect(sendButton().textContent).toBe("发送中…");
   await act(async () => vi.advanceTimersByTime(1)); expect(bodyInput().value).toBe("测试");
-  expect(dialog()!.textContent).toContain("没发出去，可以稍后再试，或加微信 Claraiing");
+  expect(dialog()!.textContent).toContain("没发出去，内容还在。稍后再试，或加微信：Claraiing");
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-it("发送按钮禁用样式包含 opacity: 0.45", async () => {
+it("发送按钮禁用样式包含 opacity: 0.4", async () => {
   const { readFileSync } = await import("node:fs");
   const path = await import("node:path");
   const css = readFileSync(path.resolve(process.cwd(), "styles/feedback.css"), "utf8");
   const rule = /\.feedback-send:disabled\s*\{([^}]*)\}/.exec(css);
   expect(rule).not.toBeNull();
-  expect(rule![1]).toMatch(/(?:^|;)\s*opacity:\s*0\.45\s*;/);
+  expect(rule![1]).toMatch(/(?:^|;)\s*opacity:\s*0\.4\s*;/);
 });
 it("抽屉交接复用 reader 反馈卡，关闭焦点回顶栏 Aa", async () => {
   const aa = document.createElement("button"); aa.setAttribute("aria-label", "阅读排版"); document.body.append(aa);
@@ -242,4 +242,57 @@ it("落地页图标与完整手机标签不改变发送来源", async () => {
   expect(button().querySelector(".feedback-mobile-label")?.textContent).toBe("体验反馈");
   await click(button()); await edit(bodyInput(), "测试"); await click(sendButton());
   expect(JSON.parse(fetchMock.mock.calls[0][1].body).source).toBe("landing");
+});
+
+it("新结构使用可见联系方式标签、码点计数与线条图标", async () => {
+  await mount(); await click(button());
+  expect(dialog()!.querySelector("h2")!.textContent).toBe("体验反馈");
+  const label = dialog()!.querySelector("label")!;
+  expect(label.textContent).toBe("联系方式 · 选填");
+  expect(label.htmlFor).toBe(contactInput().id);
+  await edit(bodyInput(), " 🙂甲 ");
+  expect(dialog()!.querySelector(".feedback-count")!.textContent).toBe("2 / 1000");
+  await edit(bodyInput(), "甲".repeat(1001));
+  expect(dialog()!.querySelector(".feedback-count")!.classList.contains("feedback-error")).toBe(true);
+  expect(dialog()!.textContent).not.toContain("💡");
+});
+it("成功后再写一条回空表单并聚焦意见", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+  await mount(); await click(button()); await edit(bodyInput(), "测试"); await click(sendButton());
+  expect(dialog()!.querySelector(".feedback-success-title")!.getAttribute("role")).toBe("status");
+  await click(dialog()!.querySelector(".feedback-again")!);
+  await act(async () => new Promise(resolve => requestAnimationFrame(() => resolve())));
+  expect(bodyInput().value).toBe(""); expect(document.activeElement).toBe(bodyInput());
+});
+it("发送中关闭不 abort，成功清空草稿，卸载才中止", async () => {
+  let resolve!: (value: Response) => void;
+  const fetchMock = vi.fn((_url: string, _init: RequestInit) => new Promise<Response>(done => { resolve = done; }));
+  vi.stubGlobal("fetch", fetchMock);
+  await mount(); await click(button()); await edit(bodyInput(), "草稿"); await click(sendButton());
+  const signal = fetchMock.mock.calls[0][1].signal!;
+  await click(button()); expect(signal.aborted).toBe(false);
+  await act(async () => resolve(new Response(null, { status: 200 })));
+  await click(button()); expect(bodyInput().value).toBe("");
+  await edit(bodyInput(), "第二条"); await click(sendButton());
+  const pending = fetchMock.mock.calls[1][1].signal!;
+  await act(async () => root.unmount()); expect(pending.aborted).toBe(true);
+});
+it("手机模态锁背景、跨断点保留草稿、关闭恢复样式", async () => {
+  const listeners = new Set<() => void>();
+  const media = { matches: true, addEventListener: (_: string, fn: () => void) => listeners.add(fn), removeEventListener: (_: string, fn: () => void) => listeners.delete(fn) };
+  vi.spyOn(window, "matchMedia").mockReturnValue(media as unknown as MediaQueryList);
+  await mount(); await click(button()); await edit(bodyInput(), "保留");
+  expect(dialog()!.getAttribute("aria-modal")).toBe("true"); expect(host.inert).toBe(true);
+  expect(document.documentElement.style.overflow).toBe("hidden");
+  await act(async () => { media.matches = false; listeners.forEach(fn => fn()); });
+  expect(bodyInput().value).toBe("保留"); expect(host.inert).toBe(false);
+  expect(document.documentElement.style.overflow).toBe("");
+  await click(dialog()!.querySelector(".feedback-close")!); expect(document.activeElement).toBe(button());
+});
+it("手机成功回到阅读关闭抽屉", async () => {
+  vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+  await mount(); await click(button()); await edit(bodyInput(), "测试"); await click(sendButton());
+  expect(sendButton().textContent).toBe("回到阅读");
+  await click(sendButton()); expect(dialog()).toBeNull(); expect(document.activeElement).toBe(button());
 });

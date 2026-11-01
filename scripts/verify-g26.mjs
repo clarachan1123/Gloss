@@ -111,8 +111,18 @@ async function refresh(cdp) {
   await waitForValue(()=>cdp.evaluate("document.readyState==='complete'&&!!document.querySelector('.mode-switch')"),'refresh');
   await readyReader(cdp);
 }
+async function visibleMode(cdp) {
+  await evalFn(cdp,()=>{
+    if(innerWidth>=768)return;
+    if(!document.querySelector('.reader-typography-sheet'))document.querySelector('.reader-typography-aa').click();
+  });
+  await settled(cdp);
+  await evalFn(cdp,()=>{const more=document.querySelector('.reader-more-typography');if(more?.getAttribute('aria-expanded')==='false')more.click();});
+}
 async function mode(cdp,label) {
-  await evalFn(cdp,label=>{const button=[...document.querySelectorAll('.mode-option')].find(b=>b.textContent.trim()===label);if(!button)throw Error('Missing mode '+label);button.click();},label);
+  await visibleMode(cdp);
+  await evalFn(cdp,label=>{const button=[...document.querySelectorAll('.mode-option')].find(b=>b.getClientRects().length&&b.textContent.trim()===label);if(!button)throw Error('Missing mode '+label);button.click();},label);
+  await evalFn(cdp,()=>document.querySelector('.reader-typography-sheet-header button')?.click());
   await settled(cdp);
 }
 async function sentence(cdp,index,last=false) {
@@ -147,7 +157,7 @@ function compare(before,after,label) {
   return max;
 }
 function layout(width) {
-  const label=document.querySelector('.mode-label'),buttons=[...document.querySelectorAll('.mode-option')],feedback=document.querySelector('.feedback-button'),back=document.querySelector('.reader-shelf-back');
+  const visible=el=>el.getClientRects().length;const label=[...document.querySelectorAll('.mode-label')].find(visible),buttons=[...document.querySelectorAll('.mode-option')].filter(visible),feedback=document.querySelector(innerWidth<768?'.reader-settings-feedback':'.feedback-button'),back=document.querySelector('.reader-shelf-back');
   const box=el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height,rects:el.getClientRects().length};};
   const l=box(label),b=buttons.map(box),f=box(feedback),r=box(back),overlap=(a,b)=>Math.min(a.right,b.right)>Math.max(a.left,b.left)&&Math.min(a.bottom,b.bottom)>Math.max(a.top,b.top);
   if(width>=768){for(const a of [l,...b])if(a.rects!==1)throw Error('Wrapped label/button '+JSON.stringify(a));const all=[l,...b,f,r];for(let i=0;i<all.length;i++)for(let j=i+1;j<all.length;j++)if(overlap(all[i],all[j]))throw Error('Sidebar overlap '+JSON.stringify({width,all,i,j}));}
@@ -159,7 +169,8 @@ async function checks(cdp,width) {
   for(const value of [null,'x','reading','review']) {
     await evalFn(cdp,value=>{if(value===null)localStorage.removeItem('gloss:settings:reading-mode');else localStorage.setItem('gloss:settings:reading-mode',value);},value);
     await refresh(cdp);
-    const selected=await evalFn(cdp,()=>document.querySelector('.mode-option[aria-pressed="true"]')?.textContent.trim());
+    await visibleMode(cdp);
+    const selected=await evalFn(cdp,()=>[...document.querySelectorAll('.mode-option[aria-pressed="true"]')].find(b=>b.getClientRects().length)?.textContent.trim());
     assert(selected===(value==='reading'?'收起':'显示'),'stored mode '+value+': '+selected);
   }
   await cdp.evaluate("localStorage.removeItem('gloss:settings:reading-mode')");await refresh(cdp);
@@ -194,7 +205,9 @@ async function checks(cdp,width) {
     // Establish collapsed state again so each fragment independently opens the saved region.
     await mode(cdp,'显示');await mode(cdp,'收起');
   }
+  await visibleMode(cdp);
   const boxes=await evalFn(cdp,layout,width);
+  await evalFn(cdp,()=>document.querySelector('.reader-typography-sheet-header button')?.click());
   console.log(JSON.stringify({width,storedModes:4,savedIndexes:SAVED,maxCharDelta:Math.max(removed,restored),characters:before.length,layout:boxes}));
 }
 async function run(width) {

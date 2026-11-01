@@ -153,7 +153,7 @@ function space(page) {
   const rect = el => { const r=el.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom}; };
   const text = el => { const r=document.createRange(); r.selectNodeContents(el); return rect(r); };
   if(page==="reader") {
-    const back=document.querySelector(".reader-shelf-back"), mode=document.querySelector(".mode-switch"), col=document.querySelector(".col-left");
+    const back=document.querySelector(".reader-shelf-back"), mode=[...document.querySelectorAll(".mode-switch")].find(el=>el.getClientRects().length), col=document.querySelector(".col-left");
     const cs=getComputedStyle(col), c=rect(col), b=rect(back), m=rect(mode), buttons=[...mode.querySelectorAll("button")].map(rect);
     return {viewport:document.documentElement.clientWidth,back:b,backText:text(back),mode:m,modeButtons:buttons,modeRightSpace:c.right-parseFloat(cs.paddingRight)-buttons.at(-1).right,body:rect(document.querySelector(".reader-body"))};
   }
@@ -221,6 +221,13 @@ async function checks(cdp,width,page) {
   assert(box.text==="体验反馈","button label");
   assert(box.button.x>=0&&box.button.y>=0&&box.button.right<=box.clientWidth&&box.button.bottom<=box.height,"button viewport "+JSON.stringify(box));
   assert(box.intersections.length===0,"button overlap "+JSON.stringify({width,page,...box}));
+  if(page==='reader'&&width>=1000) {
+    const footer=()=>evalFn(cdp,()=>{const col=document.querySelector('.col-left'),b=col.querySelector('.feedback-button').getBoundingClientRect(),content=col.querySelector('.reader-sidebar-content').getBoundingClientRect(),r=col.getBoundingClientRect();return b.bottom===r.bottom-parseFloat(getComputedStyle(col).paddingBottom)&&b.top>=content.bottom&&b.bottom<=innerHeight;});
+    assert(await footer(),'左栏反馈底部');
+    await evalFn(cdp,()=>{const list=document.querySelector('.saved-list')??document.querySelector('[aria-labelledby="saved-title"]');window.__g73dLong=document.createElement('div');__g73dLong.style.height='3000px';list.append(__g73dLong);document.querySelector('.reader-sidebar-content').scrollTop=100000;});
+    assert(await footer(),'长列表反馈仍在底部且不遮挡');
+    await evalFn(cdp,()=>{__g73dLong.remove();document.querySelector('.reader-sidebar-content').scrollTop=0;});
+  }
   if(page==="shelf") {
     const shelfFacts=()=>evalFn(cdp,()=>{const h=document.querySelector('.shelf-heading h1'),b=document.querySelector('.feedback-button'),n=document.querySelector('.shelf-count'),r=b.getBoundingClientRect(),a=n.getBoundingClientRect(),header=document.querySelector('.shelf-heading').getBoundingClientRect();return h.textContent==='我的书架'&&getComputedStyle(h).clipPath==='inset(50%)'&&h.getBoundingClientRect().width===1&&r.right===header.right-(innerWidth<768?12:0)&&r.left>=0&&(innerWidth<768||a.right<=r.left);});
     assert(await shelfFacts(),'书架读屏标题与页头按钮');
@@ -335,7 +342,9 @@ async function run(width, page) {
       await navigate(cdp,ORIGIN+"/"); await ready(cdp,".shelf-heading");
     }
     if(page==='reader')await ready(cdp,'.reader-body');
+    if(page==='reader'&&width<768){await click(cdp,'.reader-typography-aa');await click(cdp,'.reader-more-typography');}
     console.log(JSON.stringify({width,page,space:await evalFn(cdp,space,page)}));
+    if(page==='reader'&&width<768)await click(cdp,'.reader-typography-sheet-header button');
     if(!MEASURE) await checks(cdp,width,page);
     await assertSinglePage(browser,target.id,"finish:single-page");
   } finally {

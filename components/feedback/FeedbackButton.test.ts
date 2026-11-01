@@ -296,3 +296,49 @@ it("手机成功回到阅读关闭抽屉", async () => {
   expect(sendButton().textContent).toBe("回到阅读");
   await click(sendButton()); expect(dialog()).toBeNull(); expect(document.activeElement).toBe(button());
 });
+
+// 从可拖区域开始才接管手势，沿用关闭函数恢复焦点与背景。
+it.each([[79, false], [81, true]])("手机标题慢拖 %spx，关闭=%s", async (distance, closed) => {
+  vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList);
+  await mount(); await click(button());
+  const touch = async (type: string, y: number, stamp: number, target: Element) => {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperties(event, { touches: { value: type === "touchend" ? [] : [{ clientY: y }] }, timeStamp: { value: stamp } });
+    await act(async () => { target.dispatchEvent(event); });
+  };
+  const header = dialog()!.querySelector("h2")!;
+  await touch("touchstart", 0, 0, header); await touch("touchmove", distance, 1000, header); await touch("touchend", distance, 1001, header);
+  expect(!dialog()).toBe(closed);
+  if (closed) { expect(document.activeElement).toBe(button()); expect(host.inert).toBe(false); }
+});
+it("手机输入框起拖不关闭，快速标题下甩走现有关闭路径", async () => {
+  vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList);
+  await mount(); await click(button());
+  async function drag(target: Element, distance: number, duration: number) {
+    for (const [type,y,time] of [["touchstart",0,0],["touchmove",distance,duration],["touchend",distance,duration+1]] as const) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperties(event, { touches: { value: type === "touchend" ? [] : [{ clientY:y }] }, timeStamp: { value:time } });
+      await act(async () => { target.dispatchEvent(event); });
+    }
+  }
+  await drag(bodyInput(),100,1000); expect(dialog()).not.toBeNull();
+  await drag(dialog()!.querySelector("h2")!,20,20); expect(dialog()).toBeNull();
+  expect(document.activeElement).toBe(button()); expect(host.inert).toBe(false);
+});
+
+it("G73d 反馈慢拖79px回弹后第一次关闭恢复焦点", async () => {
+  vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+  await mount(); await click(button()); await edit(bodyInput(), "测试"); await click(sendButton());
+  await click(sendButton()); expect(document.activeElement).toBe(button());
+  await click(button()); await edit(bodyInput(), "测试"); await click(sendButton());
+  const title = dialog()!.querySelector("h2")!;
+  for (const [type,y,time] of [["touchstart",0,0],["touchmove",79,1000],["touchend",79,1001]] as const) {
+    const event = new Event(type, { bubbles:true, cancelable:true });
+    Object.defineProperties(event, { touches:{value:type==="touchend"?[]:[{clientY:y}]}, timeStamp:{value:time} });
+    await act(async()=>{title.dispatchEvent(event);});
+  }
+  expect(dialog()).not.toBeNull();
+  await click(sendButton());
+  expect(dialog()).toBeNull(); expect(document.activeElement).toBe(button()); expect(host.inert).toBe(false);
+});

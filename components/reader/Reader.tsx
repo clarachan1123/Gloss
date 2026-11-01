@@ -2263,7 +2263,38 @@ export default function Reader({ docId }: { docId: string }) {
       writeReaderTypography(next);
     });
   }
+  const settingsDrag = useRef<{ start: number; y: number; time: number; speed: number } | null>(null);
+  const settingsDragged = useRef(false);
+  const [settingsDragY, setSettingsDragY] = useState(0);
+  function settingsTouchStart(event: React.TouchEvent<HTMLDivElement>) {
+    settingsDragged.current = false;
+    settingsDrag.current = null; setSettingsDragY(0);
+    const target = event.target as Element;
+    if (window.innerWidth >= 768 || event.touches.length !== 1 || !target.closest(".reader-typography-sheet-header") || target.closest("button,input,textarea,select,a")) return;
+    const y = event.touches[0].clientY;
+    settingsDrag.current = { start: y, y, time: event.timeStamp, speed: 0 };
+    settingsDragged.current = false;
+  }
+  function settingsTouchMove(event: React.TouchEvent<HTMLDivElement>) {
+    const drag = settingsDrag.current;
+    if (!drag) return;
+    if (event.touches.length !== 1) { settingsDragged.current = false; settingsDrag.current = null; setSettingsDragY(0); return; }
+    const y = event.touches[0].clientY, elapsed = event.timeStamp - drag.time;
+    drag.speed = elapsed > 0 ? (y - drag.y) / elapsed : 0;
+    drag.y = y; drag.time = event.timeStamp;
+    settingsDragged.current ||= Math.abs(y - drag.start) > 4;
+    setSettingsDragY(Math.max(0, y - drag.start));
+  }
+  function settingsTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
+    const drag = settingsDrag.current;
+    settingsDragged.current = false;
+    settingsDrag.current = null; setSettingsDragY(0);
+    if (!drag || event.type === "touchcancel") return;
+    const distance = drag.y - drag.start;
+    if (distance > 80 || (distance >= 20 && event.timeStamp - drag.time <= 80 && drag.speed >= .5)) setTypographySheet(false);
+  }
   function setTypographySheet(open: boolean) {
+    if (!open) { settingsDragged.current = false; settingsDrag.current = null; setSettingsDragY(0); }
     if (open === mobileTypographyOpenRef.current) return;
     if (!open) endFontSizeAdjustment();
     if (open) for (const attempt of readAttemptRef.current.values()) attempt.clock.stop(performance.now());
@@ -2369,6 +2400,7 @@ export default function Reader({ docId }: { docId: string }) {
     <div className="shell" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("[data-selection-control]")) selectionEntryPointer.current = event.pointerType; }}>
       <aside className="col col-left">
         <Link href="/" className="wordmark">Gloss</Link>
+        <span className="reader-sidebar-brand">GLOSS</span>
         <Link href="/" className="reader-shelf-back" style={{ visibility: hasOwnBooks === null ? "hidden" : "visible" }}>
           <svg className="reader-back-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m14 5-7 7 7 7M7 12h14" /></svg>
           <span className="reader-back-text">{hasOwnBooks ? "← 回到书架" : "← 回到首页"}</span><span className="reader-mobile-back-label reader-sr-only">{hasOwnBooks ? "回到书架" : "回到首页"}</span></Link>
@@ -2378,7 +2410,7 @@ export default function Reader({ docId }: { docId: string }) {
         {mobileProgress && <div className="reader-mobile-progress-track" aria-hidden="true"><span style={{ width: `${mobileProgress.ratio * 100}%` }} /></div>}
         <FeedbackButton placement="reader" openRequest={feedbackRequest} returnFocus={feedbackReturnFocus} />
 
-        <div className="mode-switch" role="group" aria-label="留下的白话显示设置">
+        <div className="mode-switch reader-legacy-mode" role="group" aria-label="留下的白话显示设置">
           <span className="mode-label">留下的白话</span>
           <div className="mode-options">
             <button type="button" className="mode-option" aria-pressed={readingMode === "review"}
@@ -2397,13 +2429,19 @@ export default function Reader({ docId }: { docId: string }) {
           aria-label="阅读排版" aria-haspopup="dialog" aria-controls="reader-typography-sheet" aria-expanded={mobileTypographyOpen}
           onClick={() => setTypographySheet(!mobileTypographyOpenRef.current)}>Aa</button>
 
+        <div className="reader-sidebar-content">
         {doc && (
           <section className="side-section" aria-labelledby="doc-title">
             <h2 id="doc-title" className="side-title">
-              这份文档
+              <span className="reader-legacy-doc-label">这份文档</span><span className="reader-current-label">正在读</span>
             </h2>
             {doc.meta.fileName && <p className="side-file">{doc.meta.fileName}</p>}
+            <h3 className="reader-book-title">{doc.meta.fileName?.replace(/\.[^.]+$/, "") || "阅读"}</h3>
             <p className="side-stats">{documentStats(doc, sentences.length)}</p>
+            <div className="reader-book-stats">{documentStats(doc, sentences.length).split(" · ").map(part => {
+              const [number, label] = part.split(" ");
+              return <div key={label}><strong>{number}</strong><span>{label}</span></div>;
+            })}</div>
             {skippedLine && <p className="side-skipped">{skippedLine}</p>}
           </section>
         )}
@@ -2432,9 +2470,14 @@ export default function Reader({ docId }: { docId: string }) {
         </section>}
 
         <section className="side-section" aria-labelledby="saved-title">
-          <h2 id="saved-title" className="side-title">
-            留下的白话
-          </h2>
+          <div className="reader-saved-heading">
+          <h2 id="saved-title" className="side-title mode-label">留下的白话<span className="reader-saved-count"> · {savedItems.length}</span></h2>
+          <div className="mode-switch reader-sidebar-mode" role="group" aria-label="留下的白话显示设置">
+            <div className="mode-options">
+              <button type="button" className="mode-option" aria-pressed={readingMode === "review"} onClick={() => changeReadingMode("review")}>显示</button>
+              <button type="button" className="mode-option" aria-pressed={readingMode === "reading"} onClick={() => changeReadingMode("reading")}>收起</button>
+            </div>
+          </div></div>
           {savedItems.length === 0 ? (
             <p className="side-empty">点白话下面的「留下」，这句白话就固定下来，不会再变，并收在这里。</p>
           ) : (
@@ -2449,6 +2492,7 @@ export default function Reader({ docId }: { docId: string }) {
             </ol>
           )}
         </section>
+        </div>
       </aside>
 
       <main className="col col-main">
@@ -2545,7 +2589,11 @@ export default function Reader({ docId }: { docId: string }) {
         aria-label="阅读排版" aria-haspopup="dialog" aria-controls="reader-typography-sheet" aria-expanded={mobileTypographyOpen}
         onClick={event => { event.stopPropagation(); setTypographySheet(true); }}>Aa</button>
       {mobileTypographyOpen && <div ref={typographySheetRef} id="reader-typography-sheet" className="reader-typography-sheet"
-        data-reader-settings role="dialog" aria-labelledby="reader-typography-sheet-title">
+        data-reader-settings role="dialog" aria-labelledby="reader-typography-sheet-title"
+        data-dragging={settingsDrag.current !== null || undefined} style={{ translate: `0 ${settingsDragY}px` }}
+        onTouchStart={settingsTouchStart} onTouchMove={settingsTouchMove} onTouchEnd={settingsTouchEnd} onTouchCancel={settingsTouchEnd}
+        onPointerDownCapture={() => { settingsDragged.current = false; }}
+        onClickCapture={event => { if (settingsDragged.current) { settingsDragged.current = false; event.preventDefault(); event.stopPropagation(); } }}>
         <div className="reader-typography-sheet-header"><h2 id="reader-typography-sheet-title" tabIndex={-1}>阅读设置</h2>
           <button type="button" aria-label="关闭阅读设置" onClick={() => setTypographySheet(false)}>关闭</button></div>
         <MobileReaderSettings value={typography} onChange={changeTypography} onFontSizeChange={value => changeTypography(value, false, true)} onGestureStart={startTypographyGesture} onGestureEnd={endTypographyGesture}

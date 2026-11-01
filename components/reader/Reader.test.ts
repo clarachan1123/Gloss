@@ -1726,3 +1726,24 @@ describe("G-64a 选区确认提示", () => {
  it.each([1000,1001])("%i字确认门槛", chars=>{const value:SourceSelection={start:{paraIndex:0,offset:0},end:{paraIndex:0,offset:chars},text:"字".repeat(chars),autoPunctuation:"",chars,sentenceCount:2,kind:"range"};const host=document.createElement("div");host.innerHTML=renderToString(createElement(SelectionBar,{mobile:true,started:true,selection:value,onReselect:vi.fn(),onConfirm:vi.fn(),onExit:vi.fn()}));const confirm=[...host.querySelectorAll("button")].find(b=>b.textContent==="确定")!;expect(confirm.disabled).toBe(chars>1000);expect(host.textContent).toContain(chars>1000?"选得太长了，请缩短到 1000 字以内":"已选『");});
  it("起点后提示再点终点且没有结果操作",()=>{const html=renderToString(createElement(SelectionBar,{mobile:true,started:true,selection:null,onReselect:vi.fn(),onConfirm:vi.fn(),onExit:vi.fn()}));expect(html).toContain("再点终点");expect(html).not.toContain("留下");});
 });
+
+it("G73d 设置慢拖79px回弹后第一次关闭恢复焦点", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("innerWidth",375);
+  vi.spyOn(window,"matchMedia").mockImplementation(query=>({matches:query.includes("max-width"),addEventListener(){},removeEventListener(){}} as unknown as MediaQueryList));
+  const host=document.createElement("div");document.body.append(host);const root=createRoot(host);
+  const click=async(el:Element)=>{await act(async()=>{el.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));});};
+  try {
+    await act(async()=>{root.render(createElement(Reader,{docId:"sample"}));});
+    const aa=host.querySelector<HTMLButtonElement>(".reader-typography-aa")!;
+    await click(aa);await click(host.querySelector('.reader-typography-sheet-header button')!);expect(document.activeElement).toBe(aa);
+    await click(aa);const title=host.querySelector('.reader-typography-sheet-header h2')!;
+    for(const [type,y,time]of [["touchstart",0,0],["touchmove",79,1000],["touchend",79,1001]] as const){
+      const event=new Event(type,{bubbles:true,cancelable:true});Object.defineProperties(event,{touches:{value:type==="touchend"?[]:[{clientY:y}]},timeStamp:{value:time}});
+      await act(async()=>{title.dispatchEvent(event);});
+    }
+    expect(host.querySelector('.reader-typography-sheet')).not.toBeNull();
+    await click(host.querySelector('.reader-typography-sheet-header button')!);
+    expect(host.querySelector('.reader-typography-sheet')).toBeNull();expect(document.activeElement).toBe(aa);expect(aa.getAttribute('aria-expanded')).toBe('false');
+  } finally {await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals();}
+});

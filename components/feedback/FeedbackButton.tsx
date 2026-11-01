@@ -8,6 +8,9 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
   appearance?: "landing";
   placement?: "reader" | "shelf" | "inline"; openRequest?: number; returnFocus?: () => HTMLElement | null;
 }) {
+  const dragRef = useRef<{ start: number; y: number; time: number; speed: number } | null>(null);
+  const draggedRef = useRef(false);
+  const [dragY, setDragY] = useState(0);
   const contactId = useId();
   const [mobile, setMobile] = useState(false);
   const layerRef = useRef<HTMLDivElement>(null);
@@ -28,6 +31,8 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
   const close = useCallback(() => {
     copyRequestRef.current++;
     if (timerRef.current !== null) clearTimeout(timerRef.current);
+    draggedRef.current = false;
+    dragRef.current = null; setDragY(0);
     setOpen(false);
     setCopyState("ready");
     setStatus(value => value === "success" ? "idle" : value);
@@ -74,7 +79,7 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
       // offset 尺寸不受进入动画的 transform 影响。
       const w = card.offsetWidth, h = card.offsetHeight;
       const below = button.bottom + 8, above = button.top - h - 8;
-      const flipped = below + h > height - 16;
+      const flipped = (placement === "reader" && window.innerWidth >= 1000) || below + h > height - 16;
       const left = Math.max(16, Math.min(button.right - w, width - w - 16));
       card.style.left = left + "px";
       card.style.top = Math.max(16, Math.min(flipped ? above : below, height - h - 16)) + "px";
@@ -94,7 +99,7 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
       window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true);
       viewport?.removeEventListener("resize", place); viewport?.removeEventListener("scroll", place);
     };
-  }, [open, mobile, returnFocus]);
+  }, [open, mobile, returnFocus, placement]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -122,12 +127,38 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
     layer?.addEventListener("feedback-unlock", unlock);
     const wheel = (event: WheelEvent) => { if (!cardRef.current?.contains(event.target as Node)) event.preventDefault(); };
     let lastY = 0;
-    const touchStart = (event: TouchEvent) => { lastY = event.touches[0]?.clientY ?? 0; };
+    const touchStart = (event: TouchEvent) => {
+      draggedRef.current = false;
+      dragRef.current = null; setDragY(0);
+      lastY = event.touches[0]?.clientY ?? 0;
+      const target = event.target as Element;
+      if (event.touches.length !== 1 || !cardRef.current?.contains(target) || !target.closest(".feedback-grip,.feedback-header") || target.closest("button,input,textarea,select,a")) return;
+      draggedRef.current = false;
+      dragRef.current = { start: lastY, y: lastY, time: event.timeStamp, speed: 0 };
+    };
     const touchMove = (event: TouchEvent) => {
       const card = cardRef.current, y = event.touches[0]?.clientY ?? lastY, delta = y - lastY;
       lastY = y;
+      const drag = dragRef.current;
+      if (drag) {
+        if (event.touches.length !== 1) { draggedRef.current = false; dragRef.current = null; setDragY(0); return; }
+        const elapsed = event.timeStamp - drag.time;
+        drag.speed = elapsed > 0 ? (y - drag.y) / elapsed : 0;
+        drag.y = y; drag.time = event.timeStamp;
+        draggedRef.current ||= Math.abs(y - drag.start) > 4;
+        setDragY(Math.max(0, y - drag.start));
+        event.preventDefault(); return;
+      }
       if (!card?.contains(event.target as Node) || (delta > 0 && card.scrollTop <= 0) ||
           (delta < 0 && card.scrollTop + card.clientHeight >= card.scrollHeight)) event.preventDefault();
+    };
+    const touchEnd = (event: TouchEvent) => {
+      const drag = dragRef.current;
+      draggedRef.current = false;
+      dragRef.current = null; setDragY(0);
+      if (!drag || event.type === "touchcancel") return;
+      const distance = drag.y - drag.start;
+      if (distance > 80 || (distance >= 20 && event.timeStamp - drag.time <= 80 && drag.speed >= .5)) close();
     };
     const focus = () => {
       const card = cardRef.current, active = document.activeElement;
@@ -142,13 +173,16 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
     window.addEventListener("wheel", wheel, { passive: false });
     window.addEventListener("touchstart", touchStart, { passive: true });
     window.addEventListener("touchmove", touchMove, { passive: false });
+    window.addEventListener("touchend", touchEnd); window.addEventListener("touchcancel", touchEnd);
     return () => {
       unlock(); layer?.removeEventListener("feedback-unlock", unlock);
       layer?.removeEventListener("focusin", focus);
       viewport?.removeEventListener("resize", focus); viewport?.removeEventListener("scroll", focus);
+      draggedRef.current = false; dragRef.current = null;
+      window.removeEventListener("touchend", touchEnd); window.removeEventListener("touchcancel", touchEnd);
       window.removeEventListener("wheel", wheel); window.removeEventListener("touchstart", touchStart); window.removeEventListener("touchmove", touchMove);
     };
-  }, [open, mobile]);
+  }, [open, mobile, close]);
 
   useEffect(() => {
     if (!open) return;
@@ -247,10 +281,12 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
     <button ref={buttonRef} type="button" className="feedback-button" aria-label="体验反馈" aria-expanded={open} aria-haspopup="dialog" onClick={() => {
       if (open) close();
       else { setStatus(value => value === "success" ? "idle" : value); setOpen(true); }
-    }}>{placement === "shelf" || appearance === "landing" ? <><svg className="feedback-shelf-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg><span className="feedback-desktop-label">体验反馈</span><span className="feedback-mobile-label">{appearance === "landing" ? "体验反馈" : "反馈"}</span></> : "体验反馈"}</button>
+    }}>{placement === "reader" || placement === "shelf" || appearance === "landing" ? <><svg className="feedback-shelf-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg><span className="feedback-desktop-label">体验反馈</span>{placement !== "reader" && <span className="feedback-mobile-label">{appearance === "landing" ? "体验反馈" : "反馈"}</span>}</> : "体验反馈"}</button>
     {open && createPortal(<div ref={layerRef} className="feedback-layer">
       {mobile && <div className="feedback-backdrop" aria-hidden="true" />}
-      <div ref={cardRef} className={"feedback-card" + (mobile ? " feedback-sheet" : "")} onAnimationEnd={event => { if (event.target === event.currentTarget) event.currentTarget.dataset.entered = "true"; }} role="dialog" aria-label="体验反馈" aria-modal={mobile || undefined} tabIndex={-1}
+      <div ref={cardRef} className={"feedback-card" + (mobile ? " feedback-sheet" : "")} onAnimationEnd={event => { if (event.target === event.currentTarget) event.currentTarget.dataset.entered = "true"; }} style={{ translate: `0 ${dragY}px` }} data-dragging={dragRef.current !== null || undefined}
+        onPointerDownCapture={() => { draggedRef.current = false; }}
+        onClickCapture={event => { if (draggedRef.current) { draggedRef.current = false; event.preventDefault(); event.stopPropagation(); } }} role="dialog" aria-label="体验反馈" aria-modal={mobile || undefined} tabIndex={-1}
         onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
         onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
         <div className="feedback-grip" aria-hidden="true" />

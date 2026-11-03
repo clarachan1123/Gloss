@@ -1,3 +1,11 @@
+async function selectVisibleMode(c,label) {
+  const mobile=await c.evaluate("innerWidth<768");
+  const opened=mobile&&!await c.evaluate("!!document.querySelector('.reader-typography-sheet')");
+  if(opened){await c.evaluate("document.querySelector('.reader-typography-aa').click()");await settle(c);}
+  if(mobile){await c.evaluate("(()=>{const b=document.querySelector('.reader-more-typography');if(b?.getAttribute('aria-expanded')==='false')b.click()})()");await settle(c);}
+  await evaluate(c,label=>{const b=[...document.querySelectorAll('.mode-option')].find(e=>e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0&&e.textContent.trim()===label);if(!b)throw Error('缺少可见开关 '+label);b.click();},label);await settle(c);
+  if(opened){await c.evaluate("document.querySelector('.reader-typography-sheet-header button').click()");await settle(c);}
+}
 /**
  * G-66 production checks. Both services must run with local-test-invalid.
  * Run: node scripts/verify-g66.mjs
@@ -98,6 +106,7 @@ async function settle(cdp) { await cdp.evaluate("new Promise(r=>setTimeout(()=>r
 async function reload(cdp) { await cdp.call("Page.reload"); await ready(cdp); }
 async function close(cdp) { await cdp.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"); await settle(cdp); }
 async function choose(cdp, selector, label) {
+  if(selector===".mode-option"){await selectVisibleMode(cdp,label);return;}
   await evaluate(cdp, (selector, label) => {
     const cycle = document.querySelector(".reader-shape-cycle");
     if (selector.includes("白话显示形态") && cycle) { const name = label === "inline 小字" ? "小字" : label;
@@ -179,7 +188,7 @@ async function typographySamples(cdp, properties) {
     const add = (scope, prefix) => {
       [scope, ...scope.querySelectorAll("*")].forEach((el, i) => {
         const s = getComputedStyle(el);
-        samples.push({ key: prefix + ":" + i + ":" + el.tagName + ":" + el.className,
+        samples.push({ key: prefix + ":" + (el.matches(".action-row-save") ? "save" : el.matches(".action-row-explain") ? "explain" : el.matches(".action-row-notice") ? "notice" : el.tagName + ":" + el.className + ":" + i),
           values: Object.fromEntries(properties.map(p => [p, s[p]])) });
       });
     };
@@ -291,7 +300,7 @@ async function checks(cdp, width, branch) {
     report.operations.push(await operation(cdp, prefix + "点空白", "blank", 5));
     assert(await cdp.evaluate("document.querySelectorAll('.gloss-panel').length===0"), "Blank close");
     report.operations.push(await operation(cdp, prefix + "首次句末附近字", "click", 5, "end"));
-    await choose(cdp, '.gloss-panel[data-sentence-index="5"] .action-row-save', "留下");
+    await choose(cdp, '.gloss-panel[data-sentence-index="5"] .action-row-save', branch ? "收藏" : "留下");
     const saved = await cdp.evaluate("localStorage.getItem('gloss:saved:sample')");
     assert(saved, "Saved sample storage");
     await reload(cdp);

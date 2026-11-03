@@ -668,9 +668,9 @@ describe("G-15b 阅读器事件", () => {
 
     await click(container, ".action-row-save", 2_000);
     expect(of("gloss_save")).toEqual([{ event: "gloss_save", sentenceIndex: 0, edited: false }]);
-    expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("取消留下");
+    expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("取消收藏");
     await click(container, ".action-row-save", 3_000);
-    expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("留下");
+    expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("收藏");
     expect(of("gloss_save")).toHaveLength(1);
     expectAccepted(["deep_explain_click", "gloss_save"]);
   });
@@ -1737,7 +1737,7 @@ describe("G-70 重测保留逐字进度", () => {
 
 describe("G-64a 选区确认提示", () => {
  it.each([1000,1001])("%i字确认门槛", chars=>{const value:SourceSelection={start:{paraIndex:0,offset:0},end:{paraIndex:0,offset:chars},text:"字".repeat(chars),autoPunctuation:"",chars,sentenceCount:2,kind:"range"};const host=document.createElement("div");host.innerHTML=renderToString(createElement(SelectionBar,{mobile:true,started:true,selection:value,onReselect:vi.fn(),onConfirm:vi.fn(),onExit:vi.fn()}));const confirm=[...host.querySelectorAll("button")].find(b=>b.textContent==="确定")!;expect(confirm.disabled).toBe(chars>1000);expect(host.textContent).toContain(chars>1000?"选得太长了，请缩短到 1000 字以内":"已选『");});
- it("起点后提示再点终点且没有结果操作",()=>{const html=renderToString(createElement(SelectionBar,{mobile:true,started:true,selection:null,onReselect:vi.fn(),onConfirm:vi.fn(),onExit:vi.fn()}));expect(html).toContain("再点终点");expect(html).not.toContain("留下");});
+ it("起点后提示再点终点且没有结果操作",()=>{const html=renderToString(createElement(SelectionBar,{mobile:true,started:true,selection:null,onReselect:vi.fn(),onConfirm:vi.fn(),onExit:vi.fn()}));expect(html).toContain("再点终点");expect(html).not.toContain("收藏");});
 });
 
 it("G73d 设置慢拖79px回弹后第一次关闭恢复焦点", async () => {

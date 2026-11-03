@@ -1,5 +1,6 @@
 "use client";
 
+import BrandWordmark from "@/components/brand/BrandWordmark";
 import Link from "next/link";
 import localFont from "next/font/local";
 import FeedbackButton from "@/components/feedback/FeedbackButton";
@@ -17,9 +18,9 @@ const COPY = {
 } as const;
 const LANDING_STEPS = [
   ["句子太绕、结构复杂？", "点一下句子，原地转成大白话"],
-  ["还是不懂？", "点「听不懂」，结合前后文讲清这一句"],
+  ["还是不懂？", "点「脉络解读」，结合前后文讲清这一句"],
 ] as const;
-const MOBILE_STEPS = ["点一下句子，转成大白话", "还不懂？点「听不懂」，结合前后文讲清"];
+const MOBILE_STEPS = ["点一下句子，转成大白话", "还不懂？点「脉络解读」，结合前后文讲清"];
 
 // Strict Mode 会重放 effect；离开首页后的下一个任务才结束这次显示。
 let landingViewActive = false;
@@ -119,8 +120,9 @@ export default function Landing({ onImport, importButtonRef, importOpen = false 
   return (
     <main ref={pageRef} className={`landing-page${importOpen ? " landing-import-open" : ""}`}>
       <div className="landing-content">
+        <title>Glossline 句下</title>
         <header className="landing-header">
-          <span className="wordmark">GLOSS</span><FeedbackButton appearance="landing" />
+          <BrandWordmark className="wordmark" /><FeedbackButton appearance="landing" />
         </header>
         <div className="landing-layout">
         <div className="landing-copy">

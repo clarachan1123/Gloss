@@ -63,7 +63,8 @@ it("G-73b 单组按钮在演示后，平板与电脑由网格排序，手机吸�
     expect(css).toContain(":root:has(.landing-page) { scrollbar-gutter: stable; }");
     expect(css).toContain("grid-template-areas");
     expect(css).not.toContain("overflow-x: hidden");
-    expect(host.querySelector(".landing-header .wordmark")?.textContent).toBe("GLOSS");
+    expect(host.querySelector(".landing-header .wordmark")?.textContent).toBe("Glossline句下");
+    expect(host.querySelector(".landing-header .wordmark")?.textContent).not.toBe("GLOSS");
     expect(host.querySelector(".landing-supplement")).toBeNull();
     expect(host.querySelector(".landing-formats")?.textContent).toContain("书和白话只存在你的浏览器里");
     expect(host.querySelector(".landing-demo-header")?.textContent).toContain("再看一遍");
@@ -71,9 +72,9 @@ it("G-73b 单组按钮在演示后，平板与电脑由网格排序，手机吸�
     expect(host.querySelector(".landing-demo-header")!.nextElementSibling).toBe(compact);
     expect(compact.nextElementSibling?.matches("[data-demo-stub]")).toBe(true);
     expect(compact.querySelector("a,button,input,[tabindex]")).toBeNull();
-    const texts = ["句子太绕、结构复杂？点一下句子，原地转成大白话", "还是不懂？点「听不懂」，结合前后文讲清这一句"];
+    const texts = ["句子太绕、结构复杂？点一下句子，原地转成大白话", "还是不懂？点「脉络解读」，结合前后文讲清这一句"];
     expect([...host.querySelectorAll(".landing-step")].map(el => el.querySelector("div")?.textContent)).toEqual(texts);
-    expect([...compact.querySelectorAll(".landing-demo-step-text")].map(el => el.textContent)).toEqual(["点一下句子，转成大白话", "还不懂？点「听不懂」，结合前后文讲清"]);
+    expect([...compact.querySelectorAll(".landing-demo-step-text")].map(el => el.textContent)).toEqual(["点一下句子，转成大白话", "还不懂？点「脉络解读」，结合前后文讲清"]);
     for (const list of [host.querySelector(".landing-steps > ol")!, compact]) {
       expect(list.querySelectorAll("li")).toHaveLength(2);
       expect([...list.querySelectorAll("li > span:first-child")].map(el => [el.textContent, el.getAttribute("aria-hidden")])).toEqual([["1", "true"], ["2", "true"]]);
@@ -157,7 +158,7 @@ it("G-62 减少动态效果终态有两个 inert 演示按钮，真实入口列�
   try {
     expect([...host.querySelectorAll("a, button")].filter(el => !el.closest("[inert]")).map(el => el.textContent)).toEqual(["体验反馈体验反馈", "再看一遍", "读一段示例 →", "导入自己的书"]);
     const buttons = [...host.querySelectorAll(".landing-demo-panel-play button")];
-    expect(buttons.map(el => el.textContent)).toEqual(["留下", "听不懂"]);
+    expect(buttons.map(el => el.textContent)).toEqual(["收藏", "脉络解读"]);
     expect(buttons.every(el => !!el.closest("[inert]"))).toBe(true);
     expect(host.querySelectorAll(".landing-step")[1].classList.contains("landing-step-current")).toBe(true);
     expect(host.querySelectorAll(".landing-demo-step")[1].getAttribute("aria-current")).toBe("step");

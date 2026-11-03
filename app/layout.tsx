@@ -1,6 +1,7 @@
+import localFont from "next/font/local";
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { Cinzel, JetBrains_Mono } from "next/font/google";
+import { Cinzel, JetBrains_Mono, Cormorant_Garamond } from "next/font/google";
 import ThemeController from "@/components/ThemeController";
 import AnalyticsCollector from "@/components/AnalyticsCollector";
 import { READER_THEME_BOOTSTRAP } from "@/lib/reader-theme";
@@ -9,6 +10,10 @@ import "../styles/reader.css";
 import "../styles/shelf.css";
 import "../styles/landing.css";
 import "../styles/feedback.css";
+
+const chineseBrand = localFont({ src: "../components/brand/fonts/noto-serif-sc-brand-500.woff2", weight: "500", display: "swap", variable: "--font-brand-chinese", fallback: ["Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun", "serif"], adjustFontFallback: false });
+
+const brand = Cormorant_Garamond({ weight: "600", subsets: ["latin"], variable: "--font-brand", display: "swap" });
 
 const cinzel = Cinzel({
   subsets: ["latin"],
@@ -24,7 +29,6 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Gloss",
   description: "读难懂的中文哲学书时，点一下句子，就地给出大白话改写。",
 };
 
@@ -38,7 +42,7 @@ export default function RootLayout({
       lang="zh-CN"
       data-theme="parchment"
       suppressHydrationWarning
-      className={`${cinzel.variable} ${jetbrainsMono.variable}`}
+      className={`${cinzel.variable} ${jetbrainsMono.variable} ${brand.variable} ${chineseBrand.variable}`}
     >
       <head><script id="gloss-theme-bootstrap" dangerouslySetInnerHTML={{ __html: READER_THEME_BOOTSTRAP }} /></head>
       <body><ThemeController />{children}<Suspense fallback={null}><AnalyticsCollector /></Suspense></body>

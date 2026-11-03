@@ -176,11 +176,11 @@ async function checks(cdp,width) {
   await cdp.evaluate("localStorage.removeItem('gloss:settings:reading-mode')");await refresh(cdp);
   for(const index of SAVED) {
     await sentence(cdp,index);
-    await evalFn(cdp,index=>{const button=document.querySelector('.gloss-panel[data-sentence-index="'+index+'"] .action-row-save');if(button?.textContent.trim()!=='留下')throw Error('Missing save button '+index);button.click();},index);
+    await evalFn(cdp,index=>{const button=document.querySelector('.gloss-panel[data-sentence-index="'+index+'"] .action-row-save');if(button?.textContent.trim()!=='收藏')throw Error('Missing save button '+index);button.click();},index);
     await waitForValue(()=>cdp.evaluate("!!document.querySelector('.gloss-panel-saved[data-sentence-index=\""+index+"\"]')"),'saved '+index);
     await settled(cdp);
     const text=await evalFn(cdp,index=>document.querySelector('.gloss-panel-saved[data-sentence-index="'+index+'"] .action-row-save')?.textContent.trim(),index);
-    assert(text==='取消留下','saved action label '+index);
+    assert(text==='取消收藏','saved action label '+index);
   }
   await sentence(cdp,3);await retained(cdp,'other sentence');
   await cdp.evaluate("document.querySelector('.reader-body').click()");await settled(cdp);await retained(cdp,'blank body');

@@ -237,7 +237,7 @@ function metrics(frames,width,run,commits) {
   const fx=p.x-last.right,fy=p.y-last.y;
   check(fx>=0&&fx<=24&&p.y>=last.y&&p.y<=last.bottom&&p.x>=stage.x&&p.y>=stage.y&&p.right<=stage.right&&p.bottom<=stage.bottom,'f',width,run,{fx,fy,pointer:p,last,stage});
   check(final.explain===EXPECTED_EXPLANATION&&final.explainDisabled==='true','h',width,run);
-  check(final.buttons.length===2&&final.buttons.every(b=>b.inert)&&final.buttons.map(b=>b.text).join('|')==='留下|听不懂','inert buttons',width,run);
+  check(final.buttons.length===2&&final.buttons.every(b=>b.inert)&&final.buttons.map(b=>b.text).join('|')==='收藏|脉络解读','inert buttons',width,run);
   const phaseTimes=new Map();for(const frame of frames)if(!phaseTimes.has(frame.phase))phaseTimes.set(frame.phase,frame.t);
   for(const [phase,next,duration] of [['moving','clicking',650],['clicking','revealing',180],['gloss-ready','explain-moving',1600],['explain-moving','explain-clicking',700],['explain-clicking','explain-pending',260],['explain-pending','explain-revealing',700],['explain-complete','settled',600]]) {
     check(phaseTimes.has(phase)&&phaseTimes.has(next),'missing timing phase',width,run,{phase,next});

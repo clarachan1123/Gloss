@@ -240,9 +240,15 @@ async function escape(c) {
   await c.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await settle(c); await evaluate(c, () => __g69.inspect([]));
 }
-async function mode(c, label) {
-  await evaluate(c, label => { const button = [...document.querySelectorAll('.mode-option')].find(b => b.textContent.trim() === label); if (!button) throw Error('Missing mode '+label); button.click(); }, label); await settle(c);
+async function mode(c,label) {
+  const mobile=await c.evaluate("innerWidth<768");
+  const opened=mobile&&!await c.evaluate("!!document.querySelector('.reader-typography-sheet')");
+  if(opened){await c.evaluate("document.querySelector('.reader-typography-aa').click()");await settle(c);}
+  if(mobile){await c.evaluate("(()=>{const b=document.querySelector('.reader-more-typography');if(b?.getAttribute('aria-expanded')==='false')b.click()})()");await settle(c);}
+  await evaluate(c,label=>{const b=[...document.querySelectorAll('.mode-option')].find(e=>e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0&&e.textContent.trim()===label);if(!b)throw Error('缺少可见开关 '+label);b.click();},label);await settle(c);
+  if(opened){await c.evaluate("document.querySelector('.reader-typography-sheet-header button').click()");await settle(c);}
 }
+
 async function saved(c, index, save) {
   await wait(c, `!!document.querySelector('.gloss-panel[data-sentence-index="${index}"] .action-row-save:not(:disabled)')`, 'save action');
   await evaluate(c, index => document.querySelector('.gloss-panel[data-sentence-index="'+index+'"] .action-row-save').click(), index);

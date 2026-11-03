@@ -69,7 +69,7 @@ export default function ContextMenu({
           else if (explainStatus !== "loading" && explainStatus !== "streaming") onExplain();
         }}
       >
-        听不懂
+        脉络解读
       </button>
       <button
         type="button"

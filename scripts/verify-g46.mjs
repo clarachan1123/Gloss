@@ -292,7 +292,7 @@ async function runCase(cdp, id, name, index = 0) {
   await openSentence(cdp, id, index);
   await ready(cdp, index, name.startsWith("done") || name === "explain-visible" ? "done" : "busy");
   if (name === "explain-visible") {
-    await cdp.evaluate(`(() => {const p=document.querySelector('.gloss-panel[data-sentence-index="${index}"]'); [...p.querySelectorAll('button')].find(b=>b.textContent?.includes('听不懂'))?.click();})()`);
+    await cdp.evaluate(`(() => {const p=document.querySelector('.gloss-panel[data-sentence-index="${index}"]'); [...p.querySelectorAll('button')].find(b=>b.textContent?.includes('脉络解读'))?.click();})()`);
     await waitFor(() => cdp.evaluate(`document.querySelector('.gloss-panel[data-sentence-index="${index}"] .explain-result')?.getAttribute('aria-busy')==='true'`), "explanation request");
   }
   const before = await cdp.evaluate("({...window.__g46})");

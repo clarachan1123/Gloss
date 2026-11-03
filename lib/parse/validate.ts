@@ -224,7 +224,7 @@ export function noticeContent(code: NoticeCode, detail: NoticeDetail = {}): Noti
       return {
         code,
         tone: "block",
-        message: "这份 PDF 设置了打开密码，Gloss 读不了。请先在 PDF 阅读器里解除密码，另存一份再上传。",
+        message: "这份 PDF 设置了打开密码，Glossline 读不了。请先在 PDF 阅读器里解除密码，另存一份再上传。",
         offerPaste: false,
       };
     case "A5":
@@ -232,7 +232,7 @@ export function noticeContent(code: NoticeCode, detail: NoticeDetail = {}): Noti
         code,
         tone: "block",
         message:
-          "这份 PDF 看起来是扫描件：页面是图片，没有可以读取的文字，Gloss 目前处理不了。" +
+          "这份 PDF 看起来是扫描件：页面是图片，没有可以读取的文字，Glossline 目前处理不了。" +
           "扫描件的文字识别计划在 v2 支持。现在可以找这本书的文字版，或者复制正文改用粘贴文本。",
         offerPaste: true,
       };
@@ -271,7 +271,7 @@ export function noticeContent(code: NoticeCode, detail: NoticeDetail = {}): Noti
       return {
         code,
         tone: "banner",
-        message: "这份文本主要不是中文。Gloss 针对中文优化，其他语言的效果可能不理想。",
+        message: "这份文本主要不是中文。Glossline 针对中文优化，其他语言的效果可能不理想。",
         offerPaste: false,
       };
     case "A10": {

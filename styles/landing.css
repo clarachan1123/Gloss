@@ -147,3 +147,7 @@
 }
 @media (max-width: 390px) { .landing-demo-steps { padding-inline:16px; } }
 @media (prefers-reduced-motion: reduce) { .landing-step,.landing-step-number,.landing-step-answer,.landing-step-slider,.landing-demo-step,.landing-demo-step-number { transition:none; } }
+
+.landing-header .brand-wordmark { --brand-size: 26px; letter-spacing: normal; }
+.landing-header .brand-chinese { line-height: 1; }
+@media (max-width: 767.98px) { .landing-header .brand-wordmark { --brand-size: 22px; } }

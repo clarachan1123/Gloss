@@ -86,11 +86,167 @@ async function bubble(c,width){
   await settle(c);
 }
 async function checkSize(c,size,expected=true){const result=await evaluate(c,()=>[...document.querySelectorAll('.reader-body-reader .gloss-panel,.reader-body-reader .gloss-panel-text,.reader-body-reader .gloss-term,.reader-body-reader .explain-result-text,.reader-body-reader .action-row-save,.reader-body-reader .action-row-explain,.reader-body-reader .gloss-panel-note,.reader-body-reader .explain-result-note,.reader-body-reader .action-row-notice')].map(el=>({class:el.className,font:parseFloat(getComputedStyle(el).fontSize),line:parseFloat(getComputedStyle(el).lineHeight),spacing:getComputedStyle(el).letterSpacing})));assert(result.length,'Font samples exist');for(const r of result){const target=r.class.includes('action-row-notice')?12:(r.class.includes('panel-note')||r.class.includes('result-note'))?Math.max(14,size*.8)*.85:Math.max(14,size*.8);assert(Math.abs(r.font-target)<1e-6,'A gloss formula',{size,target,r});if(r.class==='gloss-panel-text')assert(Math.abs(r.line/r.font-2.05)<1e-6,'Panel line multiplier',r);}if(expected)report.A++;return result;}
-async function snapshot(c){return evaluate(c,()=>{for(const a of document.getAnimations()){a.pause();a.currentTime=0;}const skip=new Set(['SCRIPT','STYLE','LINK','META','TITLE','NEXT-ROUTE-ANNOUNCER']);return[...document.querySelectorAll('html,body,body *')].filter(el=>!skip.has(el.tagName)).map((el,i)=>({key:i+':'+el.tagName+':'+el.className,styles:[null,'::before','::after'].map(p=>{const s=getComputedStyle(el,p);return Object.fromEntries([...s].filter(k=>k!=='--reader-gloss-font-size').map(k=>[k,s.getPropertyValue(k)]));}),derived:getComputedStyle(el).getPropertyValue('--reader-gloss-font-size')}));});}
-function compareStyles(base,actual,label){assert(base.length===actual.length,'B DOM node count '+label,{base:base.length,actual:actual.length});let vars=0;for(let i=0;i<base.length;i++){assert(base[i].key===actual[i].key,'B DOM identity '+label,{i,base:base[i].key,actual:actual[i].key});for(let p=0;p<3;p++){const keys=new Set([...Object.keys(base[i].styles[p]),...Object.keys(actual[i].styles[p])]);for(const k of keys)assert(base[i].styles[p][k]===actual[i].styles[p][k],'B standard/old custom computed style',{label,node:actual[i].key,pseudo:p,property:k,base:base[i].styles[p][k],actual:actual[i].styles[p][k]});}if(base[i].derived!==actual[i].derived)vars++;}report.B++;report.styles.push({label,nodes:actual.length,standardDifferences:0,newVariableDifferences:vars});}
+
+function ownedShelfState(){
+  const visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';};
+  return !document.querySelector('.landing-secondary')&&[...document.querySelectorAll(innerWidth<768?'.mobile-book,.mobile-current':'.book-slot')].some(visible);
+}
+const adaptationNegatives=new Set();
+async function ownedShelf(c,width){
+  await wait(c,'('+ownedShelfState.toString()+')()','owned shelf');
+  const key='owned-shelf-'+width;if(adaptationNegatives.has(key))return;
+  const state=await evaluate(c,()=>{
+    const nodes=[...document.querySelectorAll(innerWidth<768?'.mobile-book,.mobile-current':'.book-slot')];
+    window.__g70ShelfNodes=nodes.map(el=>[el,el.style.display]);for(const el of nodes)el.style.display='none';
+  });
+  let detected=false;try{detected=!await evaluate(c,ownedShelfState);}finally{await evaluate(c,()=>{for(const [el,value] of window.__g70ShelfNodes)el.style.display=value;delete window.__g70ShelfNodes;});}
+  assert(detected,'当前断点书单准备负对照');adaptationNegatives.add(key);report.negative.push({adaptation:key,detected});
+}
+function brandingFacts(){
+  const css=el=>getComputedStyle(el),rect=el=>{const r=el.getBoundingClientRect();return{x:r.x,y:r.y,w:r.width,h:r.height,b:r.bottom};};
+  const root=document.documentElement,oldTheme=root.dataset.theme,tokens=[];
+  for(const theme of ['parchment','moon-white','eye-green','dark']){
+    root.dataset.theme=theme;const s=css(root);tokens.push({theme,english:s.getPropertyValue('--brand-english').trim(),lockup:s.getPropertyValue('--brand-lockup').trim()});
+  }root.dataset.theme=oldTheme;
+  const probe=document.createElement('span');document.body.append(probe);probe.style.fontFamily='var(--font-brand)';const englishFont=css(probe).fontFamily;probe.style.fontFamily='var(--font-brand-chinese)';const chineseFont=css(probe).fontFamily;
+  const color=token=>{probe.style.color='var('+token+')';return css(probe).color;};
+  const rows=[...document.querySelectorAll('.brand-wordmark')].map(el=>{
+    const en=el.querySelector('.brand-english'),zh=el.querySelector('.brand-chinese'),reader=!!el.closest('.col-left'),size=reader?20:el.closest('.shelf-brand-footer')?18:el.closest('.landing-header')&&innerWidth<768?22:26;
+    const s=css(en),z=zh&&css(zh);return{reader,size,text:en.textContent,font:s.fontFamily,weight:s.fontWeight,fontSize:parseFloat(s.fontSize),color:s.color,expectedColor:color(reader?'--ink':'--brand-english'),en:rect(en),zh:zh?{text:zh.textContent,font:z.fontFamily,weight:z.fontWeight,size:z.fontSize,color:z.color,expectedColor:color('--gloss'),spacing:z.letterSpacing,margin:z.marginRight,...rect(zh)}:null};
+  });
+  const h=document.querySelector('.shelf-heading'),mobileHeader=h&&innerWidth<768?{title:document.querySelector('.shelf-mobile-title')?.textContent,size:css(document.querySelector('.shelf-mobile-title')).fontSize,weight:css(document.querySelector('.shelf-mobile-title')).fontWeight,lockup:rect(document.querySelector('.brand-lockup')),role:document.querySelector('.brand-lockup').getAttribute('role'),label:document.querySelector('.brand-lockup').getAttribute('aria-label'),gap:css(document.querySelector('.shelf-mobile-brand')).gap,feedback:rect(h.querySelector('[aria-label="体验反馈"]')),icon:!!h.querySelector('[aria-label="体验反馈"] svg'),footer:!!document.querySelector('.shelf-brand-footer')}:null;
+  probe.remove();return{englishFont,chineseFont,tokens,rows,mobileHeader};
+}
+function assertBranding(f){
+  for(const t of f.tokens){assert(t.english.toLowerCase()===(t.theme==='dark'?'#e4ded3':'#233448'),'品牌英文 token',t);assert(t.lockup.includes(t.theme==='dark'?'/brand/brand-lockup-dark.png':'/brand/brand-lockup.png'),'品牌图片 token',t);}
+  assert(f.rows.length>0,'品牌节点存在');
+  for(const r of f.rows){assert(r.text==='Glossline'&&r.font===f.englishFont&&r.weight==='600'&&r.fontSize===r.size&&r.color===r.expectedColor,'品牌英文规格',r);assert(r.reader?!r.zh:!!r.zh,'阅读页只放英文',r);
+    if(r.zh){const z=r.zh;assert(z.text==='句下'&&z.font===f.chineseFont&&z.weight==='500'&&z.size==='11px'&&z.color===z.expectedColor&&z.spacing==='5.5px'&&z.margin==='-5.5px','品牌中文规格',r);if(r.en.w&&z.w)assert(z.y>=r.en.b&&Math.abs(z.x+z.w/2-r.en.x-r.en.w/2)<3,'品牌上下居中',r);}
+  }
+  if(f.mobileHeader){const h=f.mobileHeader;assert(h.title==='我的书架'&&h.size==='20px'&&Number(h.weight)>=600&&h.lockup.w===59&&h.lockup.h===36&&h.role==='img'&&h.label==='Glossline 句下'&&h.gap==='10px'&&h.feedback.w===44&&h.feedback.h===44&&h.icon&&h.footer,'手机书架页头与落款规格',h);}
+}
+async function checkBranding(c){
+  if(!await c.evaluate("!!document.querySelector('.brand-wordmark')"))return;
+  const facts=await evaluate(c,brandingFacts);assertBranding(facts);
+  const kind=await c.evaluate("innerWidth+':'+(document.querySelector('.shelf-page')?'shelf':document.querySelector('.landing-page')?'landing':'reader')");
+  if(adaptationNegatives.has('brand-'+kind))return;
+  for(const field of ['english','chinese','token','lockup','header']){
+    if(field==='chinese'&&!facts.rows.some(r=>r.zh)||field==='header'&&!facts.mobileHeader)continue;
+    const changed=structuredClone(facts);
+    if(field==='english')changed.rows[0].font='Cinzel';
+    if(field==='chinese')changed.rows.find(r=>r.zh).zh.font='serif';
+    if(field==='token')changed.tokens[0].english='#000000';
+    if(field==='lockup')changed.tokens.find(t=>t.theme==='dark').lockup='url(/brand/brand-lockup.png)';
+    if(field==='header')changed.mobileHeader.feedback.w=43;
+    let detected=false;try{assertBranding(changed);}catch{detected=true;}
+    assert(detected,'品牌独立判据负对照 '+field);report.negative.push({adaptation:'brand-'+kind+'-'+field,detected});
+  }
+  adaptationNegatives.add('brand-'+kind);
+}
+
+async function snapshot(c){
+  await checkBranding(c);
+  return evaluate(c,()=>{
+    for(const a of document.getAnimations()){a.pause();a.currentTime=0;}
+    const skip=new Set(['SCRIPT','STYLE','LINK','META','TITLE','NEXT-ROUTE-ANNOUNCER']);
+    const separate='.wordmark,.reader-sidebar-brand,.brand-wordmark,.shelf-mobile-brand,.shelf-brand-footer'+(innerWidth<768?',.shelf-heading':'');
+    const newVariables=new Set(['--brand-english','--brand-lockup','--font-brand','--font-brand-chinese']);
+    const selector='.action-row-save,.action-row-explain,.action-row-notice,.landing-step-answer,.landing-demo-step-text,.mode-label,.reader-saved-empty,.saved-empty';
+    const protectedNode=el=>el.matches('.reader-body,.reader-body-reader,.sentence,.gloss-panel-text,.explain-result-text,.shell,.col-middle')||!!el.closest('.sentence,.gloss-panel-text,.explain-result-text');
+    const nodes=[...document.querySelectorAll('html,body,body *')].filter(el=>!skip.has(el.tagName)&&!el.closest(separate));
+    const readStyles=el=>[null,'::before','::after'].map(p=>{const s=getComputedStyle(el,p);return Object.fromEntries([...s].filter(k=>k!=='--reader-gloss-font-size'&&!newVariables.has(k)).map(k=>[k,s.getPropertyValue(k)]));});
+    const box=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return{x:r.x,y:r.y,w:r.width,h:r.height,visible:r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none',scroll:el.scrollWidth,client:el.clientWidth};};
+    const rows=nodes.map((el,i)=>({key:i+':'+el.tagName+':'+(el.tagName==='HTML'?'':el.className),styles:readStyles(el),derived:getComputedStyle(el).getPropertyValue('--reader-gloss-font-size'),box:box(el),viewport:innerWidth}));
+    const affected=new Set(),changes=[],baseline=!document.querySelector('.brand-wordmark');
+    const replacements=[['听不懂','脉络解读'],['取消留下','取消收藏'],['留下的白话','收藏的白话'],['留下','收藏']];
+    for(const el of document.querySelectorAll(selector)){
+      if(protectedNode(el)||el.closest(separate))continue;
+      for(const node of el.childNodes){if(node.nodeType!==Node.TEXT_NODE)continue;const before=node.nodeValue;let after=before;
+        if(baseline)for(const [oldName,newName] of replacements)after=after.replaceAll(oldName,newName);
+        if(!baseline&&!/脉络解读|收藏/.test(before)||baseline&&before===after)continue;
+        changes.push([node,before,after]);affected.add(el);
+        if(el.parentElement){affected.add(el.parentElement);for(const sibling of el.parentElement.children)affected.add(sibling);}
+      }
+    }
+    try{
+      if(baseline)for(const [node,,after] of changes)node.nodeValue=after;
+      for(let i=0;i<nodes.length;i++){const el=nodes[i];if(!affected.has(el)||protectedNode(el))continue;
+        rows[i].textLayout=true;rows[i].referenceStyles=baseline?readStyles(el):null;rows[i].expectedBox=baseline?box(el):null;
+        const siblings=[...el.parentElement?.children??[]].filter(other=>other!==el&&!other.contains(el)&&!el.contains(other));
+        rows[i].overlap=siblings.some(other=>{const a=box(el),b=box(other);return a.visible&&b.visible&&Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x)>.5&&Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y)>.5;});
+      }
+    }finally{for(const [node,before] of changes)node.nodeValue=before;}
+    return rows;
+  });
+}
+
+function unchangedStylesNegative(rows,width){
+  nodeIdentityNegative(rows,width);
+  const key='unchanged-styles-'+width;if(adaptationNegatives.has(key))return;
+  const control=rows.map(row=>({...row,textLayout:false,referenceStyles:null}));
+  const changed=structuredClone(control),index=changed.findIndex(row=>row.key.includes(':reader-body ' )||row.key.includes(':reader-body-reader'));
+  assert(index>=0,'未改正文节点负对照对象存在');changed[index].styles[0].color='rgb(1, 2, 3)';
+  let detected=false;try{compareStyles(control,changed,'负对照');}catch(error){detected=error.message.startsWith('B standard/old custom computed style');}
+  assert(detected,'未改正文属性仍逐项比较负对照');report.negative.push({adaptation:key,detected});adaptationNegatives.add(key);
+}
+function normalizeBuildKey(key){
+  return key.replace(/[^\s:]*-module__([A-Za-z0-9_$]+)__([A-Za-z0-9_$-]+)/g,'$1_$2');
+}
+function nodeIdentityNegative(rows,width){
+  const key='build-node-identity-'+width;if(adaptationNegatives.has(key))return;
+  assert(normalizeBuildKey('14:H1:titlefont_560e4402-module__PZ6qqW__className')===normalizeBuildKey('14:H1:PZ6qqW_className'),'构建类名规范化正对照');
+  assert(new Set(['titlefont_560e4402-module__PZ6qqW__className','titlefont_560e4402-module__ABC123__className','titlefont_560e4402-module__PZ6qqW__other'].map(normalizeBuildKey)).size===3,'构建类名规范化保留唯一标识与局部类名');
+  const control=rows.map(row=>({...row,textLayout:false,referenceStyles:null}));
+  const changed=structuredClone(control),index=changed.findIndex(row=>row.key.includes(':reader-body ' )||row.key.includes(':reader-body-reader'));
+  assert(index>=0,'节点身份负对照对象存在');changed[index].key=changed[index].key.replace(/:\w+:/,':SECTION:');
+  let detected=false;try{compareStyles(control,changed,'错误节点负对照');}catch(error){detected=error.message.startsWith('B DOM identity');}
+  assert(detected,'规范化后错误节点仍检出');report.negative.push({adaptation:key,detected});adaptationNegatives.add(key);
+}
+const TEXT_SIZE_PROPERTIES=new Set(['width','height','inline-size','block-size','perspective-origin','transform-origin']);
+function textLayoutCriterion(base,actual){
+  const expected=base.expectedBox,box=actual.box;
+  for(const field of ['x','y','w','h'])assert(Math.abs(box[field]-expected[field])<=.5,'改名尺寸与直接推移量',{key:base.key,field,old:base.box[field],expected:expected[field],actual:box[field]});
+  if(box.visible){assert(box.scroll<=box.client&&box.x>=-.5&&box.x+box.w<=actual.viewport+.5,'改名文字无溢出',{key:base.key,box});assert(!actual.overlap,'改名文字无重叠',base.key);}
+  for(const property of ['font-size','font-family','font-weight'])assert(base.styles[0][property]===actual.styles[0][property],'改名字体保持对照',{key:base.key,property});
+}
+function textSizeNegatives(base,actual,label){
+  const key='text-size-'+label;if(adaptationNegatives.has(key))return;
+  const index=base.findIndex((row,i)=>row.textLayout&&row.expectedBox?.visible&&actual[i].box.visible);
+  if(index<0)return;
+  const original=actual[index];
+  for(const fault of ['少字尺寸','多字尺寸','推移量','溢出','字号']){
+    const changed=structuredClone(original);
+    if(fault==='少字尺寸')changed.box.w-=1;
+    if(fault==='多字尺寸')changed.box.w+=1;
+    if(fault==='推移量')changed.box.x+=1;
+    if(fault==='溢出')changed.box.scroll=changed.box.client+1;
+    if(fault==='字号')changed.styles[0]['font-size']='1px';
+    let detected=false;try{textLayoutCriterion(base[index],changed);}catch{detected=true;}
+    assert(detected,'改名尺寸负对照 '+fault);report.negative.push({adaptation:key+'-'+fault,detected});
+  }adaptationNegatives.add(key);
+}
+function compareStyles(base,actual,label){
+  assert(base.length===actual.length,'B DOM node count '+label,{base:base.length,actual:actual.length});let vars=0;
+  for(let i=0;i<base.length;i++){
+    assert(normalizeBuildKey(base[i].key)===normalizeBuildKey(actual[i].key),'B DOM identity '+label,{i,base:base[i].key,actual:actual[i].key});
+    if(base[i].textLayout&&base[i].expectedBox)textLayoutCriterion(base[i],actual[i]);
+    for(let p=0;p<3;p++){
+      const keys=new Set([...Object.keys(base[i].styles[p]),...Object.keys(actual[i].styles[p])]);
+      for(const k of keys){
+        const expected=p===0&&base[i].referenceStyles&&TEXT_SIZE_PROPERTIES.has(k)?base[i].referenceStyles[p][k]:base[i].styles[p][k];
+        const value=actual[i].styles[p][k];
+        assert(expected===value,'B standard/old custom computed style',{label,node:actual[i].key,pseudo:p,property:k,base:expected,actual:value});
+      }
+    }
+    if(base[i].derived!==actual[i].derived)vars++;
+  }
+  textSizeNegatives(base,actual,label);
+  report.B++;report.styles.push({label,nodes:actual.length,standardDifferences:0,newVariableDifferences:vars});
+}
+
 async function defaultStates(c,nav,own,width){const out={};await evaluate(c,key=>localStorage.setItem(key,JSON.stringify({version:1,fontSize:21,lineHeight:1.75,lineChars:32,bodyFont:'sans',glossFont:'serif'})),KEY);await evaluate(c,id=>localStorage.removeItem('gloss:doc:'+id),own.split('/').at(-1));await nav('/');await wait(c,"!!document.querySelector('.landing-demo-visible .gloss-panel')",'landing demo panel');await wait(c,"document.querySelector('.landing-demo-visible .gloss-panel')?.dataset.state==='done'",'landing demo completed');assert(await c.evaluate("getComputedStyle(document.querySelector('.landing-demo-visible .gloss-panel')).fontSize")==='14px','Landing ignores stored 21px');out.landing=await snapshot(c);
     // Restore the actual imported document, preserving its parser output from this browser.
-    await evaluate(c,doc=>localStorage.setItem('gloss:doc:'+doc.docId,JSON.stringify(doc)),windowDocCache.get(c));await nav('/');await wait(c,"!!document.querySelector('.book-spine')&&!document.querySelector('.landing-secondary')",'owned shelf');out.shelf=await snapshot(c);
+    await evaluate(c,doc=>localStorage.setItem('gloss:doc:'+doc.docId,JSON.stringify(doc)),windowDocCache.get(c));await nav('/');await ownedShelf(c,width);out.shelf=await snapshot(c);
     await reset(c,nav,own);out.imported=await snapshot(c);await nav('/read/sample');await wait(c,"document.querySelector('.reader-body-reader')?.dataset.measuring==='false'",'sample');out.sample=await snapshot(c);await reset(c,nav,own);await openPanel(c,0);out.temporary=await snapshot(c);await click(c,'.action-row-save');out.savedInline=await snapshot(c);
     await bubble(c,width);out.savedBubble=await snapshot(c);
     await click(c,'.action-row-explain');await c.evaluate('__g70.gate=Infinity');await wait(c,"!!document.querySelector('.explain-result-text')",'explain text');await wait(c,"document.querySelector('.explain-result')?.getAttribute('aria-busy')==='false'",'explain completed');await settle(c);out.explain=await snapshot(c);
@@ -114,7 +270,29 @@ async function negative(c,nav,own,width){async function detects(label,inject,che
   await evaluate(c,key=>localStorage.setItem(key,JSON.stringify({...JSON.parse(localStorage.getItem(key)),fontSize:21})),KEY);await evaluate(c,id=>localStorage.removeItem('gloss:doc:'+id),own.split('/').at(-1));await nav('/');await wait(c,"!!document.querySelector('.landing-demo-visible .gloss-panel')",'negative landing');await detects('landing-leak',()=>style('.landing-demo-visible .gloss-panel{font-size:16.8px!important}'),async()=>assert(await c.evaluate("getComputedStyle(document.querySelector('.landing-demo-visible .gloss-panel')).fontSize")==='14px','Landing isolated'),remove);await evaluate(c,doc=>localStorage.setItem('gloss:doc:'+doc.docId,JSON.stringify(doc)),windowDocCache.get(c));
   await reset(c,nav,own);const glyph=await c.evaluate('__g19.glyphs().find(g=>g.char.trim())');await detects('original-one-pixel-shift',()=>style('.reader-body-reader .sentence{position:relative;left:1px}'),async()=>{const after=await evaluate(c,key=>__g19.rect(key),glyph.key);assert(after.x===glyph.x&&after.y===glyph.y,'Clicked glyph strict geometry');},remove);
 }
-async function layoutHash(c,nav,own){await reset(c,nav,own);await openPanel(c,0);await reset(c,nav,own);const snap=()=>[...document.querySelectorAll('.shell,.shell *')].filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity)!==0&&r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight;}).map(el=>{const r=el.getBoundingClientRect();return[el.tagName,r.x,r.y,r.width,r.height];});const before=await evaluate(c,snap);await openPanel(c,0);const after=await evaluate(c,snap);return{before:createHash('sha256').update(JSON.stringify(before)).digest('hex'),after:createHash('sha256').update(JSON.stringify(after)).digest('hex')};}
+async function layoutHash(c,nav,own){
+  await reset(c,nav,own);await openPanel(c,0);await reset(c,nav,own);
+  const snap=()=>{
+    const changes=[],baseline=!document.querySelector('.brand-wordmark');
+    if(baseline)for(const el of document.querySelectorAll('.action-row-save,.action-row-explain,.action-row-notice,.mode-label,.reader-saved-empty,.saved-empty')){
+      for(const node of el.childNodes){if(node.nodeType!==Node.TEXT_NODE)continue;const old=node.nodeValue;let text=old;for(const [a,b] of [['听不懂','脉络解读'],['取消留下','取消收藏'],['留下的白话','收藏的白话'],['留下','收藏']])text=text.replaceAll(a,b);if(text!==old){changes.push([node,old]);node.nodeValue=text;}}
+    }
+    try{return [...document.querySelectorAll('.shell,.shell *')].filter(el=>{
+      if(el.closest('.wordmark,.reader-sidebar-brand,.brand-wordmark'))return false;
+      const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity)!==0&&r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight;
+    }).map(el=>{const r=el.getBoundingClientRect();return[el.tagName,r.x,r.y,r.width,r.height];});}
+    finally{for(const [node,old] of changes)node.nodeValue=old;}
+  };
+  const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const before=await evaluate(c,snap);await openPanel(c,0);const after=await evaluate(c,snap);
+  if(!adaptationNegatives.has('layout-hash-body-1px')){
+    await evaluate(c,()=>{const el=document.querySelector('.reader-body-reader');window.__g70OldTransform=el.style.transform;el.style.transform='translateX(1px)';});
+    let detected;try{detected=hash(await evaluate(c,snap))!==hash(after);}finally{await evaluate(c,()=>{document.querySelector('.reader-body-reader').style.transform=window.__g70OldTransform;delete window.__g70OldTransform;});}
+    assert(detected,'整页几何哈希仍检出正文1px位移');report.negative.push({adaptation:'layout-hash-body-1px',detected});adaptationNegatives.add('layout-hash-body-1px');
+  }
+  return{before:hash(before),after:hash(after)};
+}
+
 // E inspects the existing Reader clock through the DOM owner; no product diagnostics.
 function installReveal(){
   const g=window.__g70;g.events=[];g.analyticsRequests=[];g.clockIds=new WeakMap();g.clockRefs=new Map();g.nextClockId=0;
@@ -179,7 +357,7 @@ async function revealChecks(c,nav,own,width,negative=false){
     console.log(JSON.stringify({criterionE:{...label,negative,fall,total,before:before.count,first:first.count,final:rows.at(-1).count,frames:t.frames.length}}));
   }
 }
-async function suite(origin,width,candidate,revealNegative=false){return launch(origin,width,async(c,nav,own)=>{windowDocCache.set(c,await evaluate(c,id=>JSON.parse(localStorage.getItem('gloss:doc:'+id)),own.split('/').at(-1)));const styles=await defaultStates(c,nav,own,width);const pointsResult=await points(c,nav,own);let hashes;if(width===1024)hashes=await layoutHash(c,nav,own);if(candidate){for(const size of SIZES)for(const saved of [false,true])for(const shape of ['inline','bubble']){await reset(c,nav,own,size);await openPanel(c,0);if(saved)await click(c,'.action-row-save');if(shape==='bubble'){await bubble(c,width);}await checkSize(c,size);}await locks(c,nav,own,width);await negative(c,nav,own,width);}if([375,768,1280].includes(width)&&(candidate||revealNegative))await revealChecks(c,nav,own,width,revealNegative);return{styles,points:pointsResult,hashes};},revealNegative);}
+async function suite(origin,width,candidate,revealNegative=false){return launch(origin,width,async(c,nav,own)=>{windowDocCache.set(c,await evaluate(c,id=>JSON.parse(localStorage.getItem('gloss:doc:'+id)),own.split('/').at(-1)));const styles=await defaultStates(c,nav,own,width);unchangedStylesNegative(styles.imported,width);const pointsResult=await points(c,nav,own);let hashes;if(width===1024)hashes=await layoutHash(c,nav,own);if(candidate){for(const size of SIZES)for(const saved of [false,true])for(const shape of ['inline','bubble']){await reset(c,nav,own,size);await openPanel(c,0);if(saved)await click(c,'.action-row-save');if(shape==='bubble'){await bubble(c,width);}await checkSize(c,size);}await locks(c,nav,own,width);await negative(c,nav,own,width);}if([375,768,1280].includes(width)&&(candidate||revealNegative))await revealChecks(c,nav,own,width,revealNegative);return{styles,points:pointsResult,hashes};},revealNegative);}
 
 async function diagnose(origin,order){return launch(origin,768,async(c,nav,own)=>{await reset(c,nav,own,17.5);await revealControls(c,768);await align(c,4);const ref=await c.evaluate('__g19.reference()');await evaluate(c,key=>__g70.start(key),ref.key);const steps=[];for(const value of [21,15]){const start=c.g70Diagnostics.length;await change(c,'fontSize',value);steps.push({value,diagnostic:c.g70Diagnostics.slice(start),state:await c.evaluate('({script:__g70.characterRect(__g70.trace.key),scriptBlocked:__g70.obstructed(__g70.trace.key),scrollY,observations:__g70.trace.observations})')});}await settle(c);const trace=await c.evaluate('__g70.end()');const row={origin,order,scriptKey:ref.key,dx:trace.after.x-trace.before.x,dy:trace.after.y-trace.before.y,steps,trace};console.log(JSON.stringify({diagnosis:row}));return row;});}
 if(process.env.G70_DIAG_ONLY==='1'){const rows=[];for(let order=1;order<=6;order++)rows.push(await diagnose(order%2?'http://127.0.0.1:3482':'http://127.0.0.1:3483',order));await writeFile(resolve(import.meta.dirname,'../tmp-g70-diagnosis.json'),JSON.stringify(rows,null,2));console.log('G-70 diagnosis collection completed');}

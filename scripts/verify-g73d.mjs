@@ -72,9 +72,9 @@ async function detailedSidebar(){
   check('.col-left',{paddingTop:'28px',paddingRight:'28px',paddingBottom:'32px',paddingLeft:'28px'});
   check('.reader-sidebar-content',{marginTop:'40px'});check('.reader-sidebar-content .side-section:not(:first-child)',{marginTop:'40px'});check('.col-left>.feedback-reader',{paddingTop:'40px',alignSelf:'flex-start'});
   check('.reader-shelf-back',{fontSize:'13px',color:gloss,minHeight:'36px',alignItems:'center'});
-  check('.reader-sidebar-brand',{fontSize:'14px',letterSpacing:'4.2px',alignItems:'center'});
+  check('.reader-sidebar-brand',{alignItems:'center'});
   const back=document.querySelector('.reader-shelf-back').getBoundingClientRect(),brand=document.querySelector('.reader-sidebar-brand').getBoundingClientRect();if(back.top+back.height/2!==brand.top+brand.height/2)errors.push('顶行垂直居中');
-  const probe=document.createElement('span');probe.style.fontFamily='var(--font-display)';document.body.append(probe);if(s('.reader-sidebar-brand').fontFamily!==getComputedStyle(probe).fontFamily)errors.push('GLOSS字体');probe.remove();
+  const probe=document.createElement('span');probe.style.fontFamily='var(--font-brand)';document.body.append(probe);if(s('.reader-sidebar-brand .brand-english').fontFamily!==getComputedStyle(probe).fontFamily)errors.push('Glossline字体');probe.remove();check('.reader-sidebar-brand .brand-english',{fontWeight:'600',fontSize:'20px'});if(document.querySelector('.col-left .brand-chinese'))errors.push('左栏不应显示句下');
   check('#doc-title',{fontSize:'12px',letterSpacing:'1.44px',color:gloss,fontWeight:'400',marginTop:'0px',marginRight:'0px',marginBottom:'8px',marginLeft:'0px',paddingBottom:'0px',borderBottomWidth:'0px',textDecorationLine:'none'});
   check('.reader-book-title',{marginTop:'0px',marginRight:'0px',marginBottom:'0px',marginLeft:'0px'});
   check('.reader-book-stats',{marginTop:'18px',paddingTop:'14px',borderTopWidth:'1px',borderTopColor:rule,columnGap:'18px',rowGap:'18px',justifyContent:'flex-start'});

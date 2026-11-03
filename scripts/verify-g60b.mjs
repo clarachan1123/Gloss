@@ -158,7 +158,7 @@ function space(page) {
     return {viewport:document.documentElement.clientWidth,back:b,backText:text(back),mode:m,modeButtons:buttons,modeRightSpace:c.right-parseFloat(cs.paddingRight)-buttons.at(-1).right,body:rect(document.querySelector(".reader-body"))};
   }
   if(page==="shelf") {
-    const h=document.querySelector(".shelf-heading .wordmark"), r=document.createRange(); r.selectNode(h.firstChild);
+    const h=document.querySelector(innerWidth<768?".shelf-mobile-brand":".shelf-heading .wordmark"), r=document.createRange(); r.selectNodeContents(h);
     return {viewport:document.documentElement.clientWidth,heading:rect(document.querySelector(".shelf-heading")),wordmark:rect(h),wordmarkText:rect(r),feedback:rect(document.querySelector('.shelf-heading .feedback-button'))};
   }
   return {header:rect(document.querySelector(".landing-header")),wordmark:rect(document.querySelector(".landing-header .wordmark")),viewport:document.documentElement.clientWidth,primary:rect(document.querySelector(".landing-primary")),secondary:rect(document.querySelector(".landing-secondary")),feedback:rect(document.querySelector(".landing-header .feedback-button"))};

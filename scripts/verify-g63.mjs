@@ -1,3 +1,11 @@
+async function selectVisibleMode(c,label) {
+  const mobile=await c.evaluate("innerWidth<768");
+  const opened=mobile&&!await c.evaluate("!!document.querySelector('.reader-typography-sheet')");
+  if(opened){await c.evaluate("document.querySelector('.reader-typography-aa').click()");await settle(c);}
+  if(mobile){await c.evaluate("(()=>{const b=document.querySelector('.reader-more-typography');if(b?.getAttribute('aria-expanded')==='false')b.click()})()");await settle(c);}
+  await evalFn(c,label=>{const b=[...document.querySelectorAll('.mode-option')].find(e=>e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0&&e.textContent.trim()===label);if(!b)throw Error('缺少可见开关 '+label);b.click();},label);await settle(c);
+  if(opened){await c.evaluate("document.querySelector('.reader-typography-sheet-header button').click()");await settle(c);}
+}
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -292,7 +300,7 @@ async function checks(cdp,width) {
   await evalFn(cdp,()=>document.querySelector('.gloss-panel[data-sentence-index="5"] .action-row-save').click());await settle(cdp);
   for(const index of [7,9])await click(cdp,index,'first',metrics,expected);
   for(const label of ['收起','显示']) {
-    await evalFn(cdp,label=>[...document.querySelectorAll('.mode-option')].find(b=>b.textContent.trim()===label).click(),label);await settle(cdp);
+    await selectVisibleMode(cdp,label);
     await evalFn(cdp,integrity,2,expected);
     if(label==='收起')assert(await cdp.evaluate("[...document.querySelectorAll('.sentence[data-index=\"5\"]')].every(s=>s.classList.contains('sentence-saved-collapsed'))"),'collapsed underline');
   }
@@ -337,7 +345,7 @@ async function diagnostic65(cdp,label) {
       measuring:document.querySelector('.reader-body')?.getAttribute('data-measuring'),
       sentence7:[...document.querySelectorAll('.sentence[data-index="7"]')].map(span=>({className:span.className,block:span.closest('[data-reader-block]')?.className??null,continuation:!!span.closest('.reader-para-cont'),placeholder:!!span.closest('.reader-tail-placeholder')})),
       panels:[...document.querySelectorAll('.gloss-panel')].map(panel=>Number(panel.dataset.sentenceIndex)),
-      mode:document.querySelector('.mode-option[aria-pressed="true"]')?.textContent.trim()};
+      mode:[...document.querySelectorAll('.mode-option[aria-pressed="true"]')].find(b=>b.getBoundingClientRect().height>0)?.textContent.trim()};
   });
   g65DiagnosticRecords.push({label,...state});
   await writeFile(new URL('../tmp-g65-diag.json',import.meta.url),JSON.stringify(g65DiagnosticRecords,null,2));
@@ -357,7 +365,7 @@ async function saved65(cdp,index) {
 async function checks65(cdp,width) {
   await cdp.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
   await cdp.call('Page.reload');await ready(cdp);await closeAll(cdp);
-  await evalFn(cdp,()=>[...document.querySelectorAll('.mode-option')].find(b=>b.textContent.trim()==='显示').click());await settle(cdp);
+  await selectVisibleMode(cdp,'显示');
   for(const index of [1,5,7]) {
     const saved=await saved65(cdp,index);
     if(!saved) {
@@ -370,7 +378,7 @@ async function checks65(cdp,width) {
     }
     await stable65(cdp);assert(await saved65(cdp,index),'G-65 preparation did not save '+index);
   }
-  await evalFn(cdp,()=>[...document.querySelectorAll('.mode-option')].find(b=>b.textContent.trim()==='收起').click());await settle(cdp);
+  await selectVisibleMode(cdp,'收起');
   await evalFn(cdp,()=>{
     window.__g65={events:[],hidden:document.hidden};
     addEventListener('gloss:analytics',event=>window.__g65.events.push(event.detail));
@@ -472,7 +480,7 @@ async function checks65(cdp,width) {
   const after=await evalFn(cdp,()=>Object.fromEntries(Object.keys(localStorage).filter(key=>key.startsWith('gloss:')).sort().map(key=>[key,localStorage.getItem(key)])));
   assert(after['gloss:saved:sample']===stored['gloss:saved:sample'],'G-65 saved storage changed');
   metrics.changedGlossKeys=[...new Set([...Object.keys(stored),...Object.keys(after)])].filter(key=>stored[key]!==after[key]).sort();
-  await evalFn(cdp,()=>[...document.querySelectorAll('.mode-option')].find(b=>b.textContent.trim()==='显示').click());await settle(cdp);
+  await selectVisibleMode(cdp,'显示');
   await stable65(cdp);
   const permanent=await evalFn(cdp,()=>[...document.querySelectorAll('.gloss-panel-saved')].map(p=>Number(p.dataset.sentenceIndex)).sort((a,b)=>a-b));
   assert(JSON.stringify(permanent)===JSON.stringify([1,5,7]),'G-65 permanent saved panels');

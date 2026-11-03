@@ -1,5 +1,6 @@
 "use client";
 
+import BrandWordmark from "@/components/brand/BrandWordmark";
 import Link from "next/link";
 import FeedbackButton from "@/components/feedback/FeedbackButton";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
@@ -326,13 +327,14 @@ export default function Shelf() {
 
   const importDialog = showImport && <div className="import-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeImport(); }}><section ref={importPanelRef} className={`import-panel${draggingImport ? " import-panel-dragging" : ""}`} role="dialog" aria-modal="true" aria-labelledby="import-title" tabIndex={-1} onDragOver={importDragOver} onDragLeave={importDragLeave} onDrop={importDrop}><header><h2 id="import-title">导入新书</h2><button type="button" className="import-close" aria-label="关闭导入新书弹窗" onClick={closeImport}>×</button></header><div className="import-drop-hint" aria-hidden="true">松开以上传文件</div><Upload droppedFile={droppedFile} onDroppedFileHandled={() => setDroppedFile(null)} onStorageFull={() => { closeImport(); shelfRef.current?.focus(); }} /><button type="button" className="paste-link" onClick={() => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()}>改用粘贴文本</button></section></div>;
 
-  if (status === "loading" || desktop === null) return <main className="shelf-loading" aria-label="正在读取书架" />;
-  if (status === "unavailable") return <main className="shelf-unavailable" role="alert">当前浏览器禁止本地存储，无法读取书架。</main>;
+  if (status === "loading" || desktop === null) return <main className="shelf-loading" aria-label="正在读取书架"><title>Glossline 句下</title></main>;
+  if (status === "unavailable") return <main className="shelf-unavailable" role="alert"><title>Glossline 句下</title>当前浏览器禁止本地存储，无法读取书架。</main>;
   if (!hasOwnBooks) return <><Landing onImport={() => setShowImport(true)} importButtonRef={importRef} importOpen={showImport} />{importDialog}</>;
 
   return (
     <main className="shelf-page">
-      <header className="shelf-heading"><span className="wordmark">GLOSS</span><h1 className="shelf-sr-only">我的书架</h1><div className="shelf-heading-right"><span className="shelf-count">本地书架 {entries.length} 本</span><FeedbackButton placement="shelf" /></div></header>
+      <title>Glossline 句下</title>
+      <header className="shelf-heading"><BrandWordmark className="wordmark" /><h1 className="shelf-sr-only">我的书架</h1><div className="shelf-mobile-brand"><span className="brand-lockup" role="img" aria-label="Glossline 句下" /><span className="shelf-mobile-title">我的书架</span></div><div className="shelf-heading-right"><span className="shelf-count">本地书架 {entries.length} 本</span><FeedbackButton placement="shelf" /></div></header>
       {recent && (desktop ? <Link className={desktop ? "continue-reading" : "mobile-current"} href={`/read/${recent.docId}`} onNavigate={() => enterFromShelf(recent, "continue")}><span className="continue-cover cloth" style={bookStyle(recent)} /><span className="continue-copy">{!desktop && <small>正在读</small>}<strong>{desktop ? `接着读《${recent.title}》` : recent.title}</strong><small>{recentRead}</small>{!desktop && <b>接着读 <span aria-hidden="true">→</span></b>}</span>{desktop && <span className="continue-action">继续阅读 <span aria-hidden="true">→</span></span>}</Link> : mobileSwipe(recent, <Link className={desktop ? "continue-reading" : "mobile-current"} href={`/read/${recent.docId}`} onNavigate={() => enterFromShelf(recent, "continue")}><span className="continue-cover cloth" style={bookStyle(recent)} /><span className="continue-copy">{!desktop && <small>正在读</small>}<strong>{desktop ? `接着读《${recent.title}》` : recent.title}</strong><small>{recentRead}</small>{!desktop && <b>接着读 <span aria-hidden="true">→</span></b>}</span>{desktop && <span className="continue-action">继续阅读 <span aria-hidden="true">→</span></span>}</Link>))}
       {desktop ? <section className={`shelf${overflowing ? " shelf-overflowing" : ""}`} ref={shelfRef} tabIndex={-1} aria-label="我的书架"><div className="shelf-track" ref={trackRef}>
         {entries.map(entry => {
@@ -347,6 +349,7 @@ export default function Shelf() {
       {menuId && entries.find((entry) => entry.docId === menuId) && createPortal(<div ref={menuRef} className="spine-menu" role="menu">{menuId !== SAMPLE_DOC_ID && <><span>换颜色</span><div>{BOOK_COLORS.map((_, index) => <button key={index} aria-label={`书色 ${index + 1}`} type="button" className="color-swatch" style={{ background: BOOK_COLORS[index] }} onClick={() => { setShelfColor(menuId, `book-${index}`); refresh(); setMenuId(null); }} />)}</div></>}{desktop && <button type="button" onClick={() => { setMenuId(null); setConfirmingId(menuId); }}>从书架移除</button>}</div>, document.body)}
       {desktop && displayed && <section className="book-detail"><div><h2>{displayed.title}</h2><p>{displayed.docId === SAMPLE_DOC_ID ? "瞿秋白 · 《社会哲学概论》1924 · 示例" : `${displayed.author ? displayed.author + " · " : ""}导入于 ${importDate(displayed.addedAt)}${details?.id === displayed.docId && details.format ? " · " + (details.format === "paste" ? "粘贴" : details.format) : ""}`}</p><dl>{displayed.docId !== SAMPLE_DOC_ID && <div><dt>上次读到</dt><dd>{displayed.lastOpenedAt === displayed.addedAt ? "还没打开过" : displayedRead}</dd></div>}{details?.id === displayed.docId && details.count !== undefined && <div><dt>已存白话</dt><dd>{details.count ? `${details.count} 处` : "还没有"}</dd></div>}{details?.id === displayed.docId && details.chars !== undefined && <div><dt>全文</dt><dd>{details.chars < 10000 ? `${details.chars} 字` : `${(details.chars/10000).toFixed(1)} 万字`}</dd></div>}</dl></div><button className="remove-book" onClick={() => setConfirmingId(displayed.docId)}>从书架移除</button></section>}
       {confirmingId && <section className="remove-confirm" role="dialog" aria-modal="true"><p>确定移除《{entries.find((item) => item.docId === confirmingId)?.title}》吗？{confirmingId === SAMPLE_DOC_ID ? "移除后不再出现在书架上，阅读位置与已存白话会保留。" : "移除后会删除这本书的正文、阅读位置、结构摘要、已存白话、整句理解和自动白话缓存。"}</p><div><button type="button" onClick={() => setConfirmingId(null)}>取消</button><button type="button" onClick={() => { const entry = entries.find((item) => item.docId === confirmingId); if (entry) void remove(entry); }}>确认移除</button></div></section>}
+      {!desktop && <div className="shelf-brand-footer" aria-hidden="true"><BrandWordmark /></div>}
       {importDialog}
     </main>
   );

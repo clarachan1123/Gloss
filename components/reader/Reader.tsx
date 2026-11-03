@@ -1,5 +1,6 @@
 "use client";
 
+import BrandWordmark from "@/components/brand/BrandWordmark";
 import Link from "next/link";
 import { readerProgress } from "@/lib/reader-progress";
 import { flushSync } from "react-dom";
@@ -2430,9 +2431,10 @@ export default function Reader({ docId }: { docId: string }) {
 
   return (
     <div className="shell" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("[data-selection-control]")) selectionEntryPointer.current = event.pointerType; }}>
+      <title>{doc ? (doc.meta.fileName?.replace(/\.[^.]+$/, "") || "阅读") + " · Glossline" : "Glossline 句下"}</title>
       <aside className="col col-left">
-        <Link href="/" className="wordmark">Gloss</Link>
-        <span className="reader-sidebar-brand">GLOSS</span>
+        <Link href="/" className="wordmark"><BrandWordmark englishOnly /></Link>
+        <span className="reader-sidebar-brand"><BrandWordmark englishOnly /></span>
         <Link href="/" className="reader-shelf-back" style={{ visibility: hasOwnBooks === null ? "hidden" : "visible" }}>
           <svg className="reader-back-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m14 5-7 7 7 7M7 12h14" /></svg>
           <span className="reader-back-text">{hasOwnBooks ? "← 回到书架" : "← 回到首页"}</span><span className="reader-mobile-back-label reader-sr-only">{hasOwnBooks ? "回到书架" : "回到首页"}</span></Link>
@@ -2442,8 +2444,8 @@ export default function Reader({ docId }: { docId: string }) {
         {mobileProgress && <div className="reader-mobile-progress-track" aria-hidden="true"><span style={{ width: `${mobileProgress.ratio * 100}%` }} /></div>}
         <FeedbackButton placement="reader" openRequest={feedbackRequest} returnFocus={feedbackReturnFocus} />
 
-        <div className="mode-switch reader-legacy-mode" role="group" aria-label="留下的白话显示设置">
-          <span className="mode-label">留下的白话</span>
+        <div className="mode-switch reader-legacy-mode" role="group" aria-label="收藏的白话显示设置">
+          <span className="mode-label">收藏的白话</span>
           <div className="mode-options">
             <button type="button" className="mode-option" aria-pressed={readingMode === "review"}
               onClick={() => changeReadingMode("review")}>
@@ -2503,15 +2505,15 @@ export default function Reader({ docId }: { docId: string }) {
 
         <section className="side-section" aria-labelledby="saved-title">
           <div className="reader-saved-heading">
-          <h2 id="saved-title" className="side-title mode-label">留下的白话<span className="reader-saved-count"> · {savedItems.length}</span></h2>
-          <div className="mode-switch reader-sidebar-mode" role="group" aria-label="留下的白话显示设置">
+          <h2 id="saved-title" className="side-title mode-label">收藏的白话<span className="reader-saved-count"> · {savedItems.length}</span></h2>
+          <div className="mode-switch reader-sidebar-mode" role="group" aria-label="收藏的白话显示设置">
             <div className="mode-options">
               <button type="button" className="mode-option" aria-pressed={readingMode === "review"} onClick={() => changeReadingMode("review")}>显示</button>
               <button type="button" className="mode-option" aria-pressed={readingMode === "reading"} onClick={() => changeReadingMode("reading")}>收起</button>
             </div>
           </div></div>
           {savedItems.length === 0 ? (
-            <p className="side-empty">点白话下面的「留下」，这句白话就固定下来，不会再变，并收在这里。</p>
+            <p className="side-empty">点白话下面的「收藏」，这句白话就固定下来，不会再变，并收在这里。</p>
           ) : (
             <ol className="saved-list">
               {savedItems.map(item => (

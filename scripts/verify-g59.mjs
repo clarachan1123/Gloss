@@ -1,3 +1,12 @@
+async function selectVisibleMode(c,label) {
+  const mobile=await c.evaluate("innerWidth<768");
+  const opened=mobile&&!await c.evaluate("!!document.querySelector('.reader-typography-sheet')");
+  if(opened){await c.evaluate("document.querySelector('.reader-typography-aa').click()");await settled(c);}
+  if(mobile){await c.evaluate("(()=>{const b=document.querySelector('.reader-more-typography');if(b?.getAttribute('aria-expanded')==='false')b.click()})()");await settled(c);}
+  await evalFnG75(c,label=>{const b=[...document.querySelectorAll('.mode-option')].find(e=>e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0&&e.textContent.trim()===label);if(!b)throw Error('缺少可见开关 '+label);b.click();},label);await settled(c);
+  if(opened){await c.evaluate("document.querySelector('.reader-typography-sheet-header button').click()");await settled(c);}
+}
+const evalFnG75=(c,fn,...args)=>c.evaluate("("+fn.toString()+")("+args.map(a=>JSON.stringify(a)).join(",")+")",true);
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -290,6 +299,7 @@ async function checkSentenceHover(cdp, width, index) {
   return {checks:targets.length,maxX,maxY};
 }
 async function clickButton(cdp,scope,label){
+  if(scope.includes('mode')&&['显示','收起'].includes(label)){await selectVisibleMode(cdp,label);return;}
   await cdp.evaluate(`(()=>{const cycle=document.querySelector(".reader-shape-cycle");if(${JSON.stringify(scope)}.includes("白话显示形态")&&cycle){if(!cycle.ariaLabel.includes("："+${JSON.stringify(label)}+"，"))cycle.click();return;}const b=[...document.querySelectorAll(${JSON.stringify(scope)}+' button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw new Error('Missing enabled button '+${JSON.stringify(label)});b.click();})()`,false,'click:button:'+label);await settled(cdp);
 }
 async function reload(cdp){await cdp.call('Page.reload',{},'reader:refresh');await waitForValue(()=>cdp.evaluate("document.readyState==='complete'&&!!window.__g59",false,'wait:refresh'),'refresh');await readyReader(cdp);}
@@ -331,10 +341,10 @@ async function runReader(cdp,width){
     noTail+=Number(result.noTail);
     console.log(JSON.stringify({width,index,maxAbsDeltaX:Math.max(result.maxX,result.lowerX,closed.maxX),maxAbsDeltaY:Math.max(result.maxY,closed.maxY),lowerDeltaYError:result.lowerYError,tail:result.noTail?'无尾巴':'尾行'}));
   }
-  await clickSentence(cdp,10);await clickButton(cdp,'.gloss-panel[data-sentence-index="10"]','留下');
+  await clickSentence(cdp,10);await clickButton(cdp,'.gloss-panel[data-sentence-index="10"]','收藏');
   await reload(cdp);await clickSentence(cdp,10);
   compare(baselines[10],await snap(cdp),10,width);
-  await clickButton(cdp,'.mode-switch','收起');await clickButton(cdp,'.mode-switch','显示');compare(baselines[10],await snap(cdp),10,width);
+  await clickButton(cdp,(width>=1000?'.reader-sidebar-mode':'.reader-legacy-mode'),'收起');await clickButton(cdp,(width>=1000?'.reader-sidebar-mode':'.reader-legacy-mode'),'显示');compare(baselines[10],await snap(cdp),10,width);
   await clickButton(cdp,'[aria-label="白话显示形态"]','气泡');compare(baselines[10],await snap(cdp),10,width);
   const b=boundary(baselines[10],10);
   const tailText=baselines[10].chars.filter(c=>c.para===b.para&&c.offset>=b.end&&c.offset<(b.split??b.paraEnd)).map(c=>c.char).join('');
@@ -351,8 +361,8 @@ async function runReader(cdp,width){
     if(a.para===b.para&&a.split===b.split){pair=[i,j];break;}
   }
   if(!pair)throw new Error('No same-split pair at width '+width);
-  await clickSentence(cdp,pair[0]);await clickButton(cdp,`.gloss-panel[data-sentence-index="${pair[0]}"]`,'留下');
-  await clickButton(cdp,'.mode-switch','收起');await clickButton(cdp,'.mode-switch','显示');const sequentialBefore=await snap(cdp);await clickSentence(cdp,pair[1]);
+  await clickSentence(cdp,pair[0]);await clickButton(cdp,`.gloss-panel[data-sentence-index="${pair[0]}"]`,'收藏');
+  await clickButton(cdp,(width>=1000?'.reader-sidebar-mode':'.reader-legacy-mode'),'收起');await clickButton(cdp,(width>=1000?'.reader-sidebar-mode':'.reader-legacy-mode'),'显示');const sequentialBefore=await snap(cdp);await clickSentence(cdp,pair[1]);
   const mixed=await snap(cdp);compare(sequentialBefore,mixed,pair[1],width);
   const visibleOriginal=original.chars.map(c=>c.char).join('');
   if(mixed.chars.map(c=>c.char).join('')!==visibleOriginal)fail('group',width,pair[1],'text',null,null,'real original is not present exactly once');

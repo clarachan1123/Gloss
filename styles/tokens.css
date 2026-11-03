@@ -20,6 +20,8 @@
 /* 羊皮纸（默认） */
 :root,
 [data-theme="parchment"] {
+  --brand-english: #233448;
+  --brand-lockup: url(/brand/brand-lockup.png);
   --shadow-feedback: rgba(75,61,30,.35);
   --overlay-feedback: rgba(20,18,16,.36);
   --feedback-input-bg: #FFFDF8;
@@ -71,6 +73,8 @@
 
 /* 月白 */
 [data-theme="moon-white"] {
+  --brand-english: #233448;
+  --brand-lockup: url(/brand/brand-lockup.png);
   --shadow-feedback: rgba(75,61,30,.35);
   --overlay-feedback: rgba(20,18,16,.36);
   --feedback-input-bg: #FFFDF8;
@@ -122,6 +126,8 @@
 
 /* 护眼绿 */
 [data-theme="eye-green"] {
+  --brand-english: #233448;
+  --brand-lockup: url(/brand/brand-lockup.png);
   --shadow-feedback: rgba(75,61,30,.35);
   --overlay-feedback: rgba(20,18,16,.36);
   --feedback-input-bg: #FFFDF8;
@@ -174,6 +180,8 @@
 
 /* 深色有意以较暗中栏、较亮侧栏分层。层板形状和混合率保持原样。 */
 [data-theme="dark"] {
+  --brand-english: #E4DED3;
+  --brand-lockup: url(/brand/brand-lockup-dark.png);
   --shadow-feedback: rgba(0,0,0,.55);
   --overlay-feedback: rgba(0,0,0,.55);
   --feedback-input-bg: var(--input-bg);

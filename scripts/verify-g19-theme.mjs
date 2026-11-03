@@ -33,7 +33,7 @@ async function colors(c,theme,from,page,width){
     const color=hex=>{const p=document.createElement('i');p.style.color=hex;document.body.append(p);const c=getComputedStyle(p).color;p.remove();return c;};
     const rows=[];
     const check=(name,selector,property,token)=>{const el=document.querySelector(selector);if(!el)throw Error('Missing element '+name+' '+selector);
-      const actual=getComputedStyle(el)[property],expected=color(tokens[theme][token]),previous=color(tokens[from][token]);
+      const actual=getComputedStyle(el)[property],expected=token==='transparent'?'rgba(0, 0, 0, 0)':color(tokens[theme][token]),previous=token==='transparent'?'rgba(0, 0, 0, 0)':color(tokens[from][token]);
       const residue=expected!==previous&&actual===previous;
       rows.push({name,selector,property,token,actual,expected,previous,residue,passed:actual===expected&&!residue});};
     if(page==='reader'){
@@ -41,21 +41,38 @@ async function colors(c,theme,from,page,width){
       check('正文','.reader-body','color','--text-body');check('白话','.gloss-panel:not(.gloss-panel-saved)','color','--gloss');
       check('已留下白话','.gloss-panel-saved','color','--saved-inline');check('术语','.gloss-term','color','--term');
       check('分隔线','.col-right','borderLeftColor','--rule');check('设置面板','.reader-tool > span:last-child','color','--gloss');
-      check('主题控件','.reader-paper-options','color','--ink');check('反馈按钮底色','.feedback-button','backgroundColor','--ink');
-      check('反馈按钮文字','.feedback-button','color','--paper-main');
+      check('主题控件','.reader-paper-options','color','--ink');check('反馈按钮底色','.feedback-button','backgroundColor',width>=1000?'transparent':'--ink');
+      check('反馈按钮文字','.feedback-button','color',width>=1000?'--ink':'--paper-main');
       if(width<768){check('Aa面板','.reader-typography-sheet','backgroundColor','--paper-side');check('Aa按钮边框','.reader-typography-aa','borderTopColor','--rule');}
     }else if(page==='shelf'){
       check('书架页面','body','backgroundColor','--paper-main');check('书架文字','.shelf-page','color','--ink');
     }else{
       check('落地页','.landing-page','backgroundColor','--paper-main');check('落地页文字','.landing-page','color','--ink');
       check('落地页演示卡片','.landing-demonstration','backgroundColor','--paper-side');
-      check('落地页演示正文','.landing-demo-visible','color','--text-body');check('落地页反馈底色','.feedback-button','backgroundColor','--ink');
+      check('落地页演示正文','.landing-demo-visible','color','--text-body');check('落地页反馈底色','.feedback-button','backgroundColor','transparent');
       check('落地页演示白话','.landing-demo-panel-play .gloss-panel','color','--gloss');
     }
     return rows;
   },theme,from,page,width,TOKENS);
   console.log(JSON.stringify({width,direction:from+'>'+theme,page,colors:result}));
   originalChecks+=result.length;assert(result.every(r=>r.passed),'Target token mismatch',result.filter(r=>!r.passed));return result;
+}
+async function feedbackOutlineNegative(c,width){
+  if(width<1000)return;
+  const valid=()=>{const b=document.querySelector('.feedback-button'),s=getComputedStyle(b),p=document.createElement('span');p.style.color='var(--ink)';document.body.append(p);const ink=getComputedStyle(p).color;p.remove();return s.backgroundColor==='rgba(0, 0, 0, 0)'&&s.color===ink;};
+  assert(await evaluate(c,valid),'描边反馈正对照');
+  for(const [property,value] of [['background-color','var(--ink)'],['color','var(--paper-main)']]){
+    await evaluate(c,(property,value)=>document.querySelector('.feedback-button').style.setProperty(property,value),property,value);
+    try{assert(!await evaluate(c,valid),'描边反馈负对照未检出 '+property);extraChecks++;console.log(JSON.stringify({width,negative:'描边反馈 '+property,detected:true}));}
+    finally{await evaluate(c,property=>document.querySelector('.feedback-button').style.removeProperty(property),property);}
+  }
+}
+async function landingFeedbackNegative(c,width){
+  const valid=()=>getComputedStyle(document.querySelector('.landing-header .feedback-button')).backgroundColor==='rgba(0, 0, 0, 0)';
+  assert(await evaluate(c,valid),'落地页描边入口正对照');
+  await c.evaluate("document.querySelector('.landing-header .feedback-button').style.backgroundColor='var(--ink)'");
+  try{assert(!await evaluate(c,valid),'落地页实心底色负对照未检出');extraChecks++;console.log(JSON.stringify({width,negative:'落地页反馈改回ink底色',detected:true}));}
+  finally{await c.evaluate("document.querySelector('.landing-header .feedback-button').style.removeProperty('background-color')");}
 }
 async function hover(c,width,theme,from){
   const r=await c.evaluate('window.__g19.reference()');await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:r.x+1,y:r.y+1});await settle(c);
@@ -89,7 +106,7 @@ async function pages(c,width,from,to){
   await c.evaluate("localStorage.removeItem('gloss:doc:g19-owned');localStorage.removeItem('gloss:shelf:v1')");
   await c.call('Page.navigate',{url:ORIGIN+'/'});await wait(c,"!!document.querySelector('.landing-demo-visible')");await settle(c);
   await wait(c,"!!document.querySelector('.landing-demo-panel-play .gloss-panel')");await settle(c);
-  await colors(c,to,from,'landing',width);
+  await colors(c,to,from,'landing',width);await landingFeedbackNegative(c,width);
 }
 async function cold(c,width,value){
   await evaluate(c,(key,value)=>{if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value);},KEY,value);
@@ -115,6 +132,22 @@ async function expectRoles(c, theme, cases, label) {
   extraChecks+=result.length;console.log(JSON.stringify({width:await c.evaluate('innerWidth'),theme,label,roles:result}));
   assert(result.every(r=>r.passed),'Role token mismatch '+label,result.filter(r=>!r.passed));
 }
+async function feedbackRoleNegatives(c,width,theme){
+  for(const [name,selector,property,oldToken,newToken,pseudo] of [['输入底色','.feedback-form textarea','backgroundColor','--input-bg','--feedback-input-bg',null],['占位文字','.feedback-form textarea','color','--placeholder','--feedback-placeholder','::placeholder'],['超字数文字','.feedback-error','color','--text-error','--feedback-error',null]]){
+    const facts=await evaluate(c,(selector,property,oldToken,newToken,pseudo)=>{const p=document.createElement('span');document.body.append(p);const color=t=>{p.style.color='var('+t+')';return getComputedStyle(p).color;};const old=color(oldToken),expected=color(newToken),actual=getComputedStyle(document.querySelector(selector),pseudo)[property];p.remove();return{old,expected,actual};},selector,property,oldToken,newToken,pseudo);
+    assert(facts.actual===facts.expected,'反馈角色正对照 '+name,facts);if(facts.old===facts.expected)continue;
+    await evaluate(c,(selector,property,oldToken,pseudo)=>{if(pseudo){const style=document.createElement('style');style.id='feedback-role-negative';style.textContent=selector+pseudo+' { color: var('+oldToken+') !important; }';document.head.append(style);}else document.querySelector(selector).style[property]='var('+oldToken+')';},selector,property,oldToken,pseudo);
+    try{const actual=await evaluate(c,(selector,property,pseudo)=>getComputedStyle(document.querySelector(selector),pseudo)[property],selector,property,pseudo);assert(actual!==facts.expected,'反馈角色旧token负对照未检出 '+name,{actual,...facts});extraChecks++;console.log(JSON.stringify({width,theme,negative:'反馈角色 '+name,detected:true}));}
+    finally{await evaluate(c,(selector,property,pseudo)=>{if(pseudo)document.querySelector('#feedback-role-negative').remove();else document.querySelector(selector).style[property]='';},selector,property,pseudo);}
+  }
+}
+async function landingSecondaryNegative(c,width,theme){
+  const valid=()=>{const b=document.querySelector('.landing-secondary'),s=getComputedStyle(b),p=document.createElement('span');p.style.color='var(--ink)';document.body.append(p);const ink=getComputedStyle(p).color;p.remove();return s.borderTopWidth==='0px'&&s.borderBottomWidth==='1px'&&s.borderBottomColor===ink;};
+  assert(await evaluate(c,valid),'落地页下划线次按钮正对照');
+  await c.evaluate("document.querySelector('.landing-secondary').style.borderBottomWidth='0px'");
+  try{assert(!await evaluate(c,valid),'次按钮下划线丢失负对照未检出');extraChecks++;console.log(JSON.stringify({width,theme,negative:'落地页次按钮去下划线',detected:true}));}
+  finally{await c.evaluate("document.querySelector('.landing-secondary').style.removeProperty('border-bottom-width')");}
+}
 async function appearance(c,width,value){
   if(width<768)await evaluate(c,value=>document.querySelector(`.reader-typography-sheet [data-reader-appearance="${value}"]`).click(),value);
   else for(let i=0;i<3&&await c.evaluate("localStorage.getItem('gloss:settings:appearance')||'system'")!==value;i++)await c.evaluate("document.querySelector('.reader-appearance-cycle').click()");
@@ -138,14 +171,24 @@ async function surfaceChecks(c,width,theme){
   if(width<768) {await c.evaluate("document.querySelector('[aria-label=\"关闭阅读设置\"]').click()");await settle(c);}
   if(await c.evaluate("!!document.querySelector('.reader-typography-popover')"))await c.evaluate("document.querySelector('.settings-typography-toggle').click()");
   if(width<768){await revealControls(c,width);await c.evaluate("document.querySelector('.reader-settings-feedback').click()");}else await c.evaluate("document.querySelector('.feedback-button').click()");await wait(c,"!!document.querySelector('.feedback-card textarea')");
-  await expectRoles(c,theme,[['卡片','.feedback-card','backgroundColor','--paper-main'],['输入','.feedback-form textarea','backgroundColor','--input-bg'],['占位','.feedback-form textarea','color','--placeholder','::placeholder'],['主按钮','.feedback-send','backgroundColor','--ink'],['主按钮字','.feedback-send','color','--paper-main']],'feedback');
+  await expectRoles(c,theme,[['卡片','.feedback-card','backgroundColor','--paper-main'],['输入','.feedback-form textarea','backgroundColor','--feedback-input-bg'],['占位','.feedback-form textarea','color','--feedback-placeholder','::placeholder'],['主按钮','.feedback-send','backgroundColor','--ink'],['主按钮字','.feedback-send','color','--paper-main']],'feedback');
   await evaluate(c,()=>{const t=document.querySelector('.feedback-form textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'甲'.repeat(1001));t.dispatchEvent(new Event('input',{bubbles:true}));});await settle(c);
-  await expectRoles(c,theme,[['超字数','.feedback-error','color','--text-error']],'feedback-error');
+  await expectRoles(c,theme,[['超字数','.feedback-error','color','--feedback-error']],'feedback-error');await feedbackRoleNegatives(c,width,theme);
   await c.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");await settle(c);
   await c.call('Page.navigate',{url:ORIGIN+'/'});await wait(c,"!!document.querySelector('.shelf-page')");await settle(c);
   await expectRoles(c,theme,[['书架','.shelf-page','color','--ink'],['导入虚线',width<768?'.mobile-list-heading button':'.import-spine',width<768?'color':'borderTopColor',width<768?'--hover':'--shelf-import-border']],'shelf');await ledge(c,width,theme,theme);originalChecks-=5;
   await c.evaluate("document.querySelector('.book-slot,.mobile-book').focus()");await settle(c);
-  await evaluate(c,()=>{const book=document.querySelector('.book-slot,.mobile-book');book.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));});await wait(c,"!!document.querySelector('.spine-menu')");await evaluate(c,()=>[...document.querySelectorAll('.spine-menu button')].find(b=>b.textContent==='从书架移除').click());await settle(c);
+  if(width<768){
+    await c.evaluate("document.querySelector('.mobile-book').closest('.mobile-swipe').querySelector('.mobile-more').click()");await settle(c);
+    const valid=()=>{const row=document.querySelector('.mobile-book').closest('.mobile-swipe'),actions=row.querySelector('.mobile-swipe-actions');return row.classList.contains('mobile-swipe-open')&&!actions.inert&&[...actions.querySelectorAll('button')].some(b=>b.textContent==='移除'&&!b.disabled);};
+    assert(await evaluate(c,valid),'手机书单更多操作可移除');
+    await c.evaluate("document.querySelector('.mobile-book').closest('.mobile-swipe').querySelector('.mobile-swipe-actions').inert=true");
+    try{assert(!await evaluate(c,valid),'手机书单不可操作负对照未检出');extraChecks++;console.log(JSON.stringify({width,theme,negative:'手机书单操作变inert',detected:true}));}
+    finally{await c.evaluate("document.querySelector('.mobile-book').closest('.mobile-swipe').querySelector('.mobile-swipe-actions').inert=false");}
+    await c.evaluate("[...document.querySelector('.mobile-book').closest('.mobile-swipe').querySelectorAll('.mobile-swipe-actions button')].find(b=>b.textContent==='移除').click()");await settle(c);
+  }else{
+    await evaluate(c,()=>{const book=document.querySelector('.book-slot');book.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));});await wait(c,"!!document.querySelector('.spine-menu')");await evaluate(c,()=>[...document.querySelectorAll('.spine-menu button')].find(b=>b.textContent==='从书架移除').click());await settle(c);
+  }
   await expectRoles(c,theme,[['移除遮罩','.remove-confirm','backgroundColor','--overlay-remove'],['次按钮','.remove-confirm button','borderTopColor','--control-border']],'remove');
   await c.evaluate("document.querySelector('.remove-confirm button').click();document.querySelector('.import-spine,.mobile-list-heading button').click()");await settle(c);
   await expectRoles(c,theme,[['导入背板','.import-backdrop','backgroundColor','--overlay-import'],['导入框','.import-panel textarea','backgroundColor','--input-bg'],['上传虚线','label[class*=fileLabel]','borderTopColor','--upload-border'],['关闭描边','.import-close','borderTopColor','--control-border']],'import');
@@ -155,7 +198,7 @@ async function surfaceChecks(c,width,theme){
   }
   await c.evaluate("document.querySelector('.import-close').click();localStorage.removeItem('gloss:doc:g19-owned');localStorage.removeItem('gloss:shelf:v1')");
   await c.call('Page.navigate',{url:ORIGIN+'/'});await wait(c,"!!document.querySelector('.landing-demo-visible')");await settle(c);
-  await expectRoles(c,theme,[['落地页','.landing-page','backgroundColor','--paper-main'],['落地页字','.landing-page','color','--ink'],['次按钮','.landing-secondary','borderTopColor','--secondary-border'],['主按钮','.landing-primary','backgroundColor','--ink']],'landing');
+  await expectRoles(c,theme,[['落地页','.landing-page','backgroundColor','--paper-main'],['落地页字','.landing-page','color','--ink'],['次按钮','.landing-secondary','borderBottomColor','--ink'],['主按钮','.landing-primary','backgroundColor','--ink']],'landing');await landingSecondaryNegative(c,width,theme);
 }
 async function coldAppearance(c,width){
   for(const a of ['system','light','dark'])for(const system of ['light','dark']){
@@ -316,7 +359,7 @@ async function geometry(c){
       await c.call('Page.navigate',{url:origin+'/read/sample'});await ready(c);
       await evaluate(c,theme=>{localStorage.clear();localStorage.setItem('gloss:settings:theme',theme);localStorage.setItem('gloss:settings:appearance','light');},theme);
       await c.call('Page.reload');await ready(c);await c.evaluate('document.fonts.ready');await settle(c);
-      const rows=await evaluate(c,()=>{const main=document.querySelector('.col-center')??document.querySelector('.col-main');if(!main)throw Error('Missing center column');return [...document.querySelectorAll(`${main.classList.contains('col-center')?'.col-center':'.col-main'}, ${main.classList.contains('col-center')?'.col-center':'.col-main'} *, .col-left, .col-left *`)].filter(el=>getComputedStyle(el).visibility!=='hidden'&&el.getClientRects().length&&el.getBoundingClientRect().width>0&&el.getBoundingClientRect().height>0).map(el=>{const r=el.getBoundingClientRect();return{tag:el.tagName,className:el.className,x:r.x,y:r.y,width:r.width,height:r.height};});});
+      const rows=await evaluate(c,()=>{const main=document.querySelector('.col-center')??document.querySelector('.col-main');if(!main)throw Error('Missing center column');return [...document.querySelectorAll(`${main.classList.contains('col-center')?'.col-center':'.col-main'}, ${main.classList.contains('col-center')?'.col-center':'.col-main'} *, .col-left, .col-left *`)].filter(el=>!el.matches('.reader-sidebar-brand,.reader-sidebar-brand *,.wordmark,.wordmark *')&&getComputedStyle(el).visibility!=='hidden'&&el.getClientRects().length&&el.getBoundingClientRect().width>0&&el.getBoundingClientRect().height>0).map(el=>{const r=el.getBoundingClientRect();return{tag:el.tagName,className:el.className,x:r.x,y:r.y,width:r.width,height:r.height};});});
       snapshots.push({origin,count:rows.length,hash:createHash('sha256').update(JSON.stringify(rows)).digest('hex'),rows});
     }
     assert(snapshots[0].hash===snapshots[1].hash,'Light geometry differs from main',{theme,snapshots});console.log(JSON.stringify({theme,geometry:snapshots.map(({rows,...s})=>s),actualCenterSelector:'.col-main',passed:true}));
@@ -349,7 +392,7 @@ async function run(width){
     await c.call('Emulation.setFocusEmulationEnabled',{enabled:true});
     await c.call('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:'light'}]});
     await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`(${setup.toString()})();window.__themeFirstPaint=[];window.__themePaintEvents=[];new PerformanceObserver(l=>{for(const e of l.getEntries())window.__themePaintEvents.push({name:e.name,time:e.startTime,theme:document.documentElement.dataset.theme})}).observe({type:'paint',buffered:true});function sample(t){const el=document.querySelector('.col-main');if(el){const b=getComputedStyle(el).backgroundColor;if(b!=='rgba(0, 0, 0, 0)')window.__themeFirstPaint.push({time:t,theme:document.documentElement.dataset.theme,background:b})}if(window.__themeFirstPaint.length<120)requestAnimationFrame(sample)}requestAnimationFrame(sample);`});
-    await c.call('Page.navigate',{url:ORIGIN+'/read/sample'});await ready(c);
+    await c.call('Page.navigate',{url:ORIGIN+'/read/sample'});await ready(c);await feedbackOutlineNegative(c,width);
     if(process.env.G19_THEME_ARTIFACTS==='1'){await screenshotSet(c,width);if(width===1280)await geometry(c);}
     else if(process.env.G19_THEME_COLD_ONLY==='1'){
       for(const value of ['moon-white','', 'unknown', '{',null])await cold(c,width,value);

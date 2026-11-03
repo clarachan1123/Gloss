@@ -35,8 +35,8 @@ export default function ActionRow({
     setPending(true);
     const result = await onToggle();
     setPending(false);
-    if (result === "E1") setNotice("存储已满，没能留下这句白话，仍可继续阅读。");
-    if (result === "E2") setNotice("这次没能留下这句白话，仍可继续阅读。");
+    if (result === "E1") setNotice("存储已满，没能收藏这句白话，仍可继续阅读。");
+    if (result === "E2") setNotice("这次没能收藏这句白话，仍可继续阅读。");
   }
 
   return (
@@ -50,7 +50,7 @@ export default function ActionRow({
         }}
         disabled={disabled || pending}
       >
-        {saved ? "取消留下" : "留下"}
+        {saved ? "取消收藏" : "收藏"}
       </button>
       {!selectionOnly && <button
         type="button"
@@ -70,7 +70,7 @@ export default function ActionRow({
           onExplain();
         }}
       >
-        听不懂
+        脉络解读
       </button>}
       {notice && <span className="action-row-notice" role="status">{notice}</span>}
     </div>

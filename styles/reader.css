@@ -905,3 +905,14 @@ body {
   .col-left > .feedback-reader { align-self: flex-start; padding-top: 40px; }
   .col-left > .feedback-reader > .feedback-button { display: inline-flex; width: auto; gap: 8px; min-height: 36px; padding: 0 14px; font-size: 13px; border: 1px solid var(--ink); background: transparent; }
 }
+
+/* 共用字标仅覆盖品牌，其他展示字体保持原样。 */
+.brand-wordmark { display: inline-flex; flex-direction: column; align-items: center; text-decoration: none; letter-spacing: normal; color: var(--brand-english); }
+.brand-english { font: 600 var(--brand-size, 26px)/1.1 var(--font-brand); letter-spacing: normal; white-space: nowrap; }
+.brand-chinese { font: 500 11px/1.5 var(--font-brand-chinese); letter-spacing: .5em; margin-right: -.5em; color: var(--gloss); }
+.col-left .brand-wordmark { --brand-size: 20px; color: var(--ink); }
+.action-row:has(.action-row-notice) { flex-wrap: wrap; }
+.action-row-notice { flex-basis: 100%; }
+@media (min-width: 1000px) {
+  .reader-sidebar-brand { font: inherit; letter-spacing: normal; }
+}

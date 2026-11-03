@@ -21,7 +21,7 @@ describe("G-64a 结果面板",()=>{
  });
  it("默认单句仍保留听不懂",()=>{
    const host=document.createElement("div");host.innerHTML=renderToString(createElement(GlossPanel,props));
-   expect(host.querySelector(".action-row-explain")?.textContent).toBe("听不懂");
+   expect(host.querySelector(".action-row-explain")?.textContent).toBe("脉络解读");
  });
  it("同插入点两个已留下范围与一个临时结果，不覆盖且原文只渲染一次",()=>{
    const region=(id:string,start:number,time:number|null):Region=>{

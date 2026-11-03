@@ -206,7 +206,7 @@ export function MobileReaderSettings({ value, onChange, onFontSizeChange, onGest
     <button type="button" className="reader-more-typography" aria-expanded={more} aria-controls={id} onClick={() => setMore(!more)}>更多排版 <span aria-hidden="true">{more ? "▾" : "▸"}</span></button>
     {more && <div id={id} className="reader-mobile-more">
       <ReaderTypographyControls value={value} onChange={onChange} onGestureStart={onGestureStart} onGestureEnd={onGestureEnd} mobile mobileDetails hideReset />
-      <div className="mode-switch" role="group" aria-label="留下的白话显示设置"><span className="mode-label">留下的白话</span><div className="mode-options">
+      <div className="mode-switch" role="group" aria-label="收藏的白话显示设置"><span className="mode-label">收藏的白话</span><div className="mode-options">
         {([['review', '显示'], ['reading', '收起']] as const).map(([mode, label]) => <button type="button" className="mode-option" key={mode}
           aria-pressed={readingMode === mode} onClick={() => onModeChange(mode)}>{label}</button>)}
       </div></div>

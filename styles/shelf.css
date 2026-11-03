@@ -90,3 +90,19 @@
   .mobile-more:focus-visible,.mobile-swipe-actions button:focus-visible { outline:2px solid var(--focus-strong); outline-offset:-3px; }
 }
 @media(prefers-reduced-motion:reduce) { .mobile-swipe-front { transition:none; } }
+
+.shelf-heading .brand-wordmark { --brand-size: 26px; letter-spacing: normal; }
+.shelf-heading .brand-chinese { line-height: 1; }
+.shelf-mobile-brand { display: none; }
+.shelf-brand-footer { margin-top: 34px; text-align: center; opacity: .8; }
+.shelf-brand-footer .brand-wordmark { --brand-size: 18px; }
+@media (max-width: 767.98px) {
+  .shelf-heading { height: 64px; }
+  .shelf-heading > .wordmark { display: none; }
+  .shelf-mobile-brand { display: flex; align-items: center; gap: 10px; }
+  .brand-lockup { display: block; width: 59px; height: 36px; background: var(--brand-lockup) center/contain no-repeat; }
+  .shelf-mobile-title { margin: 0; font-size: 20px; font-weight: 700; white-space: nowrap; }
+  .shelf-heading .feedback-button { box-sizing: border-box; width: 44px; height: 44px; padding: 0; display: flex; align-items: center; justify-content: center; }
+  .shelf-heading .feedback-button .feedback-mobile-label, .shelf-heading .feedback-button .feedback-desktop-label { display: none; }
+  .shelf-heading .feedback-shelf-icon { display: block; }
+}

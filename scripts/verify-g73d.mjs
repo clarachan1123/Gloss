@@ -69,7 +69,7 @@ async function detailedSidebar(){
   const color=token=>{const e=document.createElement('span');e.style.color=`var(${token})`;document.body.append(e);const value=getComputedStyle(e).color;e.remove();return value;};
   const rule=color('--rule'),gloss=color('--gloss'),ink=color('--ink'),paper=color('--paper-main');
   const check=(q,expected)=>{const elements=[...document.querySelectorAll(q)];for(const e of elements){const c=getComputedStyle(e);for(const [k,v]of Object.entries(expected))if(c[k]!==v)errors.push(`${q} ${k}: ${c[k]} != ${v}`);}return elements.length;};
-  check('.col-left',{paddingTop:'28px',paddingRight:'28px',paddingBottom:'32px',paddingLeft:'28px'});
+  const padding=innerWidth<1000?'20px':'28px';check('.col-left',{paddingTop:padding,paddingRight:padding,paddingBottom:innerWidth<1000?'20px':'32px',paddingLeft:padding});
   check('.reader-sidebar-content',{marginTop:'40px'});check('.reader-sidebar-content .side-section:not(:first-child)',{marginTop:'40px'});check('.col-left>.feedback-reader',{paddingTop:'40px',alignSelf:'flex-start'});
   check('.reader-shelf-back',{fontSize:'13px',color:gloss,minHeight:'36px',alignItems:'center'});
   check('.reader-sidebar-brand',{alignItems:'center'});
@@ -88,7 +88,7 @@ async function detailedSidebar(){
   check('.reader-sidebar-mode .mode-option[aria-pressed=true]',{color:ink,backgroundColor:paper});check('.reader-sidebar-mode .mode-option[aria-pressed=false]',{color:gloss,backgroundColor:'rgba(0, 0, 0, 0)'});
   check('.saved-link',{paddingTop:'8px',paddingRight:'0px',paddingBottom:'8px',paddingLeft:'12px',borderLeftWidth:'2px',borderLeftColor:rule,fontSize:'13px',lineHeight:'22.1px',color:ink,whiteSpace:'nowrap',textOverflow:'ellipsis'});check('.saved-list li',{marginTop:'0px'});
   check('.feedback-reader>.feedback-button',{display:'inline-flex',columnGap:'8px',minHeight:'36px',paddingTop:'0px',paddingRight:'14px',paddingBottom:'0px',paddingLeft:'14px',fontSize:'13px',borderTopWidth:'1px',borderTopColor:ink,backgroundColor:'rgba(0, 0, 0, 0)'});
-  const button=document.querySelector('.feedback-reader>.feedback-button'),r=button.getBoundingClientRect(),col=document.querySelector('.col-left').getBoundingClientRect();if(r.left!==col.left+28||r.width>=col.width-56)errors.push('反馈非满宽且靠左');
+  const button=document.querySelector('.feedback-reader>.feedback-button'),r=button.getBoundingClientRect(),col=document.querySelector('.col-left').getBoundingClientRect();if(r.left!==col.left+parseFloat(s('.col-left').paddingLeft)||r.width>=col.width-2*parseFloat(s('.col-left').paddingLeft))errors.push('反馈非满宽且靠左');
   return errors;
  });assert(result.length===0,'设计稿逐项计算样式 '+JSON.stringify(result));scenes+=9;
 }
@@ -135,17 +135,17 @@ try{
  await wait(async()=>{try{const tabs=await(await fetch('http://127.0.0.1:9506/json')).json();const t=tabs.find(t=>t.type==='page');if(!t)return false;c=new Cdp(t.webSocketDebuggerUrl);return true;}catch{return false;}},'Edge');
  await c.call('Page.enable');await c.call('Runtime.enable');
  await c.call('Page.addScriptToEvaluateOnNewDocument',{source:"const nativeFetch=window.fetch;window.fetch=(...args)=>String(args[0]).startsWith('/api/')?Promise.resolve(new Response(null,{status:503})):nativeFetch(...args);"});
- for(const width of [375,999,1000,1280,1440])for(const theme of ['parchment','dark'])for(const kind of ['sample','long'])for(const mode of ['review','reading']){
+ for(const width of [375,768,800,900,999,1000,1280,1440])for(const theme of ['parchment','dark'])for(const kind of ['sample','long'])for(const mode of ['review','reading']){
  const pair=[];
  for(const port of [3506,3507]){await load(port,width,theme,kind,mode);const snaps=[];for(const position of ['top','middle']){await ev(position=>scrollTo(0,position==='top'?0:Math.floor((document.documentElement.scrollHeight-innerHeight)/2)),position);await settle();snaps.push(await ev(geometry));}pair.push(snaps);}
  for(let i=0;i<2;i++){assert(same(pair[0][i],pair[1][i]),'几何差异 '+JSON.stringify({width,theme,kind,mode,position:i,maxDelta}));scenes++;}
  console.log(JSON.stringify({width,theme,kind,mode,geometry:2,maxDelta}));
  }
- for(const theme of ['parchment','moon-white','eye-green','dark']){
- await load(3507,1280,theme,'long','reading');await sidebar();await revisedSidebar();await detailedSidebar();
+ for(const width of [768,800,900,999,1000,1280])for(const theme of ['parchment','moon-white','eye-green','dark']){
+ await load(3507,width,theme,'long','reading');await sidebar();await revisedSidebar();await detailedSidebar();
  await ev(()=>{localStorage.removeItem('gloss:saved:g73d');localStorage.removeItem('gloss:selection-saved:g73d');const doc=JSON.parse(localStorage.getItem('gloss:doc:g73d'));doc.headings=[];localStorage.setItem('gloss:doc:g73d',JSON.stringify(doc));});
  await c.call('Page.reload');await wait(()=>c.evaluate("document.querySelector('.reader-body')?.getAttribute('data-measuring')==='false'&&document.querySelectorAll('.saved-link').length===0&&document.querySelectorAll('.reader-sidebar-content .side-empty').length===2"),'空目录与空列表就绪');await settle();await detailedSidebar();
- await load(3507,1280,theme,'long','reading');
+ await load(3507,width,theme,'long','reading');
  }
  const baseline=await ev(geometry);await ev(()=>{const e=document.querySelector('.shell');window.__tracks=getComputedStyle(e).gridTemplateColumns;const tracks=__tracks.split(' ');tracks[0]=(parseFloat(tracks[0])+1)+'px';tracks[1]=(parseFloat(tracks[1])-1)+'px';e.style.gridTemplateColumns=tracks.join(' ');});assert(!same(baseline,await ev(geometry),false),'轨道+1px 未检出');negatives++;await ev(()=>document.querySelector('.shell').style.removeProperty('grid-template-columns'));assert(same(baseline,await ev(geometry),false),'轨道恢复');
  await jumpHighlights();

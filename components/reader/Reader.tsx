@@ -2418,7 +2418,7 @@ export default function Reader({ docId }: { docId: string }) {
       if (target?.closest?.("input,textarea,select,[contenteditable=true]") || (event.key === " " && target?.closest?.("button,a"))) return;
       clear();
     };
-    const resize = () => { if (window.innerWidth < 1000) clear(); };
+    const resize = () => { if (window.innerWidth < 768) clear(); };
     window.addEventListener("wheel", pointerScroll, { passive: true });
     window.addEventListener("touchmove", pointerScroll, { passive: true });
     window.addEventListener("keydown", keyScroll);
@@ -2434,10 +2434,12 @@ export default function Reader({ docId }: { docId: string }) {
       <title>{doc ? (doc.meta.fileName?.replace(/\.[^.]+$/, "") || "阅读") + " · Glossline" : "Glossline 句下"}</title>
       <aside className="col col-left">
         <Link href="/" className="wordmark"><BrandWordmark englishOnly /></Link>
-        <span className="reader-sidebar-brand"><BrandWordmark englishOnly /></span>
+        <div className="reader-sidebar-top">
         <Link href="/" className="reader-shelf-back" style={{ visibility: hasOwnBooks === null ? "hidden" : "visible" }}>
           <svg className="reader-back-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m14 5-7 7 7 7M7 12h14" /></svg>
           <span className="reader-back-text">{hasOwnBooks ? "← 回到书架" : "← 回到首页"}</span><span className="reader-mobile-back-label reader-sr-only">{hasOwnBooks ? "回到书架" : "回到首页"}</span></Link>
+          <span className="reader-sidebar-brand"><BrandWordmark englishOnly /></span>
+        </div>
         <div className="reader-mobile-heading"><strong className="reader-mobile-title">{doc?.meta.fileName?.replace(/\.[^.]+$/, "") || "阅读"}</strong>
           {mobileProgress && <span className="reader-mobile-progress">第 {mobileProgress.current} 段 · 共 {mobileProgress.total} 段</span>}
         </div>
@@ -2518,7 +2520,7 @@ export default function Reader({ docId }: { docId: string }) {
             <ol className="saved-list">
               {savedItems.map(item => (
                 <li key={item.key}>
-                  <button type="button" className="saved-link" data-jump-highlight={savedJumpKey === item.key && highlightedSavedVisible || undefined} data-saved-selection-id={item.selectionId ?? undefined} onClick={event => { if (window.innerWidth >= 1000) setSavedJumpKey(item.key); if (item.selectionId) { event.stopPropagation(); jumpToSelection(item.selectionId); } else jumpToSaved(item.index); }}>
+                  <button type="button" className="saved-link" data-jump-highlight={savedJumpKey === item.key && highlightedSavedVisible || undefined} data-saved-selection-id={item.selectionId ?? undefined} onClick={event => { if (window.innerWidth >= 768) setSavedJumpKey(item.key); if (item.selectionId) { event.stopPropagation(); jumpToSelection(item.selectionId); } else jumpToSaved(item.index); }}>
                     {item.text}
                   </button>
                 </li>

@@ -102,12 +102,24 @@ try{
  }
  await theme('dark');
  await negativeCheck('深色小标错误',()=>getComputedStyle(document.querySelector('.brand-lockup')).backgroundImage.includes('brand-lockup-dark.png'),()=>document.querySelector('.brand-lockup').style.backgroundImage='url(/brand/brand-lockup.png)',()=>document.querySelector('.brand-lockup').style.removeProperty('background-image'));
- for(const width of [1000,1280,768,999]){
+ for(const width of [768,800,900,999,1000,1280]){
   await load('/read/g75',width);
-  const scope=width>=1000?'.reader-sidebar-brand':'.col-left>.wordmark';
+  const scope='.reader-sidebar-brand';
   for(const value of ['parchment','moon-white','eye-green','dark']){await theme(value);await brand(scope,20,true);}
   assert(await c.evaluate('document.title')==='品牌验证 · Glossline','阅读页标题',await ev(()=>({title:document.title,titles:[...document.querySelectorAll('title')].map(e=>e.textContent),file:document.querySelector('.reader-mobile-title')?.textContent})));
-  if(width===1000){const top=await ev(()=>{const col=document.querySelector('.col-left').getBoundingClientRect(),a=document.querySelector('.reader-back-text').getBoundingClientRect(),b=document.querySelector('.reader-sidebar-brand .brand-english').getBoundingClientRect(),back=getComputedStyle(document.querySelector('.reader-shelf-back'));return {sidebar:col.width,back:a.width,brand:b.width,backRight:a.right,brandLeft:b.left,centerDelta:Math.abs((a.top+a.bottom-b.top-b.bottom)/2),inside:b.right<=col.right-28,minHeight:back.minHeight};});console.log(JSON.stringify({width,top}));assert(top.backRight<=top.brandLeft&&top.inside&&top.centerDelta<1&&top.minHeight==='36px','1000px顶行同行无溢出',top);}
+  const row=()=>{const t=document.querySelector('.reader-sidebar-top').getBoundingClientRect(),a=document.querySelector('.reader-shelf-back').getBoundingClientRect(),b=document.querySelector('.reader-sidebar-brand').getBoundingClientRect();return{t:{x:t.x,y:t.y,right:t.right,w:t.width},a:{x:a.x,y:a.y,bottom:a.bottom,w:a.width},b:{x:b.x,y:b.y,right:b.right,w:b.width},overflow:document.querySelector('.reader-sidebar-top').scrollWidth>document.querySelector('.reader-sidebar-top').clientWidth};};
+  let f=await ev(row);assert(f.a.y===f.b.y&&f.a.x===f.t.x&&Math.abs(f.b.right-f.t.right)<.5&&!f.overflow,'顶行同行两端对齐',f);
+  await ev(()=>{const t=document.querySelector('.reader-sidebar-top'),a=t.querySelector('.reader-shelf-back').getBoundingClientRect(),b=t.querySelector('.reader-sidebar-brand').getBoundingClientRect();t.style.width=(Math.max(a.width,b.width)+10)+'px';});
+  f=await ev(row);assert(f.b.y===f.a.bottom+4&&f.b.x===f.t.x&&!f.overflow,'临时收窄自然换行',f);
+  await ev(()=>document.querySelector('.reader-sidebar-top').style.flexWrap='nowrap');f=await ev(row);assert(f.overflow||f.b.right>f.t.right,'禁用换行负对照检出',f);negative++;
+  await ev(()=>{const t=document.querySelector('.reader-sidebar-top');t.style.removeProperty('width');t.style.removeProperty('flex-wrap');});f=await ev(row);assert(f.a.y===f.b.y&&!f.overflow,'恢复同行',f);console.log(JSON.stringify({width,top:f}));
+  const footer=()=>{const col=document.querySelector('.col-left'),b=col.querySelector('.feedback-button').getBoundingClientRect(),r=col.getBoundingClientRect();return Math.abs(b.bottom-r.bottom+parseFloat(getComputedStyle(col).paddingBottom))<.5;};
+  assert(await ev(footer),'反馈位于可视底部');await ev(()=>document.querySelector('.feedback-button').click());await wait(()=>c.evaluate("!!document.querySelector('.feedback-card')"),'反馈卡');await sleep(350);assert(await ev(()=>{const c=document.querySelector('.feedback-card'),r=c.getBoundingClientRect(),b=document.querySelector('.feedback-button').getBoundingClientRect();return c.dataset.side==='above'&&r.bottom<=b.top&&r.top>=0&&r.left>=0&&r.right<=document.documentElement.clientWidth;}),'反馈向上且在视口内');await ev(()=>document.querySelector('.feedback-close').click());
+  if(width===768){
+   await negativeCheck('恢复旧左栏',()=>getComputedStyle(document.querySelector('.reader-sidebar-content')).display==='block'&&getComputedStyle(document.querySelector('.col-left>.wordmark')).display==='none',()=>document.querySelector('.reader-sidebar-content').style.display='contents',()=>document.querySelector('.reader-sidebar-content').style.removeProperty('display'));
+   await negativeCheck('字标溢出左栏',()=>{const a=document.querySelector('.reader-sidebar-brand').getBoundingClientRect(),b=document.querySelector('.col-left').getBoundingClientRect();return a.left>=b.left&&a.right<=b.right;},()=>document.querySelector('.reader-sidebar-brand').style.transform='translateX(500px)',()=>document.querySelector('.reader-sidebar-brand').style.removeProperty('transform'));
+   await negativeCheck('反馈回到上方',footer,()=>document.querySelector('.feedback-reader').style.transform='translateY(-100px)',()=>document.querySelector('.feedback-reader').style.removeProperty('transform'));
+  }
  }
  for(const width of [320,375]){
   await load('/read/g75',width);

@@ -41,8 +41,8 @@ async function colors(c,theme,from,page,width){
       check('正文','.reader-body','color','--text-body');check('白话','.gloss-panel:not(.gloss-panel-saved)','color','--gloss');
       check('已留下白话','.gloss-panel-saved','color','--saved-inline');check('术语','.gloss-term','color','--term');
       check('分隔线','.col-right','borderLeftColor','--rule');check('设置面板','.reader-tool > span:last-child','color','--gloss');
-      check('主题控件','.reader-paper-options','color','--ink');check('反馈按钮底色','.feedback-button','backgroundColor',width>=1000?'transparent':'--ink');
-      check('反馈按钮文字','.feedback-button','color',width>=1000?'--ink':'--paper-main');
+      check('主题控件','.reader-paper-options','color','--ink');check('反馈按钮底色','.feedback-button','backgroundColor',width>=768?'transparent':'--ink');
+      check('反馈按钮文字','.feedback-button','color',width>=768?'--ink':'--paper-main');
       if(width<768){check('Aa面板','.reader-typography-sheet','backgroundColor','--paper-side');check('Aa按钮边框','.reader-typography-aa','borderTopColor','--rule');}
     }else if(page==='shelf'){
       check('书架页面','body','backgroundColor','--paper-main');check('书架文字','.shelf-page','color','--ink');
@@ -58,7 +58,7 @@ async function colors(c,theme,from,page,width){
   originalChecks+=result.length;assert(result.every(r=>r.passed),'Target token mismatch',result.filter(r=>!r.passed));return result;
 }
 async function feedbackOutlineNegative(c,width){
-  if(width<1000)return;
+  if(width<768)return;
   const valid=()=>{const b=document.querySelector('.feedback-button'),s=getComputedStyle(b),p=document.createElement('span');p.style.color='var(--ink)';document.body.append(p);const ink=getComputedStyle(p).color;p.remove();return s.backgroundColor==='rgba(0, 0, 0, 0)'&&s.color===ink;};
   assert(await evaluate(c,valid),'描边反馈正对照');
   for(const [property,value] of [['background-color','var(--ink)'],['color','var(--paper-main)']]){
@@ -359,7 +359,7 @@ async function geometry(c){
       await c.call('Page.navigate',{url:origin+'/read/sample'});await ready(c);
       await evaluate(c,theme=>{localStorage.clear();localStorage.setItem('gloss:settings:theme',theme);localStorage.setItem('gloss:settings:appearance','light');},theme);
       await c.call('Page.reload');await ready(c);await c.evaluate('document.fonts.ready');await settle(c);
-      const rows=await evaluate(c,()=>{const main=document.querySelector('.col-center')??document.querySelector('.col-main');if(!main)throw Error('Missing center column');return [...document.querySelectorAll(`${main.classList.contains('col-center')?'.col-center':'.col-main'}, ${main.classList.contains('col-center')?'.col-center':'.col-main'} *, .col-left, .col-left *`)].filter(el=>!el.matches('.reader-sidebar-brand,.reader-sidebar-brand *,.wordmark,.wordmark *')&&getComputedStyle(el).visibility!=='hidden'&&el.getClientRects().length&&el.getBoundingClientRect().width>0&&el.getBoundingClientRect().height>0).map(el=>{const r=el.getBoundingClientRect();return{tag:el.tagName,className:el.className,x:r.x,y:r.y,width:r.width,height:r.height};});});
+      const rows=await evaluate(c,()=>{const main=document.querySelector('.col-center')??document.querySelector('.col-main');if(!main)throw Error('Missing center column');return [...document.querySelectorAll(`${main.classList.contains('col-center')?'.col-center':'.col-main'}, ${main.classList.contains('col-center')?'.col-center':'.col-main'} *, .col-left, .col-left *`)].filter(el=>!el.matches('.reader-sidebar-top,.reader-shelf-back,.reader-sidebar-brand,.reader-sidebar-brand *,.wordmark,.wordmark *')&&getComputedStyle(el).visibility!=='hidden'&&el.getClientRects().length&&el.getBoundingClientRect().width>0&&el.getBoundingClientRect().height>0).map(el=>{const r=el.getBoundingClientRect();return{tag:el.tagName,className:el.className,x:r.x,y:r.y,width:r.width,height:r.height};});});
       snapshots.push({origin,count:rows.length,hash:createHash('sha256').update(JSON.stringify(rows)).digest('hex'),rows});
     }
     assert(snapshots[0].hash===snapshots[1].hash,'Light geometry differs from main',{theme,snapshots});console.log(JSON.stringify({theme,geometry:snapshots.map(({rows,...s})=>s),actualCenterSelector:'.col-main',passed:true}));

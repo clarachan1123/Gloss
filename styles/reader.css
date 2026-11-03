@@ -834,11 +834,11 @@ body {
 }
 .gloss-panel-title { margin: 0 0 8px; font-size: var(--reader-gloss-font-size, 14px); font-weight: 700; color: var(--ink); }
 
-/* 新左栏只在宽屏启用，窄屏沿用既有骨架。 */
+/* 平板与电脑共用新版左栏，手机骨架保持原样。 */
 .reader-sidebar-content { display: contents; }
 .reader-sidebar-brand, .reader-current-label, .reader-book-title, .reader-book-stats, .reader-saved-count, .reader-sidebar-mode { display: none; }
 .reader-saved-heading > .mode-label { font-size: 13px; }
-@media (min-width: 1000px) {
+@media (min-width: 768px) {
   .shell > .col-left { display: flex; flex-direction: column; padding: 28px; gap: 0; }
   .col-left > .wordmark, .col-left > .reader-legacy-mode { display: none; }
   .col-left > .reader-shelf-back { margin: 0; padding-right: 48px; min-height: 20px; flex-shrink: 0; }
@@ -873,7 +873,7 @@ body {
 @media (prefers-reduced-motion: reduce) { .reader-typography-sheet { transition: none; } }
 
 /* 数字区与跳转标记只作用于新版左栏。 */
-@media (min-width: 1000px) {
+@media (min-width: 768px) {
   .reader-sidebar-content [aria-labelledby="doc-title"] > .side-title { border-bottom: 0; font-weight: 400; }
   .reader-sidebar-content .side-title, .reader-sidebar-content .saved-link { font-weight: 400; }
   .reader-book-stats { justify-content: flex-start; gap: 18px; }
@@ -884,7 +884,7 @@ body {
 }
 
 /* 宽屏左栏逐项按设计稿对齐；书名字体规则保持原样。 */
-@media (min-width: 1000px) {
+@media (min-width: 768px) {
   .shell > .col-left { padding: 28px 28px 32px; }
   .col-left > .reader-shelf-back { display: flex; align-items: center; min-height: 36px; padding-right: 80px; font-size: 13px; color: var(--gloss); }
   .reader-sidebar-brand { display: flex; align-items: center; height: 36px; font-size: 14px; letter-spacing: .3em; }
@@ -913,6 +913,14 @@ body {
 .col-left .brand-wordmark { --brand-size: 20px; color: var(--ink); }
 .action-row:has(.action-row-notice) { flex-wrap: wrap; }
 .action-row-notice { flex-basis: 100%; }
-@media (min-width: 1000px) {
+@media (min-width: 768px) {
   .reader-sidebar-brand { font: inherit; letter-spacing: normal; }
 }
+
+.reader-sidebar-top { display: contents; }
+@media (min-width: 768px) {
+  .reader-sidebar-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; flex-shrink: 0; }
+  .reader-sidebar-top > .reader-shelf-back { display: flex; align-items: center; flex: 0 0 auto; margin: 0; padding: 0; min-height: 36px; font-size: 13px; color: var(--gloss); }
+  .reader-sidebar-top > .reader-sidebar-brand { position: static; flex: 0 0 auto; height: 36px; }
+}
+@media (min-width: 768px) and (max-width: 999.98px) { .shell > .col-left { padding: 20px; } }

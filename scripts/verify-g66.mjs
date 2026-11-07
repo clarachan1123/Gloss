@@ -188,18 +188,25 @@ async function typographySamples(cdp, properties) {
   return evaluate(cdp, properties => {
     const samples = [];
     const add = (scope, prefix) => {
-      [scope, ...scope.querySelectorAll("*")].filter(el => !el.matches(".gloss-block,.action-row-recall-slot,.action-row-fold,svg,svg *") && !(el.tagName === "SPAN" && el.closest(".action-row-recall"))).forEach((el) => {
+      [scope, ...scope.querySelectorAll("*")].filter(el => !el.matches(".gloss-block,.explain-surface,.action-row-recall-slot,.action-row-fold,svg,svg *") && !(el.tagName === "SPAN" && el.closest(".action-row-recall"))).forEach((el) => {
         const s = getComputedStyle(el);
         const tokenColor = name => { const probe=document.createElement("span");probe.style.color="var("+name+")";el.append(probe);const color=getComputedStyle(probe).color;probe.remove();return color; };
         const expected = {};
         if (el.matches(".action-row-save,.action-row-explain")) expected.color=tokenColor("--gloss");
-        if (el.closest(".explain-result")) {
+        if (el.matches(".action-row-save,.action-row-explain") && el.parentElement?.closest("[data-action-placement]")) {
+          const side=el.closest("[data-action-placement]").dataset.actionPlacement==="side";
+          const size=side&&el.matches(".action-row-explain")?12:13;
+          expected.fontSize=size+"px";
+          expected.lineHeight=size+"px";
+        }
+        if (el.closest(".explain-surface")) {
           const size=parseFloat(getComputedStyle(el.closest(".gloss-panel")).fontSize)+1;
           const effective=el.matches(".explain-result-note")?size*.85:size;
           expected.fontSize=effective+"px";expected.lineHeight=Number((effective*1.95).toFixed(4))+"px";
           if(el.matches(".explain-result,.explain-result-text,.explain-result-pending"))expected.color=tokenColor("--text-body");
           if(el.matches(".explain-result-pending"))expected.letterSpacing=size*.2+"px";
         }
+        if(el.matches(".explain-result")&&el.querySelector(".explain-surface"))expected.color=tokenColor("--text-body");
         samples.push({ g76Expected:expected, key: prefix + ":" + (el.matches(".action-row-save") ? "save" : el.matches(".action-row-explain") ? "explain" : el.matches(".action-row-notice") ? "notice" : el.tagName + ":" + el.className),
           values: Object.fromEntries(properties.map(p => [p, s[p]])) });
       });
@@ -213,6 +220,15 @@ async function typographySamples(cdp, properties) {
       + '<div class="action-row"><button class="action-row-save">留下</button><button class="action-row-explain">听不懂</button><span class="action-row-notice">提示</span></div>'
       + '<div class="explain-result"><p class="explain-result-text">解释<span class="gloss-term">术语</span></p><p class="explain-result-pending">……</p><p class="explain-result-note">说明</p></div></div>';
     document.querySelector(".reader-body").append(fixture);
+    if(document.querySelector(".reader-saved-mobile")){
+      const explain=fixture.querySelector(".explain-result");
+      const surface=document.createElement("div");
+      surface.className="explain-surface";
+      surface.append(...explain.childNodes);
+      explain.append(surface);
+      const row=fixture.querySelector(".action-row");
+      row.dataset.actionPlacement="below";
+    }
     add(fixture.querySelector(".reader-notes"), "notes");
     add(fixture.querySelector(".gloss-panel"), "states");
     fixture.remove();

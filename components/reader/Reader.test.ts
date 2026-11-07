@@ -1635,13 +1635,14 @@ describe("G-70 阅读页白话字号", () => {
     expect(definitions[0][1].trim()).toBe(".reader-body-reader");
     expect(definitions[0][2].trim()).toBe("--reader-gloss-font-size: max(14px, calc(var(--reader-font-size, 17.5px) * 0.8));");
   });
-  it("仅阅读页面板与两种操作按钮消费变量", () => {
-    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*font-size:\s*var\(--reader-gloss-font-size\)[^{}]*)\}/g)];
-    expect(rules).toHaveLength(1);
-    expect(rules[0][1].trim().split(/,\s*/)).toEqual([
-      ".reader-body-reader .gloss-panel", ".reader-body-reader .action-row-save", ".reader-body-reader .action-row-explain",
-    ]);
-    expect(rules[0][2].trim()).toBe("font-size: var(--reader-gloss-font-size);");
+  it("仅阅读页白话面板消费字号变量，操作按钮用设计稿固定字号", () => {
+    const consumers = (source: string) =>
+      [...source.matchAll(/([^{}]+)\{[^{}]*font-size:\s*var\(--reader-gloss-font-size\)[^{}]*\}/g)]
+        .flatMap((rule) => rule[1].trim().split(/,\s*/));
+    const expected = [".reader-body-reader .gloss-panel"];
+    expect(consumers(css)).toEqual(expected);
+    expect(css).toMatch(/\.reader-body-reader \.gloss-panel\s*\{\s*font-size: var\(--reader-gloss-font-size\);\s*\}/);
+    expect(consumers(css + "\n.action-row-save { font-size: var(--reader-gloss-font-size); }")).not.toEqual(expected);
   });
   it("演示没有阅读页身份或字号变量，全局默认与附注规则保留", () => {
     const demo = readFileSync(path.resolve(process.cwd(), "components/landing/LandingDemo.tsx"), "utf8");

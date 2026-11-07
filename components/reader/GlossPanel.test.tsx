@@ -19,6 +19,15 @@ describe("G-64a 结果面板",()=>{
    const host=document.createElement("div");host.innerHTML=renderToString(createElement(GlossPanel,{...props,selectionOnly:true,view:{...view,status:"failed",failure,text:""}}));
    expect(host.querySelector<HTMLButtonElement>(".action-row-save")?.disabled).toBe(true);
  });
+ it("脉络解读失败时显示新名称和提示",()=>{
+   const host=document.createElement("div");
+   host.innerHTML=renderToString(createElement(GlossPanel,{
+     ...props,
+     explainView:{...IDLE_EXPLAIN_VIEW,status:"failed",failure:"unavailable"},
+   }));
+   const result=host.querySelector('.explain-result[aria-label="脉络解读"]');
+   expect(result?.textContent).toContain("脉络解读暂时无法生成。");
+ });
  it("默认单句仍保留听不懂",()=>{
    const host=document.createElement("div");host.innerHTML=renderToString(createElement(GlossPanel,props));
    expect(host.querySelector(".action-row-explain")?.getAttribute("aria-label")).toBe("脉络解读");

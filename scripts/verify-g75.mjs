@@ -56,7 +56,7 @@ async function selectionResult(width){
  await wait(()=>c.evaluate("!!document.querySelector('[data-selection-id] .action-row-save:not(:disabled)')"),'划选结果');
  await actionText('[data-selection-id] .action-row-save','收藏');
  await ev(()=>document.querySelector('[data-selection-id] .action-row-save').click());await actionText('[data-selection-id] .action-row-save','取消收藏');
- assert(await ev(noOverflow),'划选结果零溢出',{width});assert(await c.evaluate("parseFloat(getComputedStyle(document.querySelector('[data-selection-id] .action-row-save')).fontSize)")===16.8,'划选结果最大字号不缩小');
+ assert(await ev(noOverflow),'划选结果零溢出',{width});assert(await c.evaluate("parseFloat(getComputedStyle(document.querySelector('[data-selection-id] .action-row-save')).fontSize)")===13,'划选结果下方控件13px');
 }
 try{
  const noticeSource=await readFile(new URL('../lib/parse/validate.ts',import.meta.url),'utf8');
@@ -130,8 +130,9 @@ try{
   await ev(()=>document.querySelector('.action-row-save').click());await actionText('.action-row-save','取消收藏');
   await negativeCheck("书签无障碍名称",()=>document.querySelector(".action-row-save").getAttribute("aria-label")==="取消收藏",()=>document.querySelector(".action-row-save").setAttribute("aria-label","收藏"),()=>document.querySelector(".action-row-save").setAttribute("aria-label","取消收藏"));
   await negativeCheck("解读入口无障碍名称",()=>document.querySelector(".action-row-explain").getAttribute("aria-label")==="脉络解读",()=>document.querySelector(".action-row-explain").setAttribute("aria-label","听不懂"),()=>document.querySelector(".action-row-explain").setAttribute("aria-label","脉络解读"));
-  assert(await ev(()=>getComputedStyle(document.querySelector('.action-row-save')).fontSize==='16.8px'),'最大字号不缩小');
-  assert(await ev(noOverflow),'操作行零溢出',{width});
+  assert(await ev(()=>getComputedStyle(document.querySelector('.action-row-save')).fontSize==='13px'),'下方控件13px');
+  await negativeCheck("下方书签字号",()=>getComputedStyle(document.querySelector(".action-row-save")).fontSize==="13px",()=>document.querySelector(".action-row-save").style.fontSize="14px",()=>document.querySelector(".action-row-save").style.removeProperty("font-size"));
+ assert(await ev(noOverflow),'操作行零溢出',{width});
   await ev(()=>{const roles=['.action-row-save','.action-row-explain'];window.__g75Roles=()=>roles.map(role=>{const s=getComputedStyle(document.querySelector(role));return {role,values:['fontFamily','fontSize','lineHeight','letterSpacing','textAlign','textIndent','color','wordBreak','lineBreak'].map(p=>s[p])};});window.__g75RoleBefore=JSON.stringify(__g75Roles());});
   await negativeCheck('G66按角色比较未改属性',()=>JSON.stringify(__g75Roles())===__g75RoleBefore,()=>document.querySelector('.action-row-save').style.color='red',()=>document.querySelector('.action-row-save').style.removeProperty('color'));
   await negativeCheck('操作行溢出',noOverflow,()=>document.querySelector('.action-row').style.width='2000px',()=>document.querySelector('.action-row').style.removeProperty('width'));
@@ -157,9 +158,9 @@ try{
  await load('/',375);await ev(()=>{localStorage.clear();localStorage.setItem('gloss:analytics:optout','1');localStorage.setItem('gloss:sample:breathed','1');});await load('/',375);
  await negativeCheck('空书架落款',()=>!document.querySelector('.shelf-brand-footer'),()=>{const e=document.createElement('div');e.className='shelf-brand-footer';document.body.append(e);},()=>document.querySelector('.shelf-brand-footer').remove());
  // 对照副本用于字号下限，字体大小取同一最大正文设置。
- await load('/',375,'http://127.0.0.1:3510');await wait(()=>c.evaluate("!!document.querySelector('.landing-demo-visible .action-row-save')"),'基线演示');const baselineDemoSize=await c.evaluate("parseFloat(getComputedStyle(document.querySelector('.landing-demo-visible .action-row-save')).fontSize)");assert(candidateDemoSizes.every(size=>size>=baselineDemoSize),'演示字号不小于基线',{candidateDemoSizes,baselineDemoSize});await ev(seed);await load('/read/g75',375,'http://127.0.0.1:3510');await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("!!document.querySelector('.action-row-save:not(:disabled)')"),'基线操作行');
+ await load('/',375,'http://127.0.0.1:3510');await wait(()=>c.evaluate("!!document.querySelector('.landing-demo-visible .action-row-save')"),'基线演示');const baselineDemoSize=await c.evaluate("parseFloat(getComputedStyle(document.querySelector('.landing-demo-visible .action-row-save')).fontSize)");assert(candidateDemoSizes.every(size=>size===13),'演示下方控件13px',{candidateDemoSizes,baselineDemoSize});await ev(seed);await load('/read/g75',375,'http://127.0.0.1:3510');await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("!!document.querySelector('.action-row-save:not(:disabled)')"),'基线操作行');
  const baselineSize=await c.evaluate("parseFloat(getComputedStyle(document.querySelector('.action-row-save')).fontSize)");
  await load('/',375);await ev(seed);await load('/read/g75',375);await ev(()=>{localStorage.removeItem('gloss:saved:g75');localStorage.removeItem('gloss:selection-saved:g75');});await load('/read/g75',375);await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("!!document.querySelector('.action-row-save:not(:disabled)')"),'候选操作行');
- assert(await ev(base=>parseFloat(getComputedStyle(document.querySelector('.action-row-save')).fontSize)>=base,baselineSize),'操作行字号不小于基线');
+ assert(await ev(()=>getComputedStyle(document.querySelector('.action-row-save')).fontSize==='13px'),'阅读下方控件13px',{baselineSize});
  console.log(JSON.stringify({scenes,negative,passed:true}));
 }finally{try{if(c&&edge.exitCode===null)await c.call('Browser.close');}finally{c?.close();if(edge.exitCode===null)await Promise.race([new Promise(r=>edge.once('exit',r)),sleep(5000)]);const absolute=resolve(profile);if(!absolute.startsWith(resolve(tmpdir(),'gloss-g75-')))throw Error('临时目录路径不符');try{await rm(absolute,{recursive:true,force:true});}catch(error){console.warn('临时浏览器目录清理失败：'+error.code);}}}

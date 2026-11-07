@@ -87,7 +87,7 @@ async function bubble(c,width){
   else await evaluate(c,()=>{const b=document.querySelector('.reader-shape-cycle');if(!b)throw Error('Missing desktop shape cycle');if(b.textContent.includes('小字'))b.click();});
   await settle(c);
 }
-async function checkSize(c,size,expected=true){const result=await evaluate(c,()=>[...document.querySelectorAll('.reader-body-reader .gloss-panel,.reader-body-reader .gloss-panel-text,.reader-body-reader .gloss-term,.reader-body-reader .explain-result-text,.reader-body-reader .action-row-save,.reader-body-reader .action-row-explain,.reader-body-reader .gloss-panel-note,.reader-body-reader .explain-result-note,.reader-body-reader .action-row-notice')].map(el=>({class:el.className,font:parseFloat(getComputedStyle(el).fontSize),line:parseFloat(getComputedStyle(el).lineHeight),spacing:getComputedStyle(el).letterSpacing})));assert(result.length,'Font samples exist');for(const r of result){const target=r.class.includes('action-row-notice')?12:(r.class.includes('panel-note')||r.class.includes('result-note'))?Math.max(14,size*.8)*.85:Math.max(14,size*.8);assert(Math.abs(r.font-target)<1e-6,'A gloss formula',{size,target,r});if(r.class==='gloss-panel-text')assert(Math.abs(r.line/r.font-2.05)<1e-6,'Panel line multiplier',r);}if(expected)report.A++;return result;}
+async function checkSize(c,size,expected=true){const result=await evaluate(c,()=>[...document.querySelectorAll('.reader-body-reader .gloss-panel,.reader-body-reader .gloss-panel-text,.reader-body-reader .gloss-term,.reader-body-reader .explain-result-text,.reader-body-reader .action-row-save,.reader-body-reader .action-row-explain,.reader-body-reader .gloss-panel-note,.reader-body-reader .explain-result-note,.reader-body-reader .action-row-notice')].map(el=>({class:el.className,font:parseFloat(getComputedStyle(el).fontSize),line:parseFloat(getComputedStyle(el).lineHeight),spacing:getComputedStyle(el).letterSpacing,placement:el.closest(".action-row")?.dataset.actionPlacement})));assert(result.length,'Font samples exist');for(const r of result){const target=r.placement&&r.class.includes('action-row-explain')&&r.placement==='side'?12:r.placement&&r.class.includes('action-row-')&&!r.class.includes('notice')?13:r.class.includes('action-row-notice')?12:(r.class.includes('panel-note')||r.class.includes('result-note'))?Math.max(14,size*.8)*.85:Math.max(14,size*.8);assert(Math.abs(r.font-target)<1e-6,'A gloss formula',{size,target,r});if(r.class==='gloss-panel-text')assert(Math.abs(r.line/r.font-2.05)<1e-6,'Panel line multiplier',r);}if(expected)report.A++;return result;}
 
 function ownedShelfState(){
   const visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';};
@@ -196,6 +196,7 @@ function assertSavedSection(f){
   for(const item of f.items)assert(['gloss','explain'].includes(item.kind)&&item.text===(item.kind==='gloss'?'白话':'脉络解读'),'G76收藏类型签',item);
 }
 async function snapshot(c,checkMargins=true){
+  await c.evaluate('Promise.all([...document.querySelectorAll(".gloss-block,.explain-surface")].flatMap(el=>el.getAnimations({subtree:true})).filter(animation=>animation.animationName==="gloss-block-in").map(animation=>animation.finished.catch(()=>{})))');
   await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});await settle(c);
   await checkBranding(c);
   const white=await evaluate(c,whiteBlockFacts),ui=await evaluate(c,g76UIFacts);
@@ -211,10 +212,10 @@ async function snapshot(c,checkMargins=true){
     const box=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return{x:r.x,y:r.y,w:r.width,h:r.height,visible:r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none',scroll:el.scrollWidth,client:el.clientWidth};};
     const panels=[...document.querySelectorAll(".gloss-panel")];
     const rows=nodes.map((el,i)=>({key:i+':'+el.tagName+':'+(el.tagName==='HTML'?'':el.className),styles:readStyles(el),derived:getComputedStyle(el).getPropertyValue('--reader-gloss-font-size'),box:box(el),viewport:innerWidth,autoMargins:window.__g70.autoMarginFacts(el),g76:{
-      panel:el.matches(".gloss-panel")?panels.indexOf(el):null,
+      panel:el.matches(".gloss-panel")?panels.indexOf(el):null,inlinePanel:el.matches(".gloss-panel-inline:has(> .gloss-block, > .explain-result)"),
       panels:panels.map((panel,id)=>el===panel||el.contains(panel)?id:null).filter(id=>id!==null),
       parentPanels:panels.map((panel,id)=>el.parentElement?.contains(panel)?id:null).filter(id=>id!==null),
-      white:!!el.closest(".gloss-panel-text"),headerGrid:innerWidth<768&&el.matches(".col-left"),
+      white:!!el.closest(".gloss-panel-text"),blockEntry:el.parentElement?.matches(".gloss-block")&&!el.matches(".action-row"),motion:matchMedia("(prefers-reduced-motion: no-preference)").matches,headerGrid:innerWidth<768&&el.matches(".col-left"),
       landingTracks:el.matches(".landing-layout")&&innerWidth>=1000?{demo:el.querySelector(".landing-demonstration").getBoundingClientRect().height,actions:el.querySelector(".landing-action-area").getBoundingClientRect().height,gap:parseFloat(getComputedStyle(el).rowGap)}:null,
       expectedPanelHeight:el.matches(".gloss-panel")&&el.querySelector(":scope>.gloss-block")?[...el.children].reduce((sum,child)=>sum+child.getBoundingClientRect().height+parseFloat(getComputedStyle(child).marginTop)+parseFloat(getComputedStyle(child).marginBottom),0)+parseFloat(getComputedStyle(el).paddingTop)+parseFloat(getComputedStyle(el).paddingBottom)+parseFloat(getComputedStyle(el).borderTopWidth)+parseFloat(getComputedStyle(el).borderBottomWidth):null
     }}));
@@ -307,22 +308,31 @@ function projectG76Styles(base,actual,label,negative=true){
   const sum=ids=>ids.reduce((value,id)=>value+(deltas.get(id)??0),0);
   const dimension=new Set(["height","block-size"]),origin=new Set(["perspective-origin","transform-origin"]);
   for(let i=0;i<actual.length;i++){
-    const a=actual[i],b=projected[i],dy=a.box.h-b.box.h,dx=a.box.w-b.box.w;
-    const white=a.g76.white&&width>=1000,root=a.g76.panel!==null,derived=!root&&a.g76.panels.length>0;
+    const a=actual[i],b=projected[i],dy=a.box.h-b.box.h;
+    const root=a.g76.panel!==null,derived=!root&&a.g76.panels.length>0;
     if(derived&&dy!==0)assert(Math.abs(dy-sum(a.g76.panels))<=.5,"G76容器增高等于子面板尺寸差",{label,key:a.key,actual:dy,panels:sum(a.g76.panels)});
     for(let p=0;p<3;p++)for(const property of Object.keys(a.styles[p])){
       const before=b.styles[p][property],after=a.styles[p][property];if(before===after)continue;
+      if(a.g76.blockEntry&&p===0&&["animation-name","animation-duration","animation-timing-function"].includes(property)){
+        const expected={"animation-name":"gloss-block-in","animation-duration":"0.22s","animation-timing-function":"cubic-bezier(0.2, 0.7, 0.2, 1)"};
+        assert(a.g76.motion&&after===expected[property],"G76块进入动画按设计",{label,key:a.key,property,after});
+        b.styles[p][property]=after;continue;
+      }
+      if(a.g76.inlinePanel&&p===0&&["padding-left","padding-inline-start","border-left-width","border-inline-start-width","width","inline-size"].includes(property)){
+        const widthProperty=property==="width"||property==="inline-size";
+        // CSSOM 以六位有效数字序列化像素值，几何宽度仍逐项精确比较。
+        const expected=widthProperty?Number(a.box.w.toPrecision(6)):0;
+        assert(a.box.w===b.box.w&&parseFloat(after)===expected,"G76竖线移入白话后面板外框保持",{label,key:a.key,property,after,expected,baseWidth:b.box.w,actualWidth:a.box.w});
+        b.styles[p][property]=after;continue;
+      }
       if(a.g76.headerGrid&&p===0&&property==="grid-template-columns"){b.styles[p][property]=after;continue;}
       if(root&&["min-height","min-block-size"].includes(property)&&p===0){b.styles[p][property]=after;continue;}
-      if((root||derived||white)&&dimension.has(property)&&p===0){
+      if((root||derived)&&dimension.has(property)&&p===0){
         assert(Math.abs((parseFloat(after)-parseFloat(before))-dy)<=.5,"G76高度属性与实测尺寸差相同",{label,key:a.key,property,before,after,dy});b.styles[p][property]=after;continue;
       }
-      if(white&&["width","inline-size"].includes(property)&&p===0){
-        assert(Math.abs((parseFloat(after)-parseFloat(before))-dx)<=.5,"G76宽度属性与实测尺寸差相同",{label,key:a.key,property,before,after,dx});b.styles[p][property]=after;continue;
-      }
-      if((root||derived||white)&&origin.has(property)&&p===0){
+      if((root||derived)&&origin.has(property)&&p===0){
         const old=before.split(" ").map(parseFloat),now=after.split(" ").map(parseFloat);
-        assert(Math.abs(now[0]-old[0]-(white?dx/2:0))<=.5&&Math.abs(now[1]-old[1]-dy/2)<=.5,"G76尺寸原点随实测尺寸变化",{label,key:a.key,property,before,after,dx,dy});b.styles[p][property]=after;continue;
+        assert(Math.abs(now[0]-old[0])<=.5&&Math.abs(now[1]-old[1]-dy/2)<=.5,"G76尺寸原点随实测尺寸变化",{label,key:a.key,property,before,after,dy});b.styles[p][property]=after;continue;
       }
       if(derived&&property==="grid-template-rows"&&p===0){
         const old=before.match(/-?[\d.]+px/g)??[],now=after.match(/-?[\d.]+px/g)??[];
@@ -349,6 +359,13 @@ function projectG76Styles(base,actual,label,negative=true){
     }
     const count=whiteBlockNegatives(reference.white,current.white,width)+g76UINegatives(reference.ui,current.ui,width);
     report.negative.push({adaptation:"g76-components-"+label,detected:true,count});
+    const inlinePanelIndex=actual.findIndex(a=>a.g76.inlinePanel);
+    if(inlinePanelIndex>=0){
+      const changed=structuredClone(actual),panel=changed[inlinePanelIndex];
+      panel.box.w+=1;
+      panel.styles[0]["inline-size"]=Number(panel.box.w.toPrecision(6))+"px";
+      let detected=false;try{projectG76Styles(base,changed,label,false);}catch{detected=true;}assert(detected,"G76面板外框宽度新增1px负对照检出");report.negative.push({adaptation:"g76-panel-width-"+label,detected});
+    }
     const trackIndex=actual.findIndex(a=>a.g76.landingTracks);
     if(trackIndex>=0){
       const changed=structuredClone(actual),value=changed[trackIndex].styles[0]["grid-template-rows"].split(" ");

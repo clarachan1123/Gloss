@@ -1,5 +1,5 @@
 import {spawn} from 'node:child_process';
-import {mkdtemp} from 'node:fs/promises';
+import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 process.env.G19_IMPORT_ONLY='1';
@@ -21,8 +21,17 @@ export function whiteBlockFacts() {
       // 在同级隐藏副本测内容自然外框；覆盖副本的宽度，避免把候选外框误差当成所需宽度。
       const probe=panel.cloneNode(true);probe.setAttribute("aria-hidden","true");probe.removeAttribute("id");
       for(const [key,value] of Object.entries({position:"fixed",left:"0px",top:"0px",right:"auto",bottom:"auto",visibility:"hidden","pointer-events":"none",width:"max-content","min-width":"0px","max-width":"none",transform:"none",transition:"none",animation:"none"}))probe.style.setProperty(key,value,"important");
-      let natural;try{parent.append(probe);natural=probe.getBoundingClientRect().width;}finally{probe.remove();}
-      const r=panel.getBoundingClientRect();bubble={outer:r.width,available,natural,hasExplain:!!panel.querySelector(".explain-result"),overflow:panel.scrollWidth>panel.clientWidth};
+      const r=panel.getBoundingClientRect();
+      let natural,overflow;
+      try{
+        parent.append(probe);
+        natural=probe.getBoundingClientRect().width;
+        // 正文外控件由位置断言独立验收，不计入气泡内容的滚动宽度。
+        probe.querySelectorAll(".action-row").forEach(row=>row.remove());
+        probe.style.setProperty("width",r.width+"px","important");
+        overflow=probe.scrollWidth>probe.clientWidth;
+      }finally{probe.remove();}
+      bubble={outer:r.width,available,natural,hasExplain:!!panel.querySelector(".explain-result"),overflow};
     }
     return {key:(panel?.dataset.sentenceIndex??panel?.dataset.selectionId??"demo")+":"+ordinal,text:el.textContent,width:rect.width,height:rect.height,fonts:{fontFamily:style.fontFamily,fontSize:style.fontSize,lineHeight:style.lineHeight,color:style.color},chars,railWidth:rail?.width??0,gap:reserve-(rail?.width??0),reserve,blockWidth:block?.getBoundingClientRect().width??null,bubble,blockPadding:block?[getComputedStyle(block).paddingTop,getComputedStyle(block).paddingBottom]:null,overflow:el.scrollWidth>el.clientWidth,overlap:overlap||(innerWidth>=1000&&!!rail&&rail.left<rect.right&&rail.bottom>rect.top&&rail.top<rect.bottom),buttons};
   });
@@ -46,11 +55,9 @@ export function assertWhiteBlocks(base,actual,width) {
       check(Number.isFinite(expected)&&Math.abs(a.bubble.outer-expected)<=.5,"短气泡外框按内容实测",{width,base:b.bubble.outer,actual:a.bubble.outer,natural:a.bubble.natural,expected});
       check(a.width===a.blockWidth-a.reserve,"短气泡白话宽度与控件留位一致",a);
       check(!a.bubble.overflow,"短气泡外框无溢出",a.bubble);
-    }else if(width<1000){check(a.width===b.width,"窄屏宽度严格相等",{width,base:b.width,actual:a.width});check(JSON.stringify(a.chars)===JSON.stringify(b.chars),"窄屏换行严格相等",{width,key:a.key});}
-    else {
-      check(a.railWidth>0&&a.gap>=0,"控件列与间距",{width,rail:a.railWidth,gap:a.gap});
-      check(Math.abs(a.width-(b.width-a.railWidth-a.gap))<=.5,"宽度等于对照减控件列及间距",{width,base:b.width,actual:a.width,rail:a.railWidth,gap:a.gap});
-      check(a.chars.every(r=>r.x>=-.5&&r.x+r.w<=a.width+.5),"换行在正文宽度内",{width,key:a.key});
+    }else {
+      check(a.width===b.width,"白话宽度严格相等",{width,base:b.width,actual:a.width});
+      check(JSON.stringify(a.chars)===JSON.stringify(b.chars),"白话换行严格相等",{width,key:a.key});
     }
     check(!a.overflow&&!a.overlap,"无溢出无重叠",{width,key:a.key,overflow:a.overflow,overlap:a.overlap});
   }
@@ -60,7 +67,7 @@ export function whiteBlockNegatives(base,actual,width) {
   const faults=[a=>a.blockPadding[0]="1px",a=>a.width+=1,a=>a.fonts.fontFamily="错误字体",a=>a.fonts.fontSize="1px",a=>a.fonts.lineHeight="1px",a=>a.fonts.color="rgb(1, 2, 3)",a=>a.overflow=true,a=>a.overlap=true];
   if(base[0].bubble&&base[0].bubble.outer<base[0].bubble.available){
     faults.push(a=>a.chars[0].y+=1,a=>a.bubble.outer=a.bubble.available+1,a=>a.bubble.outer+=1);
-  }else if(width<1000)faults.push(a=>a.chars[0].y+=1);else faults.push(a=>a.chars[0].x=a.width+1);
+  }else faults.push(a=>a.chars[0].y+=1);
   for(const mutate of faults){const changed=structuredClone(actual);mutate(changed[0]);let detected=false;try{assertWhiteBlocks(base,changed,width);}catch{detected=true;}if(!detected)throw Error("白话验收负对照漏检");count++;}
   return count;
 }
@@ -69,9 +76,20 @@ export function g76UIFacts(){
  const token=name=>{const value=css(document.documentElement).getPropertyValue(name).trim();if(/^rgb\(\d+, \d+, \d+\)$/.test(value))return value;if(!/^#[0-9a-f]{6}$/i.test(value))throw Error("取色 token 格式不符 "+name);return "rgb("+[1,3,5].map(start=>parseInt(value.slice(start,start+2),16)).join(", ")+")";};
  const controls=[...document.querySelectorAll(".gloss-block>.action-row,.explain-result>.action-row")].map(row=>{
   const buttons=[...row.querySelectorAll("button")];
-  return {position:css(row).position,recall:!!row.querySelector(".action-row-recall"),buttons:buttons.map(b=>({label:b.getAttribute("aria-label"),saved:b.getAttribute("aria-pressed")==="true",color:css(b).color,border:css(b).borderTopWidth,...rect(b)})),gloss:token("--gloss"),hover:token("--hover"),box:rect(row)};
+  const body=row.closest(".reader-body"),main=body?.closest(".col-main"),style=css(row);
+  const bodyRight=body?.getBoundingClientRect().right;
+  const contentRight=main?main.getBoundingClientRect().right-parseFloat(css(main).paddingRight)-parseFloat(css(main).borderRightWidth):bodyRight;
+  const surface=row.parentElement.querySelector(":scope > .explain-surface");
+  const block=surface??row.parentElement;
+  return {bodyRight,contentRight,gap:contentRight-bodyRight,mode:row.dataset.actionPlacement,
+    display:style.display,columns:style.gridTemplateColumns,columnGap:style.columnGap,margin:style.marginTop,
+    blockTop:block.getBoundingClientRect().top,blockRight:block.getBoundingClientRect().right,
+    inline:block.closest(".gloss-panel")?.classList.contains("gloss-panel-inline"),
+    bodyWidth:body?.getBoundingClientRect().width,blockWidth:block.getBoundingClientRect().width,
+    inset:css(block).paddingLeft,blockFont:css(block).fontSize,blockBorder:css(block).borderLeftWidth,
+    surface:!!surface,position:css(row).position,recall:!!row.querySelector(".action-row-recall"),buttons:buttons.map(b=>({label:b.getAttribute("aria-label"),saved:b.getAttribute("aria-pressed")==="true",color:css(b).color,border:css(b).borderTopWidth,radius:css(b).borderTopLeftRadius,font:css(b).fontSize,min:css(b).minWidth,padding:css(b).paddingLeft,margin:css(b).marginRight,icon:rect(b.querySelector("svg")),path:b.querySelector("path")?.getAttribute("d"),stroke:b.querySelector("svg")?.getAttribute("stroke-width"),cap:b.querySelector("svg")?.getAttribute("stroke-linecap"),join:b.querySelector("svg")?.getAttribute("stroke-linejoin"),...rect(b)})),gloss:token("--gloss"),hover:token("--hover"),box:rect(row)};
  });
- const explanations=[...document.querySelectorAll(".explain-result")].map(el=>{const s=css(el),root=el.closest(".gloss-panel");return {size:parseFloat(s.fontSize),white:parseFloat(css(root).fontSize),font:s.fontFamily,whiteFont:css(root).fontFamily,line:parseFloat(s.lineHeight),color:s.color,body:token("--text-body"),background:s.backgroundColor,side:token("--paper-side"),padding:[s.paddingTop,s.paddingRight,s.paddingBottom,s.paddingLeft],border:s.borderTopWidth,radius:s.borderTopLeftRadius,bubble:root.classList.contains("gloss-panel-bubble")};});
+ const explanations=[...document.querySelectorAll(".explain-surface")].map(el=>{const s=css(el),root=el.closest(".gloss-panel");return {size:parseFloat(s.fontSize),white:parseFloat(css(root).fontSize),font:s.fontFamily,whiteFont:css(root).fontFamily,line:parseFloat(s.lineHeight),color:s.color,body:token("--text-body"),background:s.backgroundColor,side:token("--paper-side"),padding:[s.paddingTop,s.paddingRight,s.paddingBottom,s.paddingLeft],border:s.borderTopWidth,radius:s.borderTopLeftRadius,bubble:root.classList.contains("gloss-panel-bubble")};});
  const names=[".reader-shelf-back",".reader-mobile-heading",".reader-selection-mobile",".reader-saved-mobile",".reader-typography-aa"];
  const header=innerWidth<768&&document.querySelector(".reader-mobile-heading")?{boxes:names.map(selector=>{const el=document.querySelector(selector);return el?{selector,...rect(el)}:null;}),fonts:[".reader-mobile-title",".reader-mobile-progress",".reader-shelf-back",".reader-selection-mobile",".reader-typography-aa"].map(selector=>{const el=document.querySelector(selector),s=css(el);return {selector,font:s.fontFamily,size:s.fontSize,line:s.lineHeight,color:s.color};})}:null;
  const modeFonts=[...document.querySelectorAll(".mode-label")].map(el=>{const s=css(el);return {font:s.fontFamily,size:s.fontSize,line:s.lineHeight,color:s.color};});
@@ -81,13 +99,32 @@ export function g76UIFacts(){
 export function assertG76UI(base,actual,width){
  const check=(v,label,d)=>{if(!v)throw Error("G76控件"+label+": "+JSON.stringify(d));};
  for(const row of actual.controls){
-  check(row.position===(width<1000?"relative":"absolute"),"所在位置",{width,row});
+  const side=row.gap>=164;
+  const near=(a,b)=>Math.abs(a-b)<=.5;
+  check(row.mode===(side?"side":"below")&&row.position===(side?"absolute":"relative"),"按实测空白选择位置",{width,row});
+  if(row.inline&&row.bodyWidth!==undefined){
+   check(near(row.blockWidth,row.bodyWidth),"行下块外框与正文等宽",row);
+   if(!row.surface)check(row.blockBorder==="2px"&&near(parseFloat(row.inset),parseFloat(row.blockFont)),"白话2px竖线与1em内缩",row);
+  }
+  if(side){
+   check(row.display==="grid"&&row.columns==="84px 28px 28px"&&row.columnGap==="4px"&&near(row.box.w,148)&&near(row.box.h,28),"右侧三格尺寸",row);
+   check(row.box.x>=row.bodyRight&&near(row.box.x-row.bodyRight,16)&&row.box.right<=row.contentRight+.5,"控件在正文外且不超内容盒",row);
+   check(near(row.box.y-row.blockTop,row.surface?12:0),"控件顶部对齐",row);
+  }else{
+   check(row.display==="flex"&&row.columnGap==="2px"&&row.margin==="2px"&&near(row.box.h,36),"下方操作行尺寸",row);
+  }
   check(row.buttons.length===(row.recall?3:2),"三格或两控件",{width,row});
   for(const button of row.buttons){
    check(["收藏","取消收藏","收起白话","收起脉络解读","白话","脉络解读"].includes(button.label),"名称",button);
    check(button.color===(button.saved?row.hover:row.gloss),"主题颜色",button);
-   if(width<1000)check(button.w===36&&button.h===36,"窄屏36像素",button);
-   if(button.label==="白话"||button.label==="脉络解读")check(width>=1000||button.border==="1px","窄屏叫回细框",button);
+   const recall=button.label==="白话"||button.label==="脉络解读";
+   const expectedPath=button.label==="白话"?"M5 6h14v9H10l-4 3v-3H5z":button.label==="脉络解读"?"M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z":button.label.startsWith("收起")?"M6 15l6-6 6 6":"M6 3h12v18l-6-4-6 4z";
+   check(button.path===expectedPath&&button.stroke==="1.6"&&button.cap==="round"&&button.join==="round","图标原路径与描边",button);
+   const icon=recall?14:side?16:18;
+   check(near(button.icon.w,icon)&&near(button.icon.h,icon),"图标尺寸",button);
+   check(near(button.h,side?28:recall?30:36)&&(!recall?near(button.w,side?28:36):!side||near(button.w,84)),"按钮尺寸",button);
+   check(button.radius===(side?"4px":recall?"15px":"6px")&&button.border===(!side&&recall?"1px":"0px")&&button.padding===(!side&&recall?"10px":"0px")&&button.margin===(!side&&recall?"4px":"0px"),"按钮外观尺寸",button);
+   check(side?(!recall||button.font==="12px"):button.font==="13px","按钮字号",button);
   }
   check(row.buttons.every((a,i)=>row.buttons.every((b,j)=>i===j||Math.min(a.right,b.right)<=Math.max(a.x,b.x)||Math.min(a.bottom,b.bottom)<=Math.max(a.y,b.y))),"按钮无重叠",row);
  }
@@ -95,7 +132,7 @@ export function assertG76UI(base,actual,width){
   check(e.size===e.white+1&&e.font===e.whiteFont,"解读字号字体",e);
   check(Math.abs(e.line-e.size*1.95)<1e-6,"解读行高",e);
   check(e.color===e.body&&e.background===e.side,"解读主题色",e);
-  check(JSON.stringify(e.padding)===JSON.stringify(["14px",width<1000?"18px":"166px","14px","18px"])&&e.border==="0px"&&(!e.bubble||e.radius==="4px"),"解读内边距与边框",e);
+  check(JSON.stringify(e.padding)===JSON.stringify(["12px","18px","12px","18px"])&&e.border==="0px"&&(!e.bubble||e.radius==="4px"),"解读内边距与边框",e);
  }
  check(JSON.stringify(actual.modeFonts)===JSON.stringify(base.modeFonts),"收藏模式标签字体颜色保持",actual.modeFonts);
  for(const item of actual.savedKinds)check(["gloss","explain"].includes(item.kind)&&item.text===(item.kind==="gloss"?"白话":"脉络解读")&&item.size==="10px","收藏类型签",item);
@@ -110,7 +147,7 @@ export function assertG76UI(base,actual,width){
 export function g76UINegatives(base,actual,width){
  assertG76UI(base,actual,width);let count=0;
  const faults=[];
- if(actual.controls.length){faults.push(a=>a.controls[0].buttons[0].color="rgb(1, 2, 3)");faults.push(a=>a.controls[0].position="错误");if(width<1000)faults.push(a=>a.controls[0].buttons[0].w=37);}
+ if(actual.controls.length){faults.push(a=>a.controls[0].buttons[0].color="rgb(1, 2, 3)");faults.push(a=>a.controls[0].position="错误");faults.push(a=>a.controls[0].buttons[0].h+=1,a=>a.controls[0].buttons[0].path="M0 0",a=>a.controls[0].mode="side"===a.controls[0].mode?"below":"side");for(const row of actual.controls.filter(r=>r.mode==="side").slice(0,1)){const i=actual.controls.indexOf(row);faults.push(a=>a.controls[i].box.x=a.controls[i].bodyRight-1,a=>a.controls[i].box.right=a.controls[i].contentRight+1,a=>a.controls[i].columns="83px 28px 28px",a=>a.controls[i].gap=163);}}
  if(actual.explanations.length){faults.push(a=>a.explanations[0].size+=1);faults.push(a=>a.explanations[0].line+=1);faults.push(a=>a.explanations[0].padding[0]="15px");faults.push(a=>a.explanations[0].color="rgb(1, 2, 3)");}
  if(actual.header)faults.push(a=>a.header.boxes[3].w=43);
  if(actual.modeFonts.length)faults.push(a=>a.modeFonts[0].size="1px");
@@ -137,7 +174,7 @@ async function baselineFrame(theme,shape){
  await ev((theme,shape)=>{localStorage.clear();localStorage.setItem('gloss:doc:g76',JSON.stringify({version:1,docId:'g76',paragraphs:['春风吹过山谷。河水流向海洋。'],headings:[],footnotes:[],meta:{format:'txt',fileName:'验证.txt',charCount:16},savedAt:1}));localStorage.setItem('gloss:settings:gloss-shape',shape);localStorage.setItem('gloss:settings:theme',theme==='dark'?'parchment':theme);localStorage.setItem('gloss:settings:appearance',theme==='dark'?'dark':'light');},theme,shape);
  await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'对照阅读器');await c.evaluate('document.fonts.ready');const before=await ev(originPoint);
  await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("document.querySelector('.gloss-panel')?.dataset.state==='done'"),'对照白话');const whiteOnly=await ev(whiteBlockFacts);await ev(()=>document.querySelector('.action-row-explain').click());await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),'对照解读');
- return{before,after:await ev(originPoint),whiteOnly,white:await ev(whiteBlockFacts)};
+ return{before,after:await ev(originPoint),whiteOnly,white:await ev(whiteBlockFacts),ui:await ev(g76UIFacts)};
 }
 
 async function negativeCheck(label,predicate,mutate,restore){assert(await ev(predicate),label+'正对照');await ev(mutate);try{assert(!await ev(predicate),label+'负对照检出');negative++;}finally{await ev(restore);}}
@@ -156,16 +193,29 @@ async function shortBubbleRuntimeNegative(base,width,kind){
 }
 
 async function verifyRecallOpacity(selector,width){
- const expected=width<768?'1':'0.45';
- assert(await ev(selector=>getComputedStyle(document.querySelector(selector)).opacity=== (innerWidth<768?'1':'0.45'),selector),'生成过的叫回平时不透明度');
+ const expected=await ev(selector=>document.querySelector(selector).closest('.action-row').dataset.actionPlacement==='side'?'0.45':'1',selector);
+ assert(await ev(selector=>getComputedStyle(document.querySelector(selector)).opacity,selector)===expected,'生成过的叫回平时不透明度');
  const point=await ev(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};},selector);
+ const hoverLayout=()=>({width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight,boxes:[...document.querySelectorAll(".reader-body,.reader-body .sentence,.gloss-block,.gloss-panel-text,.explain-surface,.action-row,.action-row button,.action-row svg,.action-row-recall-label")].map(el=>{const r=el.getBoundingClientRect();return[r.x,r.y,r.width,r.height];})});
+ const before=await ev(hoverLayout);
  await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+ if(expected==="0.45"){
+  const tooltip=await ev(selector=>{const el=document.querySelector(selector),tip=getComputedStyle(el,"::after");return{content:tip.content,position:tip.position,bottom:tip.bottom,right:tip.right,font:tip.fontSize,line:tip.lineHeight,padding:tip.padding,radius:tip.borderRadius,background:tip.backgroundColor,color:tip.color};},selector);
+  const valid=(a,b,t)=>JSON.stringify(a)===JSON.stringify(b)&&t.position==="absolute"&&t.bottom==="34px"&&t.right==="0px"&&t.font==="12px"&&Math.abs(parseFloat(t.line)-16.8)<.01&&t.padding==="4px 8px"&&t.radius==="4px"&&/看白话|看脉络解读/.test(t.content);
+  const after=await ev(hoverLayout);
+  assert(valid(before,after,tooltip),"悬停提示样式与布局零变化 "+JSON.stringify(tooltip));
+  await ev(()=>{const style=document.createElement("style");style.id="g76-tooltip-fault";style.textContent='.action-row[data-action-placement="side"] button:hover::after{position:static!important}';document.head.append(style);});
+  try{assert(JSON.stringify(await ev(hoverLayout))!==JSON.stringify(before),"悬停提示进入流的布局变化负对照");negative++;}
+  finally{await ev(()=>document.querySelector("#g76-tooltip-fault").remove());}
+  assert(JSON.stringify(await ev(hoverLayout))===JSON.stringify(before),"悬停提示恢复后布局相同");
+ }
+
  assert(await ev(selector=>getComputedStyle(document.querySelector(selector)).opacity==='1',selector),'悬停叫回常亮');
  await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});
  await ev(selector=>document.querySelector(selector).closest('.action-row').querySelector('.action-row-save').focus({preventScroll:true}),selector);
  await c.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers:8});
  await c.call('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers:8});
- assert(await ev(selector=>{const el=document.querySelector(selector);return document.activeElement===el&&el.matches(':focus-visible')&&getComputedStyle(el).opacity==='1';},selector),'键盘聚焦叫回常亮');
+ assert(await ev(selector=>{const el=document.querySelector(selector);return document.activeElement===el&&el.matches(':focus-visible')&&getComputedStyle(el).opacity==='1'&&getComputedStyle(el).outlineWidth==='2px'&&getComputedStyle(el).outlineOffset==='1px';},selector),'键盘聚焦叫回常亮');
  await ev(()=>document.activeElement.blur());
  assert(await ev(selector=>getComputedStyle(document.querySelector(selector)).opacity,selector)===expected,'移出与失焦后恢复不透明度');
 }
@@ -217,7 +267,7 @@ try {
  await ev(()=>document.querySelector('.reader-settings-feedback').click());await sleep(350);
  assert(await c.evaluate("!!document.querySelector('.feedback-card')&&!document.querySelector('.reader-typography-sheet')&&!document.querySelector('#reader-saved-sheet')"),'反馈关闭设置抽屉');
  await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'抽屉后刷新');
- for (const width of [375,506,767,768,999,1000,1024,1280]) for(const theme of ['parchment','moon-white','eye-green','dark']) for(const shape of ['inline','bubble']) {
+ for (const width of [1440,375,506,767,768,999,1000,1024,1280,1920]) for(const theme of ['parchment','moon-white','eye-green','dark']) for(const shape of ['inline','bubble']) {
   await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
   const reference=await baselineFrame(theme,shape);
   await navigate('http://127.0.0.1:3512/read/g76');await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'候选阅读器返回');
@@ -229,6 +279,7 @@ try {
   assert(await c.evaluate("getComputedStyle(document.querySelector('.action-row-recall')).opacity==='1'"),'未生成入口常亮');
   await wait(()=>c.evaluate("document.querySelector('.gloss-block')?.dataset.state==='done'"),"生成解读前白话取样就绪");
   assertWhiteBlocks(reference.whiteOnly,await ev(whiteBlockFacts),width);assert(true,"生成解读前白话宽度与断点");
+  assertG76UI(reference.ui,await ev(g76UIFacts),width);
   if(width===375&&theme==="parchment"&&shape==="bubble")await shortBubbleRuntimeNegative(reference.whiteOnly,width,"无故增宽");
   await ev(()=>document.querySelector('.gloss-block .action-row-explain').click());await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),'矩阵解读');
   assert(await c.evaluate("document.querySelectorAll('.action-row-recall').length===0"),'矩阵两块显示第一格空');
@@ -238,9 +289,39 @@ try {
   negative+=whiteBlockNegatives(reference.white,whiteFacts,width);
   if(width===375&&theme==="parchment"&&shape==="bubble"){await shortBubbleRuntimeNegative(reference.white,width,"断点");await shortBubbleRuntimeNegative(reference.white,width,"超出可用宽度");}
   assert(true,'白话宽度与字体、换行验收');
-  if(width<1000){
-    const layout=await ev(()=>{const block=document.querySelector('.gloss-block'),text=block.querySelector('.gloss-panel-text'),row=block.querySelector('.action-row');return{bottom:text.getBoundingClientRect().bottom,top:row.getBoundingClientRect().top,buttons:[...row.querySelectorAll('button')].map(b=>({w:b.getBoundingClientRect().width,h:b.getBoundingClientRect().height}))};});
-    assert(layout.top>=layout.bottom&&layout.buttons.every(b=>b.w===36&&b.h===36),'窄屏底部操作行与36px按钮');
+  const ui=await ev(g76UIFacts);
+  assertG76UI(reference.ui,ui,width);
+  negative+=g76UINegatives(reference.ui,ui,width);
+  if(shape==="inline"&&[1000,1024,1280,1440,1920].includes(width)&&theme==="parchment"){
+   console.log(JSON.stringify({designWidth:width,gap:ui.controls[0].gap,mode:ui.controls[0].mode,controls:ui.controls,explanations:ui.explanations}));
+  }
+  if(width===1440&&shape==="inline"&&["parchment","dark"].includes(theme)){
+   const dir=join(process.cwd(),"tmp-g76-shots");await mkdir(dir,{recursive:true});
+   const shot=await c.call("Page.captureScreenshot",{format:"png"});
+   await writeFile(join(dir,"1440-"+theme+".png"),Buffer.from(shot.data,"base64"));
+  }
+  if(width===1440&&shape==="inline"&&theme==="parchment"){
+   const anchors=()=>[...document.querySelectorAll(".reader-body .sentence[data-index='0'],.gloss-panel-text")].map(el=>{const r=el.getBoundingClientRect();return [r.x,r.y,r.width,r.height];});
+   assert(await ev(()=>[...document.querySelectorAll(".gloss-block,.explain-surface")].every(el=>getComputedStyle(el).animationName==="none")),"减少动态效果禁用入场动画");
+   await c.call("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"no-preference"}]});
+   const animation=await ev(()=>{
+    const rules=[...document.styleSheets].flatMap(sheet=>{try{return [...sheet.cssRules];}catch{return [];}});
+    const keyframes=rules.find(rule=>rule instanceof CSSKeyframesRule&&rule.name==="gloss-block-in");
+    return {styles:[...document.querySelectorAll(".gloss-block,.explain-surface")].map(el=>{const s=getComputedStyle(el);return[s.animationName,s.animationDuration,s.animationTimingFunction];}),frames:keyframes&&[...keyframes.cssRules].map(rule=>[rule.style.opacity,rule.style.transform])};
+   });
+   await c.call("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"reduce"}]});
+   assert(animation.styles.length===2&&animation.styles.every(([name,duration,timing])=>name==="gloss-block-in"&&duration==="0.22s"&&timing==="cubic-bezier(0.2, 0.7, 0.2, 1)")&&JSON.stringify(animation.frames)===JSON.stringify([["0","translateY(-3px)"],["1","none"]]),"入场动画数值 "+JSON.stringify(animation));
+   console.log(JSON.stringify({designAnimation:animation}));
+   const before=await ev(anchors);
+   const oldStyle=await ev(()=>{const main=document.querySelector(".col-main"),style=main.getAttribute("style"),css=getComputedStyle(main);main.style.paddingLeft=(parseFloat(css.paddingLeft)+100)+"px";main.style.paddingRight=(parseFloat(css.paddingRight)+100)+"px";return style;});
+   try{
+    await c.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    const switched=await ev(g76UIFacts);
+    assert(switched.controls.length===2&&switched.controls.every(row=>row.gap<164&&row.mode==="below"),"空间收窄后两块进入下方模式 "+JSON.stringify(switched.controls.map(({mode,gap})=>({mode,gap}))));
+    assert(JSON.stringify(await ev(anchors))===JSON.stringify(before),"控件切换时被点原句与白话不动");
+   }finally{await ev(style=>{const main=document.querySelector(".col-main");if(style===null)main.removeAttribute("style");else main.setAttribute("style",style);},oldStyle);}
+   await wait(()=>c.evaluate("document.querySelector('.gloss-block .action-row').dataset.actionPlacement==='side'"),"恢复右侧模式");
+   assert(JSON.stringify(await ev(anchors))===JSON.stringify(before),"恢复控件模式时被点原句与白话不动");
   }
   assert(samePoint(await ev(originPoint),reference.after),'同场景原句与正文宽度对照：生成解读后');
   assert(await c.evaluate("document.documentElement.scrollWidth<=innerWidth"),'矩阵无页面溢出');

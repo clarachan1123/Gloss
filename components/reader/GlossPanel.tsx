@@ -74,7 +74,7 @@ const NOTES: Record<GlossFailure, string> = {
 
 const EXPLAIN_NOTES: Record<ExplainFailure, string> = {
   timeout: "这次没能写出来。",
-  unavailable: "整句理解暂时无法生成。",
+  unavailable: "脉络解读暂时无法生成。",
   rate_limited: "请求有点多，稍后再试。",
   throttled: "点得太快了，过几分钟再试。",
   refused: "这一句暂时无法处理。",
@@ -288,7 +288,8 @@ export default function GlossPanel({
         onRecall={() => { onBlockToggle?.(sentenceIndex, "explain", true); if (explainView.status === "idle") onExplain(sentenceIndex); }} selectionOnly={selectionOnly} />
       </div>}
       {explainVisible && (
-        <section className="explain-result" aria-label="整句理解" aria-busy={explainBusy}>
+        <section className="explain-result" aria-label="脉络解读" aria-busy={explainBusy}>
+          <div className="explain-surface">
           {explainView.text && <p className="explain-result-text">{explainView.text}</p>}
           {explainBusy && !explainView.text && <p className="explain-result-pending">……</p>}
           {explainView.status === "failed" && explainView.failure && (
@@ -308,6 +309,7 @@ export default function GlossPanel({
               )}
             </p>
           )}
+          </div>
           <ActionRow block="explain" saved={explainSaved} disabled={explainView.status !== "done"}
             onToggle={() => onExplainSave?.(sentenceIndex) ?? Promise.resolve("removed")}
             onFold={() => onBlockToggle?.(sentenceIndex, "explain", false)} recall={!glossVisible ? "白话" : undefined}

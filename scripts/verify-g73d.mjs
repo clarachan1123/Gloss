@@ -18,12 +18,21 @@ async function click(sel){await ev(sel=>{const el=[...document.querySelectorAll(
 function geometry(){
  const rect=r=>[r.left,r.top+scrollY,r.right,r.bottom+scrollY];
  const out={main:rect(document.querySelector('.col-main').getBoundingClientRect()),body:rect(document.querySelector('.reader-body').getBoundingClientRect()),chars:{}};
+ const panels=[...document.querySelectorAll(".reader-body .gloss-panel")];out.panels=Object.fromEntries(panels.map(p=>[p.dataset.selectionId?"selection:"+p.dataset.selectionId:"sentence:"+p.dataset.sentenceIndex,p.getBoundingClientRect().height]));out.beforePanels={};
  const groups=new Map();
  for(const span of document.querySelectorAll('.reader-body [data-para] .sentence')){const key=span.closest('[data-para]').dataset.para;const list=groups.get(key)??[];list.push(span);groups.set(key,list);}
- for(const [key,spans] of groups){for(const [side,span] of [['first',spans[0]],['last',spans.at(-1)]]){const n=span.firstChild;if(!(n instanceof Text)||!n.length)throw Error('段落缺字 '+key);const r=document.createRange();const i=side==='first'?0:n.length-1;r.setStart(n,i);r.setEnd(n,i+1);out.chars[key+':'+side]=rect(r.getBoundingClientRect());}}
+ for(const [key,spans] of groups){for(const [side,span] of [['first',spans[0]],['last',spans.at(-1)]]){const n=span.firstChild;if(!(n instanceof Text)||!n.length)throw Error('段落缺字 '+key);const r=document.createRange();const i=side==='first'?0:n.length-1;r.setStart(n,i);r.setEnd(n,i+1);out.chars[key+':'+side]=rect(r.getBoundingClientRect());out.beforePanels[key+':'+side]=panels.filter(p=>!!(p.compareDocumentPosition(span)&Node.DOCUMENT_POSITION_FOLLOWING)).map(p=>p.dataset.selectionId?'selection:'+p.dataset.selectionId:'sentence:'+p.dataset.sentenceIndex);}}
  return out;
 }
 function same(a,b,record=true){if(JSON.stringify(Object.keys(a.chars))!==JSON.stringify(Object.keys(b.chars)))return false;for(const [k,r] of Object.entries({...a.chars,main:a.main,body:a.body})){const v=({...b.chars,main:b.main,body:b.body})[k];if(!v)return false;for(let i=0;i<4;i++){if(record)maxDelta=Math.max(maxDelta,Math.abs(r[i]-v[i]));if(r[i]!==v[i])return false;}}return true;}
+function samePanelFlow(base,current,record=true){
+ const projected=structuredClone(current),keys=Object.keys(base.panels);if(JSON.stringify(keys)!==JSON.stringify(Object.keys(current.panels)))return false;
+ const delta=key=>current.panels[key]-base.panels[key];
+ for(const key of Object.keys(base.chars)){const before=base.beforePanels[key];if(JSON.stringify(before)!==JSON.stringify(current.beforePanels[key]))return false;const shift=before.reduce((sum,key)=>sum+delta(key),0);projected.chars[key][1]-=shift;projected.chars[key][3]-=shift;}
+ // 容器末边仅扣除内部面板实测增高；其余中栏、正文和网格几何仍用原严格比较。
+ const total=keys.reduce((sum,key)=>sum+delta(key),0);projected.main[3]-=total;projected.body[3]-=total;
+ return same(base,projected,record);
+}
 const source=(await readFile('test-fixtures/社会哲学概论-全书.txt','utf8')).split(/\r?\n/).map(s=>s.trim()).filter(s=>s.length>30).slice(0,80);
 const book={version:1,docId:'g73d',paragraphs:source,headings:source.map((s,i)=>({paraIndex:i,level:1,text:s.slice(0,30)})),footnotes:[],meta:{format:'txt',fileName:'社会哲学概论-全书.txt',charCount:source.join('').length},savedAt:1};
 async function load(port,width,theme,kind,mode){
@@ -138,7 +147,10 @@ try{
  for(const width of [375,768,800,900,999,1000,1280,1440])for(const theme of ['parchment','dark'])for(const kind of ['sample','long'])for(const mode of ['review','reading']){
  const pair=[];
  for(const port of [3506,3507]){await load(port,width,theme,kind,mode);const snaps=[];for(const position of ['top','middle']){await ev(position=>scrollTo(0,position==='top'?0:Math.floor((document.documentElement.scrollHeight-innerHeight)/2)),position);await settle();snaps.push(await ev(geometry));}pair.push(snaps);}
- for(let i=0;i<2;i++){assert(same(pair[0][i],pair[1][i]),'几何差异 '+JSON.stringify({width,theme,kind,mode,position:i,maxDelta}));scenes++;}
+ for(let i=0;i<2;i++){assert(samePanelFlow(pair[0][i],pair[1][i]),'几何差异 '+JSON.stringify({width,theme,kind,mode,position:i,maxDelta}));scenes++;
+ const base=pair[0][i],current=pair[1][i],below=Object.keys(current.chars).find(key=>current.beforePanels[key].length),above=Object.keys(current.chars).find(key=>!current.beforePanels[key].length);
+ for(const [name,key] of [["下方原文",below],["上方或被点句",above]])if(key){const bad=structuredClone(current);bad.chars[key][1]+=1;bad.chars[key][3]+=1;assert(!samePanelFlow(base,bad,false),name+"额外1px负对照");negatives++;}
+ }
  console.log(JSON.stringify({width,theme,kind,mode,geometry:2,maxDelta}));
  }
  for(const width of [768,800,900,999,1000,1280])for(const theme of ['parchment','moon-white','eye-green','dark']){

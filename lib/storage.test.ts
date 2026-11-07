@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assembleDocument, type ParseFormat } from "./parse/validate";
 import { segmentParagraphs } from "./segment";
 import {
-  StorageError,
+  StorageError, loadSavedExplanations, toggleSavedExplanation,
   computeDocId,
   loadDocument,
   loadExplanations,
@@ -413,4 +413,21 @@ describe("G-11 整句理解独立存储", () => {
     });
     await expect(saveExplanation(docId, sentence, "不会保存。")).rejects.toMatchObject({ code: "E1" });
   });
+});
+
+it("G-76 解读收藏只存标记，旧正文和白话收藏不被改写，取消后正文仍在",async()=>{
+  const [sentence]=segmentParagraphs(["潮水退去，沙滩显露。"]).sentences;
+  await saveExplanation("g76",sentence,"潮水退去以后露出了沙滩。");
+  await saveSavedGloss("g76",sentence,"潮水退了，沙滩露出来了。");
+  const oldExplain=localStorage.getItem("gloss:explain:g76"),oldGloss=localStorage.getItem("gloss:saved:g76");
+  expect((await loadSavedExplanations("g76",[sentence])).size).toBe(0);
+  const entry=await toggleSavedExplanation("g76",sentence);
+  expect(entry).not.toHaveProperty("text");
+  const record=JSON.parse(localStorage.getItem("gloss:explain-saved:g76")!);
+  expect(record.version).toBe(1);expect(Object.keys(record.entries[0]).sort()).toEqual(["paraIndex","savedAt","sourceHash","start"]);
+  expect((await loadSavedExplanations("g76",[sentence])).size).toBe(1);
+  expect((await loadSavedExplanations("g76",[{...sentence,text:"变动后的原文。"}])).size).toBe(0);
+  expect(await toggleSavedExplanation("g76",sentence)).toBeNull();
+  expect((await loadSavedExplanations("g76",[sentence])).size).toBe(0);
+  expect(localStorage.getItem("gloss:explain:g76")).toBe(oldExplain);expect(localStorage.getItem("gloss:saved:g76")).toBe(oldGloss);
 });

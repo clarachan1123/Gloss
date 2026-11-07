@@ -23,7 +23,7 @@ function geometry(){
  const rect=el=>{const r=el.getBoundingClientRect();return{x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height};};
  const area=document.querySelector('.landing-action-area'),layout=document.querySelector('.landing-layout');
  const card=document.querySelector('.landing-demonstration'),stage=document.querySelector('.landing-demo-stage');
- const row=document.querySelector('.landing-demo-visible .action-row'),current=document.querySelector('.landing-demo-step-current');
+ const row=[...document.querySelectorAll('.landing-demo-visible .action-row')].at(-1),current=document.querySelector('.landing-demo-step-current');
  return{viewport:{width:innerWidth,height:innerHeight},actions:rect(area),tailPadding:parseFloat(getComputedStyle(layout).paddingBottom),tailSpace:document.documentElement.scrollHeight-(card.getBoundingClientRect().bottom+scrollY),reservedHeight:parseFloat(document.querySelector('.landing-page').style.getPropertyValue('--landing-actions-height')),card:rect(card),stage:rect(stage),row:row?rect(row):null,current:current?rect(current):null,scrollY};
 }
 // 在手机真实布局视口内检查底板命中与不透明覆盖，不把原生滚动条算作页面内容。
@@ -71,6 +71,11 @@ try{
   scenes++;assert(Math.abs(value.actions.height-value.reservedHeight)<.5&&value.tailPadding>=value.actions.height+24,'实测等高尾部留白',value);passed++;
   await c.evaluate("scrollTo({top:document.documentElement.scrollHeight,behavior:'instant'})");await sleep(100);
   const end=await evaluate(geometry);scenes++;assert(end.row.y>=0&&end.row.bottom<=end.actions.y,'末尾操作行能滚至吸底区上方',end);passed++;
+  if(width===375){
+   const original=await c.evaluate("document.querySelectorAll('.landing-demo-visible .action-row')[document.querySelectorAll('.landing-demo-visible .action-row').length-1].getAttribute('style')");
+   try{await c.evaluate("[...document.querySelectorAll('.landing-demo-visible .action-row')].at(-1).style.transform='translateY(-2000px)'");const bad=await evaluate(geometry);negatives++;assert(!(bad.row.y>=0&&bad.row.bottom<=bad.actions.y),"末尾操作行位置负对照必须检出",bad);detected++;}
+   finally{await evaluate(style=>{const row=[...document.querySelectorAll(".landing-demo-visible .action-row")].at(-1);if(style===null)row.removeAttribute("style");else row.setAttribute("style",style);},original);const restored=await evaluate(geometry);assert(restored.row.y>=0&&restored.row.bottom<=restored.actions.y,"末尾操作行恢复正对照",restored);}
+  }
   for(const position of ['top','middle','bottom']){
    await evaluate(position=>scrollTo({top:position==='top'?0:position==='middle'?(document.documentElement.scrollHeight-innerHeight)/2:document.documentElement.scrollHeight,behavior:'instant'}),position);await sleep(100);
    const facts=await evaluate(boardFacts);scenes++;assert(boardValid(facts),'底板全宽不透明覆盖 '+width+'/'+position,facts);passed++;
@@ -171,16 +176,16 @@ try{
   await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
   await c.evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
   await evaluate(()=>{
-   const glyphs=()=>{const stage=document.querySelector('.landing-demo-stage').getBoundingClientRect(),out=[];
+   const glyphs=()=>{const stage=document.querySelector('.landing-demo-stage').getBoundingClientRect(),panel=document.querySelector('.landing-demo-visible .gloss-panel'),out=[];
     for(const span of document.querySelectorAll('.landing-demo-visible .sentence')){
      const walker=document.createTreeWalker(span,NodeFilter.SHOW_TEXT);let text;
-     while(text=walker.nextNode()){let offset=0;for(const char of text.data){const r=document.createRange();r.setStart(text,offset);r.setEnd(text,offset+char.length);const b=r.getBoundingClientRect();out.push({key:span.dataset.index+':'+(Number(span.dataset.offset)+offset),char,x:b.x-stage.x,y:b.y-stage.y});offset+=char.length;}}
+     while(text=walker.nextNode()){let offset=0;for(const char of text.data){const r=document.createRange();r.setStart(text,offset);r.setEnd(text,offset+char.length);const b=r.getBoundingClientRect();out.push({key:span.dataset.index+':'+(Number(span.dataset.offset)+offset),char,x:b.x-stage.x,y:b.y-stage.y,belowPanel:!!panel&&Number(span.dataset.index)>Number(panel.dataset.sentenceIndex??10)&&!!(panel.compareDocumentPosition(span)&Node.DOCUMENT_POSITION_FOLLOWING)});offset+=char.length;}}
     }return out;
    };
    window.__demoProbe={phases:{},cardTop:document.querySelector('.landing-demonstration').getBoundingClientRect().top,started:performance.now()};
    const sample=()=>{
     const pointer=document.querySelector('.landing-demo-pointer');const phase=pointer?.className.split(' ').find(c=>c.startsWith('landing-demo-pointer-'))?.replace('landing-demo-pointer-','');
-    if(phase&&!window.__demoProbe.phases[phase])window.__demoProbe.phases[phase]={glyphs:glyphs(),cardTop:document.querySelector('.landing-demonstration').getBoundingClientRect().top,gloss:document.querySelector('.landing-demo-visible .gloss-panel-text')?.textContent??'',explain:document.querySelector('.explain-result-text')?.textContent??''};
+    if(phase&&!window.__demoProbe.phases[phase])window.__demoProbe.phases[phase]={glyphs:glyphs(),panelHeight:document.querySelector('.landing-demo-visible .gloss-panel')?.getBoundingClientRect().height??0,cardTop:document.querySelector('.landing-demonstration').getBoundingClientRect().top,gloss:document.querySelector('.landing-demo-visible .gloss-panel-text')?.textContent??'',explain:document.querySelector('.explain-result-text')?.textContent??''};
     if(phase==='settled'&&performance.now()-(window.__demoProbe.settledAt??=performance.now())>=1250){clearInterval(window.__demoProbe.timer);window.__demoProbe.done=true;}
     if(performance.now()-window.__demoProbe.started>25000){clearInterval(window.__demoProbe.timer);window.__demoProbe.timeout=true;}
    };
@@ -199,13 +204,19 @@ try{
    const a=current.phases[phase],b=base.phases[phase];if(!a||!b||a.gloss!==b.gloss||a.explain!==b.explain)return false;
    const firstA=new Map(current.phases.waiting.glyphs.map(g=>[g.key,g])),firstB=new Map(base.phases.waiting.glyphs.map(g=>[g.key,g])),other=new Map(b.glyphs.map(g=>[g.key,g]));
    if(a.glyphs.length!==b.glyphs.length)return false;
-   for(const g of a.glyphs){const h=other.get(g.key),ga=firstA.get(g.key),gb=firstB.get(g.key);if(!h||!ga||!gb||g.char!==h.char||Math.abs((g.x-ga.x)-(h.x-gb.x))>=.5||Math.abs((g.y-ga.y)-(h.y-gb.y))>=.5)return false;}
+   if(!Number.isFinite(a.panelHeight)||!Number.isFinite(b.panelHeight)||current.phases.waiting.panelHeight!==0||base.phases.waiting.panelHeight!==0)return false;
+   // 仅面板下方原文扣除同阶段实测高度差，被点句与上方原文保留原判据。
+   for(const g of a.glyphs){const h=other.get(g.key),ga=firstA.get(g.key),gb=firstB.get(g.key);if(!h||!ga||!gb||g.char!==h.char||g.belowPanel!==h.belowPanel||Math.abs((g.x-ga.x)-(h.x-gb.x))>=.5)return false;const delta=(g.y-ga.y)-(h.y-gb.y);if(g.belowPanel?Math.abs(delta-(a.panelHeight-b.panelHeight))>.5:Math.abs(delta)>=.5)return false;}
   }return true;
  };
  for(const width of [375,390,430,1024,1280,1440]){
   const current=await captureDemo(origin,width),base=await captureDemo(baselineOrigin,width);
   scenes++;assert(demoValid(current),'卡片顶边与被点字位移零 '+width,current.phases);passed++;
+  await writeFile(join(tmpdir(),"g76-g73b-comparison-"+width+".json"),JSON.stringify({current,base}));
   scenes++;assert(sameDisplacement(current,base),'跨03c7884逐字位移一致 '+width);passed++;console.log(JSON.stringify({baselineGlyphComparison:{width,passed:true}}));
+  negativeData("下方原文额外多移1px",p=>sameDisplacement(p,base),current,p=>p.phases.settled.glyphs.find(g=>g.belowPanel).y+=1);
+  negativeData("被点句移1px",p=>sameDisplacement(p,base),current,p=>p.phases.settled.glyphs.find(g=>g.key.startsWith("10:")).y+=1);
+  negativeData("面板上方原文移1px",p=>sameDisplacement(p,base),current,p=>p.phases.settled.glyphs.find(g=>Number(g.key.split(":")[0])<10).y+=1);
   if(width===1280){negativeData('桌面卡片增高重居中',demoValid,current,p=>p.phases['gloss-ready'].cardTop+=41.53125);negativeData('被点句字移动',demoValid,current,p=>p.phases['gloss-ready'].glyphs.find(g=>g.key.startsWith('10:')).y+=2);negativeData('基线逐字位移差异',p=>sameDisplacement(p,base),current,p=>p.phases.settled.glyphs.at(-1).y+=2);}
  }
  await c.call('Page.navigate',{url:origin+'/'});await c.call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});await wait("!!document.querySelector('.landing-demo-visible')",'基线比较后恢复');

@@ -11,7 +11,7 @@ describe("G-64a 结果面板",()=>{
  it("语境标题精确、范围无标题；只有留下且不保留解释占位",()=>{
    for(const title of ["「潮汐」在这里指什么",undefined]){
      const host=document.createElement("div");host.innerHTML=renderToString(createElement(GlossPanel,{...props,selectionId:"范围",selectionOnly:true,title}));
-     expect(host.querySelectorAll(".action-row button")).toHaveLength(1);expect(host.querySelector(".action-row-explain")).toBeNull();
+     expect(host.querySelectorAll(".action-row button")).toHaveLength(2);expect(host.querySelector(".action-row-explain")).toBeNull();
      expect(host.querySelector(".gloss-panel-title")?.textContent).toBe(title);
    }
  });
@@ -21,7 +21,7 @@ describe("G-64a 结果面板",()=>{
  });
  it("默认单句仍保留听不懂",()=>{
    const host=document.createElement("div");host.innerHTML=renderToString(createElement(GlossPanel,props));
-   expect(host.querySelector(".action-row-explain")?.textContent).toBe("脉络解读");
+   expect(host.querySelector(".action-row-explain")?.getAttribute("aria-label")).toBe("脉络解读");
  });
  it("同插入点两个已留下范围与一个临时结果，不覆盖且原文只渲染一次",()=>{
    const region=(id:string,start:number,time:number|null):Region=>{

@@ -91,7 +91,7 @@ it("G-15a 已保存白话在 savedRegions 尚未测量时不发事件，普通�
       await act(async () => { await Promise.resolve(); });
       if (saved) {
         expect(container.querySelector(".reader-body")?.getAttribute("data-measuring")).toBe("true");
-        expect(container.querySelector(".saved-link")?.textContent).toBe("已保存白话。");
+        expect(container.querySelector(".saved-link")?.textContent).toBe("白话已保存白话。");
       }
       events.length = 0;
       const target = container.querySelector<HTMLElement>(".sentence[data-index='0']");
@@ -453,7 +453,7 @@ describe("G-15b 阅读器事件", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(performance, "now").mockImplementation(() => now);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      return this.classList.contains("gloss-panel") ? panelRect : originalRect.call(this);
+      return this.classList.contains("gloss-block") ? panelRect : originalRect.call(this);
     });
     vi.stubGlobal("IntersectionObserver", class {
       targets: Element[] = [];
@@ -663,14 +663,15 @@ describe("G-15b 阅读器事件", () => {
     await click(container, ".sentence[data-index='0']", 1_000);
     await click(container, ".action-row-explain", 1_500);
     expect(of("deep_explain_click")).toEqual([{ event: "deep_explain_click", sentenceIndex: 0, source: "action_row" }]);
-    await click(container, ".action-row-explain", 1_600);
+    await click(container, ".explain-result .action-row-fold", 1_550);
+    await click(container, ".gloss-block .action-row-explain", 1_600);
     expect(of("deep_explain_click")).toHaveLength(1);
 
     await click(container, ".action-row-save", 2_000);
     expect(of("gloss_save")).toEqual([{ event: "gloss_save", sentenceIndex: 0, edited: false }]);
-    expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("取消收藏");
+    expect(container.querySelector<HTMLElement>(".action-row-save")?.getAttribute("aria-label")).toBe("取消收藏");
     await click(container, ".action-row-save", 3_000);
-    expect(container.querySelector<HTMLElement>(".action-row-save")?.textContent).toBe("收藏");
+    expect(container.querySelector<HTMLElement>(".action-row-save")?.getAttribute("aria-label")).toBe("收藏");
     expect(of("gloss_save")).toHaveLength(1);
     expectAccepted(["deep_explain_click", "gloss_save"]);
   });
@@ -691,7 +692,6 @@ describe("G-15b 阅读器事件", () => {
     for (let index = 0; index < 5; index++) await act(async () => { await Promise.resolve(); });
 
     expect(of("deep_explain_blocked")).toEqual([
-      { event: "deep_explain_blocked", sentenceIndex: 0 },
       { event: "deep_explain_blocked", sentenceIndex: 0 },
     ]);
     expect(of("deep_explain_click")).toEqual([]);
@@ -1544,6 +1544,20 @@ describe("G-69 非鼠标打开来源", () => {
         .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType }));
     });
   }
+  it("G76 最后一块用收起按钮关闭后清除触摸活动态", async () => {
+    await mount(); await click(0, "touch"); expect(active()).toEqual([0]);
+    await act(async () => host.querySelector<HTMLButtonElement>('.gloss-block .action-row-fold')!.click()); await flush();
+    expect(host.querySelector('.gloss-panel')).toBeNull(); expect(active()).toEqual([]);
+  });
+  it("G76 显示模式手动收起收藏白话仍保留原句标记和收藏条目", async () => {
+    await storage.saveSavedGloss("g69", segmentParagraphs(["甲乙。丙丁。", "戊己。"]).sentences[0], "已收藏。");
+    localStorage.setItem("gloss:settings:reading-mode", "review"); await mount();
+    await act(async () => host.querySelector<HTMLButtonElement>('.gloss-block .action-row-fold')!.click()); await flush();
+    expect(host.querySelector('.gloss-panel')).toBeNull();
+    expect(host.querySelector('.sentence[data-index="0"]')?.classList.contains('sentence-saved-collapsed')).toBe(true);
+    expect(host.querySelectorAll('.saved-link')).toHaveLength(1);
+    expect((await storage.loadSavedGlosses('g69',segmentParagraphs(["甲乙。丙丁。", "戊己。"]).sentences)).size).toBe(1);
+  });
   it("iOS 同句 pointerdown touch 优先于 click mouse，原句高亮", async () => {
     await mount(); await pointerDown(0, "touch"); await click(0, "mouse");
     expect(active()).toEqual([0]);

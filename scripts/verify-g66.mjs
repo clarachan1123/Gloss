@@ -19,6 +19,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import WebSocket from "ws";
 
+process.env.G76_IMPORT_ONLY="1";
+const {whiteBlockFacts,assertWhiteBlocks,whiteBlockNegatives}=await import("./verify-g76.mjs");
 const ORIGIN = process.env.G66_ORIGIN ?? "http://127.0.0.1:3469";
 const BASE_ORIGIN = process.env.G66_BASE_ORIGIN ?? "http://127.0.0.1:3470";
 const EDGE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
@@ -111,7 +113,7 @@ async function choose(cdp, selector, label) {
     const cycle = document.querySelector(".reader-shape-cycle");
     if (selector.includes("白话显示形态") && cycle) { const name = label === "inline 小字" ? "小字" : label;
       if (!cycle.getAttribute("aria-label").includes(`：${name}，`)) cycle.click(); return; }
-    const button = [...document.querySelectorAll(selector)].find(b => b.textContent.trim() === label);
+    const button = [...document.querySelectorAll(selector)].find(b => (b.getAttribute('aria-label') ?? b.textContent.trim()) === label);
     if (!button || button.disabled) throw Error("Missing enabled button " + label);
     button.click();
   }, selector, label);
@@ -186,9 +188,19 @@ async function typographySamples(cdp, properties) {
   return evaluate(cdp, properties => {
     const samples = [];
     const add = (scope, prefix) => {
-      [scope, ...scope.querySelectorAll("*")].forEach((el, i) => {
+      [scope, ...scope.querySelectorAll("*")].filter(el => !el.matches(".gloss-block,.action-row-recall-slot,.action-row-fold,svg,svg *") && !(el.tagName === "SPAN" && el.closest(".action-row-recall"))).forEach((el) => {
         const s = getComputedStyle(el);
-        samples.push({ key: prefix + ":" + (el.matches(".action-row-save") ? "save" : el.matches(".action-row-explain") ? "explain" : el.matches(".action-row-notice") ? "notice" : el.tagName + ":" + el.className + ":" + i),
+        const tokenColor = name => { const probe=document.createElement("span");probe.style.color="var("+name+")";el.append(probe);const color=getComputedStyle(probe).color;probe.remove();return color; };
+        const expected = {};
+        if (el.matches(".action-row-save,.action-row-explain")) expected.color=tokenColor("--gloss");
+        if (el.closest(".explain-result")) {
+          const size=parseFloat(getComputedStyle(el.closest(".gloss-panel")).fontSize)+1;
+          const effective=el.matches(".explain-result-note")?size*.85:size;
+          expected.fontSize=effective+"px";expected.lineHeight=Number((effective*1.95).toFixed(4))+"px";
+          if(el.matches(".explain-result,.explain-result-text,.explain-result-pending"))expected.color=tokenColor("--text-body");
+          if(el.matches(".explain-result-pending"))expected.letterSpacing=size*.2+"px";
+        }
+        samples.push({ g76Expected:expected, key: prefix + ":" + (el.matches(".action-row-save") ? "save" : el.matches(".action-row-explain") ? "explain" : el.matches(".action-row-notice") ? "notice" : el.tagName + ":" + el.className),
           values: Object.fromEntries(properties.map(p => [p, s[p]])) });
       });
     };
@@ -277,7 +289,7 @@ async function copyCheck(cdp) {
   });
 }
 async function checks(cdp, width, branch) {
-  const report = { width, body: await bodyStyles(cdp, width, branch), spacing: await spacing(cdp, branch), styles: {}, operations: [], copies: [] };
+  const report = { width, body: await bodyStyles(cdp, width, branch), spacing: await spacing(cdp, branch), styles: {}, white: {}, operations: [], copies: [] };
   for (const mode of ["收起", "显示"]) for (const shape of ["inline", "bubble"]) {
     await evaluate(cdp, () => { localStorage.removeItem("gloss:saved:sample"); localStorage.removeItem("gloss:explain:sample"); });
     await reload(cdp);
@@ -289,6 +301,7 @@ async function checks(cdp, width, branch) {
     report.operations.push(await operation(cdp, prefix + "多开句末附近字", "click", 8, "end"));
     assert(await cdp.evaluate("document.querySelectorAll('.gloss-panel').length===3"), "Same paragraph multi-open");
     report.styles[prefix] = await typographySamples(cdp, STYLE_PROPERTIES);
+    report.white[prefix] = await evaluate(cdp,whiteBlockFacts);
     report.copies.push(await copyCheck(cdp));
     report.operations.push(await operation(cdp, prefix + "只收一句", "click", 6, "middle"));
     assert(await cdp.evaluate("document.querySelectorAll('.gloss-panel').length===2"), "Close only one");
@@ -300,14 +313,27 @@ async function checks(cdp, width, branch) {
     report.operations.push(await operation(cdp, prefix + "点空白", "blank", 5));
     assert(await cdp.evaluate("document.querySelectorAll('.gloss-panel').length===0"), "Blank close");
     report.operations.push(await operation(cdp, prefix + "首次句末附近字", "click", 5, "end"));
-    await choose(cdp, '.gloss-panel[data-sentence-index="5"] .action-row-save', branch ? "收藏" : "留下");
+    await choose(cdp, '.gloss-panel[data-sentence-index="5"] .action-row-save', "收藏");
     const saved = await cdp.evaluate("localStorage.getItem('gloss:saved:sample')");
     assert(saved, "Saved sample storage");
     await reload(cdp);
     assert(await cdp.evaluate("localStorage.getItem('gloss:saved:sample')") === saved, "Refresh kept saved storage");
-    // In display mode it is already permanent; clicking only changes its action row. In collapsed mode it opens it.
+    // G-76 显示模式下点已展开原句会整句收起；收起模式下仍打开收藏块。
     report.operations.push(await operation(cdp, prefix + "保存刷新后点击", "click", 5, "middle"));
-    assert(await cdp.evaluate("!!document.querySelector('.gloss-panel-saved[data-sentence-index=\"5\"]')"), "Saved refresh panel");
+    const expectedPanel = !(branch && mode === "显示");
+    const savedPanelPresent = () => !!document.querySelector('.gloss-panel-saved[data-sentence-index="5"]');
+    assert(await evaluate(cdp, savedPanelPresent) === expectedPanel, "Saved refresh panel");
+    await evaluate(cdp, expected => {
+      if (expected) document.querySelector('.gloss-panel-saved[data-sentence-index="5"]').classList.replace("gloss-panel-saved","g76-negative-saved");
+      else { const panel=document.createElement("div");panel.id="g76-negative-saved";panel.className="gloss-panel-saved";panel.dataset.sentenceIndex="5";document.body.append(panel); }
+    }, expectedPanel);
+    assert(await evaluate(cdp, savedPanelPresent) !== expectedPanel, "Saved refresh panel negative detected");
+    await evaluate(cdp, expected => {
+      if (expected) document.querySelector(".g76-negative-saved").classList.replace("g76-negative-saved","gloss-panel-saved");
+      else document.querySelector("#g76-negative-saved").remove();
+    }, expectedPanel);
+    assert(await evaluate(cdp, savedPanelPresent) === expectedPanel, "Saved refresh panel negative restored");
+    console.log(JSON.stringify({width,mode,shape,savedPanelNegativeDetected:1}));
     await bodyStyles(cdp, width, branch);
   }
   return report;
@@ -355,6 +381,34 @@ for (const width of WIDTHS) {
   const branch = await run(ORIGIN, width, true);
   console.log(JSON.stringify({ run: "base", width }));
   const base = await run(BASE_ORIGIN, width, false);
+  let whiteNegatives=0;
+  for(const group of Object.keys(base.white)){
+    assertWhiteBlocks(base.white[group],branch.white[group],width);
+    whiteNegatives+=whiteBlockNegatives(base.white[group],branch.white[group],width);
+  }
+  console.log(JSON.stringify({width,whiteWidthAndWrap:true,whiteNegatives}));
+  // 新结构按语义节点排序；本卡有意变化的属性先严格核对，再还原比较口径。
+  const matchesExpected = (values, expected) => Object.entries(expected).every(([key,value])=>values[key]===value);
+  const normalized = structuredClone(branch.styles);
+  for (const group of Object.keys(normalized)) {
+    normalized[group].sort((a,b)=>a.key.localeCompare(b.key));
+    base.styles[group].sort((a,b)=>a.key.localeCompare(b.key));
+    for (const item of normalized[group]) {
+      const prior=base.styles[group].find(p=>p.key===item.key);
+      assert(prior,"样式语义节点在对照中存在",item.key);
+      for(const [property,expected] of Object.entries(item.g76Expected)) {
+        assert(item.values[property]===expected,"G76有意样式精确符合", {key:item.key,property,actual:item.values[property],expected});
+        // 同一校验器必须拒绝错误值。
+        const wrong=property==="color"?"rgb(1, 2, 3)":"999px";
+        assert(!matchesExpected({...item.values,[property]:wrong},item.g76Expected),"G76样式负对照检出");
+        item.values[property]=prior.values[property];
+      }
+      delete item.g76Expected;
+    }
+    for(const item of base.styles[group])delete item.g76Expected;
+  }
+  branch.styles=normalized;
+  console.log(JSON.stringify({width,g76StyleAdaptation:true}));
   assert(JSON.stringify(branch.styles) === JSON.stringify(base.styles), "Unchanged gloss/action/notes computed styles", { width, branch: branch.styles, base: base.styles });
   assert(branch.operations.length === base.operations.length, "Same scenarios");
   for (let i = 0; i < branch.operations.length; i++) {

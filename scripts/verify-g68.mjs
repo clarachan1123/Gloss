@@ -11,7 +11,9 @@ const LAYOUT_ORIGIN = process.env.G68_ORIGIN ?? "http://127.0.0.1:3468";
 const ORIGIN = process.env.G68_STREAM_ORIGIN ?? "http://localhost:3430";
 const LEGACY = process.env.G68_LEGACY_DRIFT === "1";
 const REFERENCE = process.env.G68_REFERENCE === "1";
-const STREAM_ONLY = process.env.G68_GROUP === "c";
+// 同一副本的开发服务和生产构建分阶段运行，完整回归须依次执行 layout 与 stream。
+const GROUP = process.env.G68_GROUP;
+const STREAM_ONLY = GROUP === "c" || GROUP === "stream";
 const EDGE = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const assert = (value, label, detail) => { if (!value) throw Error(label + (detail === undefined ? "" : ": " + JSON.stringify(detail))); };
@@ -42,7 +44,7 @@ async function removeProfiles() {
     }
   }
 }
-const reportPath = join(ROOT, REFERENCE ? "tmp-g68-base-c.json" : LEGACY ? "tmp-g68-negative.json" : "tmp-g68-verify.json");
+const reportPath = join(ROOT, REFERENCE ? "tmp-g68-base-c.json" : LEGACY ? "tmp-g68-negative.json" : GROUP === "layout" ? "tmp-g68-layout.json" : GROUP === "stream" ? "tmp-g68-stream.json" : "tmp-g68-verify.json");
 async function saveReport() { await writeFile(reportPath, JSON.stringify({ legacy: LEGACY, results }, null, 2)); }
 async function wait(fn, label) { const end = Date.now() + 20000; while (Date.now() < end) { if (await fn()) return; await sleep(50); } throw Error("Timeout: " + label); }
 async function installROLogpoint(c, scripts) {
@@ -340,7 +342,7 @@ try {
     });
   }
   if (LEGACY) { assert(negativeFailures >= 1, "Legacy drift negative control was not detected"); console.log(JSON.stringify({ negativeFailures, maxDelta: Math.max(...results.map(r => Math.abs(r.delta))) })); console.log("G-68 legacy negative control detected"); }
-  else {
+  else if (GROUP !== "layout") {
     for (const width of [375, 1280]) for (let iteration = 1; iteration <= 5; iteration++) {
       const clicked = await sample(width, iteration, true), control = await sample(width, iteration, false, clicked);
       const result = { group: "c", width, iteration, clicked, control, difference: clicked.finalY - control.finalY }; results.push(result); await saveReport();
@@ -348,7 +350,7 @@ try {
       if (!REFERENCE) assert(clicked.reverseCount === 0 && clicked.reverseTotal === 0, "G-68 c: reverse RO scroll", result);
 
     }
-    if (!REFERENCE && !STREAM_ONLY) {
+    if (!REFERENCE && GROUP !== "c") {
       for (const width of [375, 1280]) for (let iteration = 1; iteration <= 5; iteration++) {
         const result = { group: "d", width, iteration, ...await streamingAbove(width, iteration) };
         results.push(result); await saveReport();

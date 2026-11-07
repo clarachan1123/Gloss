@@ -34,6 +34,7 @@ export const Paragraph = memo(function Paragraph({
   onBeforeReveal,
   onAfterReveal,
   onSave,
+  onBlockToggle, onExplainSave, onSelectionFold,
   onExplain,
   onExplainRetry,
   onExplainBlocked,
@@ -78,6 +79,8 @@ export const Paragraph = memo(function Paragraph({
           const title = result?.resultKind === "term" ? "「" + (result.selection.autoPunctuation ? result.selection.text.slice(0,-result.selection.autoPunctuation.length) : result.selection.text) + "」在这里指什么" : undefined;
           return <GlossPanel key={slot ? entry.glossKey : entry.saved ? "saved:" + entry.index : entry.glossKey ?? glossKey ?? "transient:" + entry.index}
             ref={slot?.panelRef ?? (panelFor ? panelFor(entry.index) : entry.saved ? undefined : panelRef)}
+            blocks={entry.blocks} explainSaved={entry.explainSaved} onBlockToggle={onBlockToggle} onExplainSave={onExplainSave}
+            onSelectionFold={result ? () => onSelectionFold?.(result.id) : undefined}
             view={entry.view} onRetry={slot?.onRetry ?? (()=>onRetry(entry.index))}
             onBeforeReveal={slot?.onBeforeReveal ?? onBeforeReveal} onAfterReveal={slot?.onAfterReveal ?? onAfterReveal} saved={entry.saved}
             onSave={slot?.onSave ?? (()=>onSave(entry.index))} source={result?.selection.text ?? sentences[entry.index]?.text} presentation={entry.presentation}

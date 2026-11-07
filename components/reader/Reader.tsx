@@ -72,6 +72,8 @@ import {
   type StorageErrorCode,
   type StoredDocument,
 } from "@/lib/storage";
+import { BookmarkIcon } from "./ActionRow";
+import { loadSavedExplanations, toggleSavedExplanation, type SavedExplanation } from "@/lib/storage";
 import GlossPanel, { IDLE_EXPLAIN_VIEW, LOADING_VIEW, type ExplainView, type GlossRevealProgress, type GlossView } from "./GlossPanel";
 import { measureSplit, paragraphLength, paragraphOriginalFragments, rectOf, splitFragmentClassName, splitParagraphTail, slicePieces } from "./lineSplit";
 export { paragraphOriginalFragments, splitFragmentClassName } from "./lineSplit";
@@ -200,6 +202,10 @@ export default function Reader({ docId }: { docId: string }) {
   const queuedTypographyAnchorRef = useRef<CharAnchor | null>(null);
   const typographyGestureTimerRef = useRef<number | undefined>(undefined);
   const typographyLayoutRef = useRef<{ anchor: CharAnchor | null; scrollY: number } | null>(null);
+  const [savedSheetOpen, setSavedSheetOpen] = useState(false);
+  const [savedFilter, setSavedFilter] = useState<"all"|"gloss"|"explain">("all");
+  const savedButtonRef = useRef<HTMLButtonElement>(null);
+  const [feedbackCloseRequest, setFeedbackCloseRequest] = useState(0);
   const [mobileTypographyOpen, setMobileTypographyOpen] = useState(false);
   const mobileTypographyOpenRef = useRef(false);
   const [mobileProgress, setMobileProgress] = useState<ReturnType<typeof readerProgress>>(null);
@@ -430,6 +436,15 @@ export default function Reader({ docId }: { docId: string }) {
   const suppressOutsideClickRef = useRef(false);
   const positionRef = useRef<PositionAnchor>({ index: 0, offset: 0, docTop: 0, layout: "", measure: "" });
   const transactionRef = useRef<Transaction | null>(null);
+  const latestSentenceAnchorRef = useRef<CharAnchor | null>(null);
+  const retainedBlockAnchorRef = useRef<{index:number;block:"gloss"|"explain";offset:number;top:number}|null>(null);
+  function blockCharacterRect(index:number,block:"gloss"|"explain",offset:number) {
+    const host=bodyRef.current?.querySelector(`.gloss-panel[data-sentence-index="${index}"] ${block==="gloss"?".gloss-panel-text":".explain-result-text"}`);
+    if(!host)return null;
+    const walker=document.createTreeWalker(host,NodeFilter.SHOW_TEXT);let remaining=offset;
+    while(walker.nextNode()){const node=walker.currentNode as Text;if(remaining<node.length){const range=document.createRange();range.setStart(node,remaining);range.setEnd(node,remaining+1);return range.getBoundingClientRect();}remaining-=node.length;}
+    return null;
+  }
   const growthAnchorRef = useRef<{ index: number; panel: HTMLElement; anchor: CharAnchor; scrollY: number } | null>(null);
   const animationRef = useRef<Animation | null>(null);
   const collapseAnimationsRef = useRef(new Map<number, ReturnType<HTMLElement["animate"]>[]>());
@@ -447,6 +462,15 @@ export default function Reader({ docId }: { docId: string }) {
   const saveActionsRef = useRef({ commit, commitSaved });
 
   // 功能二请求属于 Reader，不属于可能随收起卸载的 GlossPanel。
+  const [savedExplanations, setSavedExplanations] = useState<ReadonlyMap<number, SavedExplanation>>(new Map());
+  const savedExplanationsRef = useRef(savedExplanations);
+  savedExplanationsRef.current = savedExplanations;
+  const [blockOverrides, setBlockOverrides] = useState<ReadonlyMap<number, {gloss:boolean;explain:boolean}>>(new Map());
+  const blockOverridesRef = useRef(blockOverrides);
+  const layoutSavedRef = useRef<ReadonlyMap<number, SavedGloss>>(EMPTY_SAVED_GLOSSES);
+  const blockActionsRef = useRef<{toggle:(index:number,block:"gloss"|"explain",visible:boolean)=>void;save:(index:number)=>Promise<"saved"|"removed"|StorageErrorCode>} | null>(null);
+  const toggleBlock = useCallback((index:number,block:"gloss"|"explain",visible:boolean)=>blockActionsRef.current?.toggle(index,block,visible),[]);
+  const saveExplain = useCallback((index:number)=>blockActionsRef.current!.save(index),[]);
   const [explainViews, setExplainViews] = useState<ReadonlyMap<number, ExplainView>>(EMPTY_EXPLAIN_VIEWS);
   const explainViewsRef = useRef<ReadonlyMap<number, ExplainView>>(EMPTY_EXPLAIN_VIEWS);
   const explainRunsRef = useRef(new Map<string, number>());
@@ -480,7 +504,7 @@ export default function Reader({ docId }: { docId: string }) {
     if (measurement || savedRegions === null) return;
     const attempt = readAttemptRef.current.get(index);
     if (!attempt) return;
-    const panel = panelsRef.current.get(index) ?? null;
+    const panel = panelsRef.current.get(index)?.querySelector<HTMLElement>(".gloss-block") ?? null;
     const displayedText = panel?.querySelector<HTMLElement>(".gloss-panel-text")?.textContent ?? "";
     const fullyShown = panel?.dataset.state === "done";
     const now = performance.now();
@@ -607,6 +631,8 @@ export default function Reader({ docId }: { docId: string }) {
     setState({ status: "loading" });
     setSampleBreathed(isSample && hasSampleBreathed());
     savedGlossesRef.current = EMPTY_SAVED_GLOSSES;
+    setSavedExplanations(new Map()); savedExplanationsRef.current = new Map();
+    blockOverridesRef.current = new Map(); setBlockOverrides(new Map());
     explainViewsRef.current = EMPTY_EXPLAIN_VIEWS;
     setExplainViews(EMPTY_EXPLAIN_VIEWS);
     setSavedRegions(null);
@@ -616,6 +642,7 @@ export default function Reader({ docId }: { docId: string }) {
     setGlosses(new Map());
     setRetryCounts(new Map());
     setRecentIndex(null);
+    blockOverridesRef.current = new Map(); setBlockOverrides(new Map());
     setActiveSavedIndex(null);
     updateExpandedSavedIndexes(new Set());
     setFontsReady(false);
@@ -637,10 +664,12 @@ export default function Reader({ docId }: { docId: string }) {
       // Web Crypto 的身份核对完成前不提交正文，避免先出现原文、随后插入保存白话。
       const currentSentences = segmentParagraphs(safeDoc.paragraphs).sentences;
       setGlossShape(readGlossShape());
-      void Promise.all([loadSavedGlosses(docId, currentSentences), loadExplanations(docId, currentSentences)])
-        .then(([savedGlosses, explanations]) => {
+      void Promise.all([loadSavedGlosses(docId, currentSentences), loadExplanations(docId, currentSentences), loadSavedExplanations(docId, currentSentences)])
+        .then(([savedGlosses, explanations, savedExplain]) => {
           if (cancelled) return;
           savedGlossesRef.current = savedGlosses;
+          const validMarks = new Map([...savedExplain].filter(([index]) => explanations.has(index)));
+          savedExplanationsRef.current = validMarks; setSavedExplanations(validMarks);
           const loadedViews = new Map<number, ExplainView>(
             [...explanations].map(([index, entry]) => [
               index,
@@ -697,6 +726,17 @@ export default function Reader({ docId }: { docId: string }) {
   }, [doc, docId, clearGlossHover, clearSentenceHover, syncSentenceHover]);
   const headingsAvailable = state.status === "ready" && state.headingsAvailable;
   const savedGlosses = state.status === "ready" ? state.savedGlosses : EMPTY_SAVED_GLOSSES;
+  // 合并集合只用于布局；白话收藏正文与解读标记仍各自保存。
+  const layoutSaved = useMemo(() => {
+    const entries = new Map(savedGlosses);
+    for (const [index, mark] of savedExplanations) if (!entries.has(index)) entries.set(index, {...mark, text:"",kind:"saved"});
+    return entries;
+  }, [savedGlosses, savedExplanations]);
+  layoutSavedRef.current = layoutSaved;
+  function blocksFor(index: number) {
+    return blockOverridesRef.current.get(index) ?? {gloss: savedGlossesRef.current.has(index) || !savedExplanationsRef.current.has(index), explain: savedExplanationsRef.current.has(index)};
+  }
+
 
   // G-13：只有文档已成功载入才计作一次打开，避免无效路由污染最近阅读。
   useEffect(() => {
@@ -820,7 +860,7 @@ export default function Reader({ docId }: { docId: string }) {
   function publishSelectionResults(next: ReadonlyMap<string, SelectionResult>) {
     selectionResultsRef.current = next; setSelectionResults(next);
   }
-  function selectionVisible(result: SelectionResult, mode = readingMode) { return !result.saved || mode === "review" || result.expanded; }
+  function selectionVisible(result: SelectionResult, mode = readingMode) { return !result.manuallyCollapsed && (!result.saved || mode === "review" || result.expanded); }
   function selectionPanelFor(id: string) {
     let callback = selectionPanelCallbacks.current.get(id);
     if (!callback) { callback = node => { if (node) selectionPanelsRef.current.set(id, node); else selectionPanelsRef.current.delete(id); }; selectionPanelCallbacks.current.set(id, callback); }
@@ -867,6 +907,15 @@ export default function Reader({ docId }: { docId: string }) {
     }
     if (changed) stageSelectionResults(next, anchor);
   }
+  const foldSelection = useCallback((id:string) => selectionFoldRef.current?.(id), []);
+  const selectionFoldRef = useRef<((id:string)=>void)|null>(null);
+  selectionFoldRef.current = id => {
+    const result = selectionResultsRef.current.get(id);
+    if (!result) return;
+    if (result.saved) stageSelectionResults(new Map(selectionResultsRef.current).set(id,{...result,manuallyCollapsed:true,expanded:false}));
+    else dismissSelectionResults([id]);
+  };
+
   function captureSelectionGrowth(id: string): CharAnchor | null {
     const body = bodyRef.current, panel = selectionPanelsRef.current.get(id);
     if (typographyLayoutRef.current) return typographyLayoutRef.current.anchor;
@@ -1039,9 +1088,9 @@ export default function Reader({ docId }: { docId: string }) {
     const body = bodyRef.current;
     const target = document.elementFromPoint(x,y)?.closest<HTMLElement>(".sentence");
     const anchor = target ? anchorAtClick(target,x,y) : body ? anchorAtViewportTop(body) : null;
-    if (result.saved && readingMode === "review") stageSelectionResults(new Map(selectionResultsRef.current).set(result.id, { ...result, actionsVisible: !result.actionsVisible }), anchor);
+    if (result.saved && readingMode === "review" && !result.manuallyCollapsed) stageSelectionResults(new Map(selectionResultsRef.current).set(result.id, { ...result, actionsVisible: !result.actionsVisible }), anchor);
     else if (selectionVisible(result)) dismissSelectionResults([result.id], anchor);
-    else stageSelectionResults(new Map(selectionResultsRef.current).set(result.id, { ...result, expanded: true, actionsVisible: true,
+    else stageSelectionResults(new Map(selectionResultsRef.current).set(result.id, { ...result, manuallyCollapsed:false, expanded: true, actionsVisible: true,
       nonMouse: lastPointerDownRef.current?.pointerType !== "mouse" }), anchor);
     lastPointerDownRef.current = null;
     return true;
@@ -1050,7 +1099,7 @@ export default function Reader({ docId }: { docId: string }) {
     const result = selectionResultsRef.current.get(id); if (!result) return;
     typographyLayoutRef.current = null;
     selectionJumpRef.current = result.selection.start;
-    stageSelectionResults(new Map(selectionResultsRef.current).set(id, { ...result, expanded: true }), null);
+    stageSelectionResults(new Map(selectionResultsRef.current).set(id, { ...result, manuallyCollapsed:false, expanded: true }), null);
   }
   useLayoutEffect(() => {
     const body = bodyRef.current;
@@ -1059,7 +1108,7 @@ export default function Reader({ docId }: { docId: string }) {
     for (const result of selectionResults.values()) {
       const ranges = sourceSelectionRanges(body, doc.paragraphs, result.selection);
       if (selectionVisible(result)) (result.nonMouse ? touch : mouse).push(...ranges);
-      else if (result.saved && readingMode === "reading") collapsed.push(...ranges);
+      else if (result.saved) collapsed.push(...ranges);
     }
     for (const [name,ranges] of [["gloss-result-mouse",mouse],["gloss-result-touch",touch],["gloss-result-saved",collapsed]] as const) {
       CSS.highlights.delete(name);
@@ -1171,7 +1220,7 @@ export default function Reader({ docId }: { docId: string }) {
     return [...new Set([
       ...next.keys(),
       ...[...selectionResultsRef.current.values()].filter(result => selectionVisible(result, mode)).map(result => result.index),
-      ...[...savedGlossesRef.current.keys()].filter((index) => mode === "review" || expanded.has(index)),
+      ...[...layoutSavedRef.current.keys()].filter((index) => (mode === "review" || expanded.has(index)) && (blocksFor(index).gloss || blocksFor(index).explain)),
     ])].sort((a, b) => a - b);
   }
   function stageLayouts(paras: ReadonlySet<number>, from: number | ReadonlyMap<number, number>,
@@ -1223,36 +1272,35 @@ export default function Reader({ docId }: { docId: string }) {
       savedRegionArraysRef.current,
       doc?.paragraphs.length ?? 0,
       sentences,
-      savedGlosses,
+      layoutSaved,
       savedRegions,
       glossShape,
       explainViews,
     );
     savedRegionArraysRef.current = next;
     return next;
-  }, [doc, explainViews, glossShape, savedGlosses, savedRegions, sentences]);
+  }, [doc, explainViews, glossShape, savedGlosses, layoutSaved, savedRegions, sentences]);
 
   const visibleSavedRegionsByParagraph = useMemo(() => {
-    return selectVisibleSavedRegions(savedRegionsByParagraph, readingMode, expandedSavedIndexes);
-  }, [expandedSavedIndexes, readingMode, savedRegionsByParagraph]);
+    return selectVisibleSavedRegions(savedRegionsByParagraph, readingMode, expandedSavedIndexes).map(regions => regions.filter(region => { const blocks = blocksFor(region.index); return blocks.gloss || blocks.explain; }));
+  }, [blockOverrides, expandedSavedIndexes, readingMode, savedRegionsByParagraph]);
 
   const savedMarkersByParagraph = useMemo(() => {
-    const next = buildSavedMarkersByParagraph(
-      savedMarkerArraysRef.current,
-      doc?.paragraphs.length ?? 0,
-      sentences,
-      savedGlosses,
-      readingMode,
-      expandedSavedIndexes,
-    );
+    // 任一收藏块被收起时保留原句入口；显示模式的临时收起也适用。
+    const shown = new Set([...layoutSaved.keys()].filter(index => {
+      const blocks = blocksFor(index);
+      const slotVisible = readingMode === "review" || expandedSavedIndexes.has(index) || expansions.has(index);
+      return slotVisible && (!savedGlosses.has(index) || blocks.gloss) && (!savedExplanations.has(index) || blocks.explain);
+    }));
+    const next = buildSavedMarkersByParagraph(savedMarkerArraysRef.current,doc?.paragraphs.length ?? 0,sentences,layoutSaved,"reading",shown);
     savedMarkerArraysRef.current = next;
     return next;
-  }, [doc, expandedSavedIndexes, readingMode, savedGlosses, sentences]);
+  }, [doc, blockOverrides, expandedSavedIndexes, expansions, readingMode, savedGlosses, savedExplanations, layoutSaved, sentences]);
 
   const activeIndexesByParagraph = useMemo(() => {
     const groups: number[][] = Array.from({ length: doc?.paragraphs.length ?? 0 }, () => []);
     for (const index of nonMouseOpenedIndexes) {
-      const visible = savedGlosses.has(index)
+      const visible = layoutSaved.has(index)
         ? readingMode === "reading" && expandedSavedIndexes.has(index) : expansions.has(index);
       if (visible && sentences[index]) groups[sentences[index].paraIndex]?.push(index);
     }
@@ -1274,7 +1322,7 @@ export default function Reader({ docId }: { docId: string }) {
     }
     for (const item of expansions.values()) {
       const layout = savedRegions?.get(item.index);
-      if (!layout || savedGlosses.has(item.index)) continue;
+      if (!layout || layoutSaved.has(item.index)) continue;
       groups[item.paraIndex] = [...(groups[item.paraIndex] ?? NO_REGIONS), {
         index: item.index, splitAt: layout.splitAt, view: glosses.get(item.index) ?? LOADING_VIEW,
         saved: false, presentation: glossShape, actionVisible: true,
@@ -1293,8 +1341,11 @@ export default function Reader({ docId }: { docId: string }) {
         selectionSlot: { result, panelRef: selectionPanelFor(result.id), onRetry: () => retrySelectionResult(result.id),
           onSave: () => saveSelectionResult(result.id), onBeforeReveal: () => captureSelectionGrowth(result.id), onAfterReveal: restoreSelectionGrowth } }];
     }
-    return groups;
-  }, [activeSavedIndex, expansions, explainViews, glosses, glossShape, retryCounts, savedGlosses, savedRegions, sentences, visibleSavedRegionsByParagraph, selectionResults]);
+    return groups.map(regions => regions.map(region => region.selectionSlot ? region : {
+      ...region, saved: savedGlosses.has(region.index), blocks: blocksFor(region.index), explainSaved: savedExplanations.has(region.index),
+      view: savedGlosses.has(region.index) ? region.view : glosses.get(region.index) ?? LOADING_VIEW,
+    }).filter(region => region.selectionSlot || !region.blocks || region.blocks.gloss || region.blocks.explain));
+  }, [blockOverrides, savedExplanations, activeSavedIndex, expansions, explainViews, glosses, glossShape, retryCounts, savedGlosses, layoutSaved, savedRegions, sentences, visibleSavedRegionsByParagraph, selectionResults]);
 
   const preloadAutoGloss = useCallback(
     (structure: string | null) => {
@@ -1377,7 +1428,7 @@ export default function Reader({ docId }: { docId: string }) {
       const measure = layoutMeasureKey(body);
       const typographyLayout = typographyLayoutRef.current;
       if (typographyLayout) {
-        if (measure !== current.measure && (savedGlossesRef.current.size > 0 || expansionsRef.current.size > 0 || selectionResultsRef.current.size > 0)) {
+        if (measure !== current.measure && (layoutSavedRef.current.size > 0 || expansionsRef.current.size > 0 || selectionResultsRef.current.size > 0)) {
           pendingMeasureTransactionRef.current = { anchor: typographyLayout.anchor, animateOpen: false, adjustVisibility: false };
           setSavedRegions(null);
           return;
@@ -1392,7 +1443,7 @@ export default function Reader({ docId }: { docId: string }) {
       }
       // 撑开 / 收起已经自己锚定过视口（见下方事务），这里不再二次校正
       if (key === current.layout) return;
-      if (measure !== current.measure && (savedGlossesRef.current.size > 0 || expansionsRef.current.size > 0 || selectionResultsRef.current.size > 0)) {
+      if (measure !== current.measure && (layoutSavedRef.current.size > 0 || expansionsRef.current.size > 0 || selectionResultsRef.current.size > 0)) {
         // 测量提交不消费本事务；量完、常驻区与 transient 都插回后才由事务 effect 锚定。
         pendingMeasureTransactionRef.current = { anchor: anchorAtViewportTop(body), animateOpen: false };
         setSavedRegions(null);
@@ -1556,7 +1607,7 @@ export default function Reader({ docId }: { docId: string }) {
     }
 
     revealProgressBySentence.delete(index);
-    const savedClick = savedGlosses.has(index);
+    const savedClick = layoutSaved.has(index);
     const nextCount = savedClick ? null : (clickCountsRef.current.get(index) ?? 0) + 1;
     if (nextCount !== null) clickCountsRef.current.set(index, nextCount);
     const cacheHit = nextCount !== null && !isSample &&
@@ -1570,6 +1621,7 @@ export default function Reader({ docId }: { docId: string }) {
     });
     cancelPendingCollapse(index);
     const anchor = anchorAtClick(target, clientX, clientY);
+    latestSentenceAnchorRef.current = anchor;
     const splitAt = headingByParagraph.has(sentence.paraIndex) ? null : measureSplit(body, sentence.paraIndex, index);
     // 命中必须和撑开状态同一批 React 更新：第一次 DOM 更新直接放完整白话，不先经过加载态。
     const saved = savedGlosses.get(index);
@@ -1627,20 +1679,80 @@ export default function Reader({ docId }: { docId: string }) {
   }
 
   function toggleSentence(index: number, target: HTMLElement, clientX: number, clientY: number, nonMouse: boolean, reuse?: string) {
-    if (savedGlosses.has(index)) {
-      const anchor = anchorAtClick(target, clientX, clientY);
-      if (readingMode === "reading") {
-        if (expandedSavedIndexes.has(index)) collapseIndexes([index], true, anchor, true);
-        else expandSaved(index, { anchor, showActions: true, nonMouse });
-      } else {
-        commitSaved(activeSavedIndex === index ? null : index, { anchor });
-      }
-    } else if (expansions.has(index)) {
-      collapseIndexes([index], true, anchorAtClick(target, clientX, clientY), true);
-    } else {
-      open(index, target, clientX, clientY, nonMouse, reuse);
+    const anchor = anchorAtClick(target, clientX, clientY);
+    latestSentenceAnchorRef.current = anchor;
+    const blocks = blocksFor(index);
+    const visible = (blocks.gloss || blocks.explain) && (expansionsRef.current.has(index) || (layoutSaved.has(index) && (readingMode === "review" || expandedSavedIndexesRef.current.has(index))));
+    if (visible) {
+      setBlockVisibility(index, {gloss:false,explain:false}, anchor);
+      collapseIndexes([index], true, anchor, true);
+      return;
     }
+    const desired = {gloss:savedGlosses.has(index) || !savedExplanations.has(index), explain:savedExplanations.has(index)};
+    setBlockVisibility(index, desired, anchor, true);
+    if (layoutSaved.has(index)) expandSaved(index, {anchor,showActions:true,nonMouse});
+    else open(index, target, clientX, clientY, nonMouse, reuse);
   }
+
+  function setBlockVisibility(index: number, blocks: {gloss:boolean;explain:boolean}, anchor?: CharAnchor | null, opening = false) {
+    const body = bodyRef.current;
+    const previous = blocksFor(index);
+    const preferredAnchor = anchor ?? (body ? anchorAtViewportTop(body) : null);
+    const originalVisible = preferredAnchor !== null && preferredAnchor.viewportTop >= mobileReaderTop() && preferredAnchor.viewportTop < window.innerHeight;
+    // 原文参照全在屏外时，才保留仍在阅读的另一块中的可见字。
+    const retained = blocks.explain && blocksFor(index).explain ? "explain" : blocks.gloss && blocksFor(index).gloss ? "gloss" : null;
+    retainedBlockAnchorRef.current=null;
+    if(retained && !originalVisible){for(let offset=0;;offset++){const rect=blockCharacterRect(index,retained,offset);if(!rect)break;if(rect.top>=mobileReaderTop()&&rect.bottom<=window.innerHeight){retainedBlockAnchorRef.current={index,block:retained,offset,top:rect.top};break;}}}
+    // 点原句首次展开时，由原展开事务负责 G6 微调，不能被分块事务抢先占用。
+    if (!opening) setTransaction({anchor:preferredAnchor,animateOpen:false,adjustVisibility:false});
+    const next = new Map(blockOverridesRef.current).set(index,blocks);
+    blockOverridesRef.current = next; setBlockOverrides(next);
+    const sentence = sentences[index];
+    // 插入点仍在时只改变块高度，避免为生成解读重建整句可见性观察器。
+    const keepsSlot = (previous.gloss || previous.explain) && (blocks.gloss || blocks.explain) && savedRegions?.has(index);
+    if (sentence && !keepsSlot) stageLayouts(new Set([sentence.paraIndex]), index);
+  }
+  blockActionsRef.current = {
+    toggle(index,block,visible) {
+      const current = blocksFor(index);
+      if (current[block] === visible) return;
+      if (block === "gloss" && !visible) removeAttempts([index],true);
+      const nextBlocks = {...current,[block]:visible};
+      setBlockVisibility(index,nextBlocks);
+      if (!nextBlocks.gloss && !nextBlocks.explain) collapseIndexes([index],true);
+      if (block === "gloss" && visible && !savedGlossesRef.current.has(index)) {
+        // 叫回与点原句共用缓存命中语义，预载完成后不能停在加载态。
+        const cached = lookupPreloadedGloss(glossMemoRef.current,index,structureRef.current !== null);
+        const text = sample?.glosses[index] ?? (cached.status === "hit" ? cached.entry.text : null);
+        if (text !== null) setGloss({index,view:{status:"done",text,failure:null,instant:true}});
+        const sentence = sentences[index];
+        if (sentence && !expansionsRef.current.has(index)) {
+          const values = new Map(expansionsRef.current).set(index,{index,paraIndex:sentence.paraIndex,splitAt:savedRegions?.get(index)?.splitAt??null});
+          expansionsRef.current=values;setExpansions(values);
+        }
+      }
+    },
+    async save(index) {
+      if (!sentences[index] || explainViewsRef.current.get(index)?.status !== "done") return "E2";
+      try {
+        const visibleBlocks = blocksFor(index);
+        const entry = await toggleSavedExplanation(docId,sentences[index]);
+        const overrides = new Map(blockOverridesRef.current);
+        if (!overrides.has(index)) overrides.set(index, visibleBlocks);
+        blockOverridesRef.current = overrides; setBlockOverrides(overrides);
+        if (!entry && !savedGlossesRef.current.has(index) && !expansionsRef.current.has(index)) {
+          const values = new Map(expansionsRef.current).set(index,{index,paraIndex:sentences[index].paraIndex,splitAt:savedRegions?.get(index)?.splitAt??null});
+          expansionsRef.current=values;setExpansions(values);
+        }
+        const next = new Map(savedExplanationsRef.current);
+        if(entry) next.set(index,entry); else next.delete(index);
+        savedExplanationsRef.current=next;setSavedExplanations(next);
+        if(entry) emitAnalytics({event:"explain_save",sentenceIndex:index,...sampleAnalytics});
+        if(readingMode === "reading") updateExpandedSavedIndexes(new Set(expandedSavedIndexesRef.current).add(index));
+        return entry ? "saved" : "removed";
+      } catch(err) { if(err instanceof StorageError) return err.code; throw err; }
+    }
+  };
 
   function handleBodyPointerDown(event: ReactPointerEvent<HTMLElement>) {
     if (selectionModeRef.current) { selectionPointerDown(event); return; }
@@ -1713,8 +1825,21 @@ export default function Reader({ docId }: { docId: string }) {
         growthAnchorRef.current.scrollY = window.scrollY;
       } else {
         // scrollBy 的实际滚动量可能取整；沿用面板锚定的 translate 补齐剩余小数。
+        const priorTranslation = parseFloat(body.style.translate.split(" ")[1] ?? "0") || 0;
         restorePanelAnchor(body, transaction.anchor);
+        // 顶部没有布局变化时不能丢掉已有小数补偿；真实顶部越界仍沿用原规则。
+        const restoredTop = charTop(body, transaction.anchor.paraIndex, transaction.anchor.offset);
+        if (priorTranslation !== 0 && restoredTop !== null && transaction.anchor.viewportTop - restoredTop === priorTranslation) {
+          const currentTranslation = parseFloat(body.style.translate.split(" ")[1] ?? "0") || 0;
+          body.style.translate = `0 ${currentTranslation + priorTranslation}px`;
+        }
       }
+    }
+    const retained=retainedBlockAnchorRef.current;
+    retainedBlockAnchorRef.current=null;
+    if(retained&&!typographyLayoutRef.current){
+      const rect=blockCharacterRect(retained.index,retained.block,retained.offset);
+      if(rect){window.scrollBy({top:rect.top-retained.top,behavior:"instant"});const after=blockCharacterRect(retained.index,retained.block,retained.offset);if(after){const translated=parseFloat(body.style.translate.split(" ")[1]??"0")||0;body.style.translate=`0 ${translated+retained.top-after.top}px`;}}
     }
     rememberPositionAnchor(body, positionRef.current);
     if (typographyLayoutRef.current) typographyLayoutRef.current.scrollY = window.scrollY;
@@ -1778,7 +1903,7 @@ export default function Reader({ docId }: { docId: string }) {
       window.scrollBy({ top: adjustment, behavior: prefersReducedMotion() ? "instant" : "smooth" });
       if (window.innerWidth < 768) rememberPositionAnchor(body, positionRef.current);
     }
-  }, [activeSavedIndex, expandedSavedIndexes, explainViews, expansions, glosses, glossShape, measurement, readingMode, savedRegions, typography, selectionResults]);
+  }, [activeSavedIndex, expandedSavedIndexes, explainViews, expansions, glosses, glossShape, measurement, readingMode, savedRegions, typography, selectionResults, blockOverrides]);
 
   // Esc / 空白批量收临时白话与收起模式的已留下展开，显示模式常驻保留。
   useEffect(() => {
@@ -1829,8 +1954,18 @@ export default function Reader({ docId }: { docId: string }) {
     const body = bodyRef.current;
     const panel = body?.querySelector<HTMLElement>(`.gloss-panel[data-sentence-index="${index}"]`);
     if (typographyLayoutRef.current) return typographyLayoutRef.current.anchor;
-    if (measurementRef.current || !body || !panel || !shouldAnchorPanelGrowth(panel.getBoundingClientRect().bottom)) {
+    if (measurementRef.current || !body || !panel) {
       growthAnchorRef.current = null;
+      return null;
+    }
+    if (!shouldAnchorPanelGrowth(panel.getBoundingClientRect().bottom)) {
+      growthAnchorRef.current = null;
+      // 桌面三格占宽后白话可能多换行；并行点句时保留正在读的下方原句。
+      const latest = latestSentenceAnchorRef.current;
+      const top = latest ? charTop(body, latest.paraIndex, latest.offset) : null;
+      if (window.innerWidth >= 1000 && latest && top !== null && top >= panel.getBoundingClientRect().bottom && top >= mobileReaderTop() && top < window.innerHeight) {
+        return { ...latest, viewportTop: top };
+      }
       return null;
     }
     const prior = growthAnchorRef.current;
@@ -1900,7 +2035,7 @@ export default function Reader({ docId }: { docId: string }) {
   useEffect(() => {
     if (measurement || savedRegions === null || !fontsReady || isSample) return;
     for (const [index] of expansions) {
-      if (!savedRegions.has(index) || savedGlossesRef.current.has(index)) continue;
+      if (!savedRegions.has(index) || savedGlossesRef.current.has(index) || !blocksFor(index).gloss) continue;
       const cacheLookup = lookupPreloadedGloss(glossMemoRef.current, index, structureRef.current !== null);
       if (cacheLookup.status === "hit") continue;
       const retry = retryCounts.get(index) ?? 0;
@@ -1967,6 +2102,7 @@ export default function Reader({ docId }: { docId: string }) {
     const sentence = context.sentences[index];
     if (!sentence) return;
     const current = explainViewsRef.current.get(index) ?? IDLE_EXPLAIN_VIEW;
+    toggleBlock(index,"explain",true);
     if (!force && (current.status === "loading" || current.status === "streaming" || current.status === "done")) return;
 
     const key = `${context.docId}:${index}`;
@@ -2296,6 +2432,7 @@ export default function Reader({ docId }: { docId: string }) {
   }
   function setTypographySheet(open: boolean) {
     if (!open) { settingsDragged.current = false; settingsDrag.current = null; setSettingsDragY(0); }
+    if (open) { setSavedSheetOpen(false); setFeedbackCloseRequest(value=>value+1); }
     if (open === mobileTypographyOpenRef.current) return;
     if (!open) endFontSizeAdjustment();
     if (open) for (const attempt of readAttemptRef.current.values()) attempt.clock.stop(performance.now());
@@ -2366,7 +2503,7 @@ export default function Reader({ docId }: { docId: string }) {
     setActiveSavedIndex(null);
     updateExpandedSavedIndexes(new Set());
     updateNonMouseOpenedIndexes(new Set([...nonMouseOpenedIndexesRef.current].filter((index) => !savedGlossesRef.current.has(index))));
-    publishSelectionResults(new Map([...selectionResultsRef.current].map(([id, result]) => [id, result.saved ? { ...result, expanded: false, nonMouse: false, actionsVisible: false } : result])));
+    publishSelectionResults(new Map([...selectionResultsRef.current].map(([id, result]) => [id, result.saved ? { ...result, manuallyCollapsed:false, expanded: false, nonMouse: false, actionsVisible: false } : result])));
     setReadingMode(next);
     stageLayouts(new Set(sentences.map((sentence) => sentence.paraIndex)), 0, expansionsRef.current, next, new Set());
   }, [readingMode]);
@@ -2394,9 +2531,20 @@ export default function Reader({ docId }: { docId: string }) {
 
   const [savedJumpKey, setSavedJumpKey] = useState<string | null>(null);
   const savedItems = [
-    ...[...savedGlosses].map(([index,saved])=>({ key:"sentence:"+index, text:saved.text, point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0}, time:saved.savedAt, index, selectionId:null as string|null })),
-    ...[...selectionResults.values()].filter(result=>result.saved).map(result=>({key:"selection:"+result.id,text:result.saved!.text,point:result.selection.start,time:result.saved!.savedAt,index:result.index,selectionId:result.id as string|null}))
-  ].sort((a,b)=>comparePoints(a.point,b.point)||a.time-b.time);
+    ...[...savedGlosses].map(([index,saved])=>({ kind:"gloss" as const, key:"sentence:"+index, text:saved.text, point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0}, time:saved.savedAt, index, selectionId:null as string|null })),
+    ...[...selectionResults.values()].filter(result=>result.saved).map(result=>({kind:"gloss" as const,key:"selection:"+result.id,text:result.saved!.text,point:result.selection.start,time:result.saved!.savedAt,index:result.index,selectionId:result.id as string|null}))
+    ,...[...savedExplanations].map(([index,mark])=>({kind:"explain" as const,key:"explain:"+index,text:explainViews.get(index)?.text??"",point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0},time:mark.savedAt,index,selectionId:null as string|null}))
+  ].sort((a,b)=>comparePoints(a.point,b.point)||a.time-b.time||(a.kind===b.kind?0:a.kind==="gloss"?-1:1));
+  function jumpItem(item: typeof savedItems[number]) {
+    if (item.selectionId) jumpToSelection(item.selectionId);
+    else {
+      setBlockVisibility(item.index,{gloss:item.kind === "gloss",explain:item.kind === "explain"});
+      pendingSavedJumpRef.current=item.index;
+      expandSaved(item.index);
+    }
+    setSavedSheetOpen(false);
+  }
+
 
   const highlightedSaved = savedItems.find(item => item.key === savedJumpKey);
   const highlightedSavedVisible = !!highlightedSaved && (highlightedSaved.selectionId
@@ -2444,10 +2592,10 @@ export default function Reader({ docId }: { docId: string }) {
           {mobileProgress && <span className="reader-mobile-progress">第 {mobileProgress.current} 段 · 共 {mobileProgress.total} 段</span>}
         </div>
         {mobileProgress && <div className="reader-mobile-progress-track" aria-hidden="true"><span style={{ width: `${mobileProgress.ratio * 100}%` }} /></div>}
-        <FeedbackButton placement="reader" openRequest={feedbackRequest} returnFocus={feedbackReturnFocus} />
+        <FeedbackButton placement="reader" openRequest={feedbackRequest} returnFocus={feedbackReturnFocus} closeRequest={feedbackCloseRequest} onOpen={() => {setSavedSheetOpen(false);setTypographySheet(false);}} />
 
-        <div className="mode-switch reader-legacy-mode" role="group" aria-label="收藏的白话显示设置">
-          <span className="mode-label">收藏的白话</span>
+        <div className="mode-switch reader-legacy-mode" role="group" aria-label="收藏显示设置">
+          <span className="mode-label">收藏</span>
           <div className="mode-options">
             <button type="button" className="mode-option" aria-pressed={readingMode === "review"}
               onClick={() => changeReadingMode("review")}>
@@ -2461,6 +2609,7 @@ export default function Reader({ docId }: { docId: string }) {
         </div>
 
         <button type="button" className="reader-selection-mobile" data-selection-control data-reader-settings aria-label="划选" aria-pressed={selectionMode} onClick={toggleSelection}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M4 9V4h5m6 0h5v5M4 15v5h5m6 0h5v-5M8 12h8" /></svg><span>划选</span></button>
+        <button type="button" ref={savedButtonRef} className="reader-saved-mobile" data-reader-settings aria-label="收藏" aria-expanded={savedSheetOpen} aria-controls="reader-saved-sheet" onClick={() => {setTypographySheet(false);setFeedbackCloseRequest(value=>value+1);setSavedSheetOpen(value=>!value);}}><BookmarkIcon /></button>
         <button type="button" ref={attachTypographyButton} className="reader-typography-aa" data-reader-settings
           aria-label="阅读排版" aria-haspopup="dialog" aria-controls="reader-typography-sheet" aria-expanded={mobileTypographyOpen}
           onClick={() => setTypographySheet(!mobileTypographyOpenRef.current)}>Aa</button>
@@ -2507,21 +2656,21 @@ export default function Reader({ docId }: { docId: string }) {
 
         <section className="side-section" aria-labelledby="saved-title">
           <div className="reader-saved-heading">
-          <h2 id="saved-title" className="side-title mode-label">收藏的白话<span className="reader-saved-count"> · {savedItems.length}</span></h2>
-          <div className="mode-switch reader-sidebar-mode" role="group" aria-label="收藏的白话显示设置">
+          <h2 id="saved-title" className="side-title mode-label">收藏<span className="reader-saved-count"> · {savedItems.length}</span></h2>
+          <div className="mode-switch reader-sidebar-mode" role="group" aria-label="收藏显示设置">
             <div className="mode-options">
               <button type="button" className="mode-option" aria-pressed={readingMode === "review"} onClick={() => changeReadingMode("review")}>显示</button>
               <button type="button" className="mode-option" aria-pressed={readingMode === "reading"} onClick={() => changeReadingMode("reading")}>收起</button>
             </div>
           </div></div>
           {savedItems.length === 0 ? (
-            <p className="side-empty">点白话下面的「收藏」，这句白话就固定下来，不会再变，并收在这里。</p>
+            <p className="side-empty">在白话或脉络解读下点书签，就会收在这里。</p>
           ) : (
             <ol className="saved-list">
               {savedItems.map(item => (
                 <li key={item.key}>
-                  <button type="button" className="saved-link" data-jump-highlight={savedJumpKey === item.key && highlightedSavedVisible || undefined} data-saved-selection-id={item.selectionId ?? undefined} onClick={event => { if (window.innerWidth >= 768) setSavedJumpKey(item.key); if (item.selectionId) { event.stopPropagation(); jumpToSelection(item.selectionId); } else jumpToSaved(item.index); }}>
-                    {item.text}
+                  <button type="button" className="saved-link" data-jump-highlight={savedJumpKey === item.key && highlightedSavedVisible || undefined} data-saved-selection-id={item.selectionId ?? undefined} onClick={event => { if (window.innerWidth >= 768) setSavedJumpKey(item.key); event.stopPropagation(); jumpItem(item); }}>
+                    <span className="saved-kind" data-kind={item.kind}>{item.kind === "explain" ? "脉络解读" : "白话"}</span>{item.text}
                   </button>
                 </li>
               ))}
@@ -2591,7 +2740,8 @@ export default function Reader({ docId }: { docId: string }) {
                   onBeforeReveal={capturePanelGrowth}
                   onAfterReveal={restorePanelGrowth}
                   onSave={toggleSavedGlossFor}
-                  onExplain={explainFromActionRow}
+                  onBlockToggle={toggleBlock} onExplainSave={saveExplain} onSelectionFold={foldSelection}
+                onExplain={explainFromActionRow}
                   onExplainRetry={retryExplainFor}
                   onExplainBlocked={recordExplainBlocked}
                   sentences={sentences}
@@ -2618,6 +2768,11 @@ export default function Reader({ docId }: { docId: string }) {
           <SettingsPanel selectionActive={selectionMode} onSelectionToggle={toggleSelection} glossShape={glossShape} onGlossShapeChange={changeGlossShape} typography={typography} onTypographyChange={changeTypography}
             onTypographyGestureStart={startTypographyGesture} onTypographyGestureEnd={endTypographyGesture} />
       </aside>
+      {savedSheetOpen && <div id="reader-saved-sheet" className="reader-saved-sheet" data-reader-settings role="dialog" aria-labelledby="reader-saved-title">
+        <header><h2 id="reader-saved-title" tabIndex={-1}>收藏 · {savedItems.length} 条 · 全书</h2><button type="button" aria-label="关闭收藏" onClick={()=>setSavedSheetOpen(false)}>关闭</button></header>
+        <div className="saved-filters" role="group" aria-label="收藏筛选">{([["all","全部"],["gloss","白话"],["explain","脉络解读"]] as const).map(([kind,label])=><button type="button" key={kind} aria-pressed={savedFilter===kind} onClick={()=>setSavedFilter(kind)}>{label}</button>)}</div>
+        {savedItems.filter(item=>savedFilter==="all"||item.kind===savedFilter).length===0 ? <p>在白话或脉络解读下点书签，就会收在这里。</p> : <ol className="saved-list">{savedItems.filter(item=>savedFilter==="all"||item.kind===savedFilter).map(item=><li key={item.key}><button type="button" className="saved-link" onClick={()=>jumpItem(item)}><span className="saved-kind" data-kind={item.kind}>{item.kind==="explain"?"脉络解读":"白话"}</span>{item.text}</button></li>)}</ol>}
+      </div>}
       {selectionMode && <><SelectionBar mobile={selectionMobile} started={selectionStart !== null} selection={selection} onReselect={clearSelection} onConfirm={confirmSelection} onExit={exitSelection} />
         <span ref={selectionMarkerRef} className="reader-selection-marker" data-kind={selection ? "end" : "start"} aria-hidden="true" hidden /></>}
       <button type="button" ref={attachFloatingTypographyButton} className="reader-typography-floating-aa" data-reader-settings

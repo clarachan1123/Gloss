@@ -276,6 +276,8 @@ async function checks(cdp,width,page) {
     await waitForValue(()=>cdp.evaluate("document.querySelector('.feedback-card').textContent.includes('没发出去，内容还在。稍后再试，或加微信：Claraiing')"),"disabled feedback failure");
     assert(await cdp.evaluate("feedbackResponses.length===1&&feedbackResponses[0]===503"),"feedback must return 503");
     assert(await cdp.evaluate("document.querySelector('.feedback-card textarea').value")===draft,"failure lost draft");
+    // 失败文案改变卡片高度，等既有布局观察完成后再测边界。
+    await ready(cdp,".feedback-card");
     await compareOriginal(cdp,before); await cardBounds(cdp);
   }
   await cdp.evaluate("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{if(text!=='Claraiing')throw new Error('wrong account')}}})");

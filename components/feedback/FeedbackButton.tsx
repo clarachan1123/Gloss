@@ -4,7 +4,8 @@ import { useCallback, useId, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import { FEEDBACK_BODY_MAX, FEEDBACK_CONTACT_MAX, feedbackLength } from "@/lib/feedback";
 
-export default function FeedbackButton({ placement = "inline", openRequest = 0, returnFocus, appearance }: {
+export default function FeedbackButton({ placement = "inline", openRequest = 0, returnFocus, appearance, closeRequest = 0, onOpen }: {
+  closeRequest?: number; onOpen?: () => void;
   appearance?: "landing";
   placement?: "reader" | "shelf" | "inline"; openRequest?: number; returnFocus?: () => HTMLElement | null;
 }) {
@@ -41,6 +42,8 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
     (returnFocus?.() ?? buttonRef.current)?.focus({ preventScroll: true });
   }, [returnFocus]);
 
+  useEffect(() => { if (closeRequest > 0) close(); }, [closeRequest, close]);
+  useEffect(() => { if (open) onOpen?.(); }, [open, onOpen]);
   useEffect(() => { if (openRequest > 0) { setStatus(value => value === "success" ? "idle" : value); setOpen(true); } }, [openRequest]);
   useEffect(() => {
     mountedRef.current = true;

@@ -43,7 +43,7 @@ function seed(){
  localStorage.setItem('gloss:settings:reader-typography',JSON.stringify({version:1,fontSize:21,lineHeight:1.75,lineChars:32,bodyFont:'sans',glossFont:'serif'}));
  localStorage.setItem('gloss:settings:reading-mode','reading');
 }
-async function actionText(selector,expected){await wait(()=>ev((s,e)=>document.querySelector(s)?.textContent.trim()===e,selector,expected),'按钮 '+expected);assert(await ev((s,e)=>document.querySelector(s).textContent.trim()===e,selector,expected),'按钮文案',expected);}
+async function actionText(selector,expected){await wait(()=>ev((s,e)=>document.querySelector(s)?.getAttribute('aria-label')===e,selector,expected),'按钮 '+expected);assert(await ev((s,e)=>document.querySelector(s).getAttribute('aria-label')===e,selector,expected),'按钮文案',expected);}
 async function point(ordinal,offset){return ev((ordinal,offset)=>{const e=document.querySelectorAll('.reader-body .sentence')[ordinal],n=e.firstChild,r=document.createRange();r.setStart(n,offset);r.setEnd(n,offset+1);const b=r.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2};},ordinal,offset);}
 async function selectionResult(width){
  await ev(width=>document.querySelector(width<768?'.reader-selection-mobile':'.reader-selection-desktop').click(),width);
@@ -128,6 +128,8 @@ try{
   await wait(()=>c.evaluate("!!document.querySelector('.action-row-save:not(:disabled)')"),'普通白话');
   await actionText('.action-row-save','收藏');await actionText('.action-row-explain','脉络解读');
   await ev(()=>document.querySelector('.action-row-save').click());await actionText('.action-row-save','取消收藏');
+  await negativeCheck("书签无障碍名称",()=>document.querySelector(".action-row-save").getAttribute("aria-label")==="取消收藏",()=>document.querySelector(".action-row-save").setAttribute("aria-label","收藏"),()=>document.querySelector(".action-row-save").setAttribute("aria-label","取消收藏"));
+  await negativeCheck("解读入口无障碍名称",()=>document.querySelector(".action-row-explain").getAttribute("aria-label")==="脉络解读",()=>document.querySelector(".action-row-explain").setAttribute("aria-label","听不懂"),()=>document.querySelector(".action-row-explain").setAttribute("aria-label","脉络解读"));
   assert(await ev(()=>getComputedStyle(document.querySelector('.action-row-save')).fontSize==='16.8px'),'最大字号不缩小');
   assert(await ev(noOverflow),'操作行零溢出',{width});
   await ev(()=>{const roles=['.action-row-save','.action-row-explain'];window.__g75Roles=()=>roles.map(role=>{const s=getComputedStyle(document.querySelector(role));return {role,values:['fontFamily','fontSize','lineHeight','letterSpacing','textAlign','textIndent','color','wordBreak','lineBreak'].map(p=>s[p])};});window.__g75RoleBefore=JSON.stringify(__g75Roles());});
@@ -135,7 +137,10 @@ try{
   await negativeCheck('操作行溢出',noOverflow,()=>document.querySelector('.action-row').style.width='2000px',()=>document.querySelector('.action-row').style.removeProperty('width'));
   await ev(()=>document.querySelector('.reader-typography-aa').click());await wait(()=>c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'手机设置');
   await ev(()=>{const b=document.querySelector('.reader-more-typography');if(b?.getAttribute('aria-expanded')==='false')b.click();});await sleep(350);
-  assert(await ev(()=>document.querySelector('.reader-typography-sheet').innerText.includes('收藏的白话')),'设置收藏文案');
+  const settingsFavorites=()=>{const sheet=document.querySelector(".reader-typography-sheet"),group=sheet.querySelector('[role="group"][aria-label="收藏显示设置"]');return group?.querySelector(".mode-label")?.textContent==="收藏"&&[...group.querySelectorAll("button")].map(b=>b.textContent).join("|")==="显示|收起"&&!sheet.querySelector(".saved-list,.saved-link,#saved-title");};
+  assert(await ev(settingsFavorites),"Aa保留显示收起并移出收藏列表");
+  await negativeCheck("Aa收藏标签",settingsFavorites,()=>document.querySelector(".reader-typography-sheet .mode-label").textContent="收藏的白话",()=>document.querySelector(".reader-typography-sheet .mode-label").textContent="收藏");
+  await negativeCheck("Aa不得恢复收藏列表",settingsFavorites,()=>{const list=document.createElement("ol");list.className="saved-list";list.id="g76-aa-negative";document.querySelector(".reader-typography-sheet").append(list);},()=>document.querySelector("#g76-aa-negative").remove());
   await ev(()=>document.querySelector('.reader-typography-sheet-header button').click());
   await ev(()=>{localStorage.removeItem('gloss:saved:g75');localStorage.removeItem('gloss:selection-saved:g75');});await load('/read/g75',width);
   await selectionResult(width);assert(await ev(noOldWords),'阅读页旧词零残留');
@@ -145,7 +150,10 @@ try{
  await negativeCheck('G73d字标字号判据',()=>{const s=getComputedStyle(document.querySelector('.reader-sidebar-brand .brand-english'));return s.fontSize==='20px'&&s.fontWeight==='600'&&!document.querySelector('.col-left .brand-chinese');},()=>document.querySelector('.reader-sidebar-brand .brand-english').style.fontSize='14px',()=>document.querySelector('.reader-sidebar-brand .brand-english').style.removeProperty('font-size'));
  await ev(()=>{window.__g75MainX=document.querySelector('.col-main').getBoundingClientRect().x;});
  await negativeCheck('G19主题正文几何判据',()=>document.querySelector('.col-main').getBoundingClientRect().x===__g75MainX,()=>document.querySelector('.col-main').style.transform='translateX(1px)',()=>document.querySelector('.col-main').style.removeProperty('transform'));
- assert(await ev(()=>document.querySelector('#saved-title').textContent.includes('收藏的白话')),'左栏收藏文案');
+ const savedHeading=()=>{const section=document.querySelector('[aria-labelledby="saved-title"]');return section.querySelector("#saved-title").textContent==="收藏 · "+section.querySelectorAll(".saved-link").length;};
+ assert(await ev(savedHeading),"左栏收藏标题与条目总数");
+ await negativeCheck("收藏标题旧词",savedHeading,()=>document.querySelector("#saved-title").firstChild.nodeValue="收藏的白话",()=>document.querySelector("#saved-title").firstChild.nodeValue="收藏");
+ await negativeCheck("收藏计数",savedHeading,()=>document.querySelector("#saved-title .reader-saved-count").textContent=" · 999999",()=>{const section=document.querySelector('[aria-labelledby="saved-title"]');section.querySelector(".reader-saved-count").textContent=" · "+section.querySelectorAll(".saved-link").length;});
  await load('/',375);await ev(()=>{localStorage.clear();localStorage.setItem('gloss:analytics:optout','1');localStorage.setItem('gloss:sample:breathed','1');});await load('/',375);
  await negativeCheck('空书架落款',()=>!document.querySelector('.shelf-brand-footer'),()=>{const e=document.createElement('div');e.className='shelf-brand-footer';document.body.append(e);},()=>document.querySelector('.shelf-brand-footer').remove());
  // 对照副本用于字号下限，字体大小取同一最大正文设置。

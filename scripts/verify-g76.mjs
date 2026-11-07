@@ -1,0 +1,280 @@
+import {spawn} from 'node:child_process';
+import {mkdtemp} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+process.env.G19_IMPORT_ONLY='1';
+const {Cdp,evaluate}=await import('./verify-g19.mjs');
+export function whiteBlockFacts() {
+  return [...document.querySelectorAll(".gloss-panel-text")].filter(el=>{
+    const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.display!=="none"&&s.visibility==="visible";
+  }).map((el,ordinal)=>{
+    const rect=el.getBoundingClientRect(),style=getComputedStyle(el),panel=el.closest(".gloss-panel"),block=el.closest(".gloss-block");
+    const row=block?.querySelector(".action-row"),rail=row?.getBoundingClientRect(),reserve=block?parseFloat(getComputedStyle(block).paddingRight):0;
+    const chars=[],walker=document.createTreeWalker(el,NodeFilter.SHOW_TEXT);
+    while(walker.nextNode()){const node=walker.currentNode;let offset=0;for(const char of node.data){const range=document.createRange();range.setStart(node,offset);offset+=char.length;range.setEnd(node,offset);const r=range.getBoundingClientRect();chars.push({char,x:r.x-rect.x,y:r.y-rect.y,w:r.width,h:r.height});}}
+    const buttons=[...(row?.querySelectorAll("button")??[])].map(b=>{const r=b.getBoundingClientRect();return{x:r.x,y:r.y,right:r.right,bottom:r.bottom,w:r.width,h:r.height};});
+    const overlap=buttons.some((a,i)=>buttons.some((b,j)=>i!==j&&Math.min(a.right,b.right)>Math.max(a.x,b.x)&&Math.min(a.bottom,b.bottom)>Math.max(a.y,b.y)));
+    let bubble=null;
+    if(panel?.classList.contains("gloss-panel-bubble")){
+      const parent=panel.parentElement,ps=getComputedStyle(parent),pr=parent.getBoundingClientRect();
+      const available=pr.width-["paddingLeft","paddingRight","borderLeftWidth","borderRightWidth"].reduce((sum,key)=>sum+parseFloat(ps[key]),0);
+      // 在同级隐藏副本测内容自然外框；覆盖副本的宽度，避免把候选外框误差当成所需宽度。
+      const probe=panel.cloneNode(true);probe.setAttribute("aria-hidden","true");probe.removeAttribute("id");
+      for(const [key,value] of Object.entries({position:"fixed",left:"0px",top:"0px",right:"auto",bottom:"auto",visibility:"hidden","pointer-events":"none",width:"max-content","min-width":"0px","max-width":"none",transform:"none",transition:"none",animation:"none"}))probe.style.setProperty(key,value,"important");
+      let natural;try{parent.append(probe);natural=probe.getBoundingClientRect().width;}finally{probe.remove();}
+      const r=panel.getBoundingClientRect();bubble={outer:r.width,available,natural,hasExplain:!!panel.querySelector(".explain-result"),overflow:panel.scrollWidth>panel.clientWidth};
+    }
+    return {key:(panel?.dataset.sentenceIndex??panel?.dataset.selectionId??"demo")+":"+ordinal,text:el.textContent,width:rect.width,height:rect.height,fonts:{fontFamily:style.fontFamily,fontSize:style.fontSize,lineHeight:style.lineHeight,color:style.color},chars,railWidth:rail?.width??0,gap:reserve-(rail?.width??0),reserve,blockWidth:block?.getBoundingClientRect().width??null,bubble,blockPadding:block?[getComputedStyle(block).paddingTop,getComputedStyle(block).paddingBottom]:null,overflow:el.scrollWidth>el.clientWidth,overlap:overlap||(innerWidth>=1000&&!!rail&&rail.left<rect.right&&rail.bottom>rect.top&&rail.top<rect.bottom),buttons};
+  });
+}
+export function whiteLineBreaks(chars){
+  return chars.flatMap((char,index)=>index===chars.length-1||chars[index+1].y!==char.y?[index+1]:[]);
+}
+export function assertWhiteBlocks(base,actual,width) {
+  const check=(v,label,detail)=>{if(!v)throw Error("G76白话"+label+": "+JSON.stringify(detail));};
+  check(base.length===actual.length,"取样数量",{base:base.length,actual:actual.length,width});
+  for(let i=0;i<base.length;i++){
+    const b=base[i],a=actual[i];check(a.blockPadding?.every(value=>value==="0px"),"白话块上下不增留白",a.blockPadding);check(b.key===a.key&&b.text===a.text,"同句同文",{base:b.key,actual:a.key});
+    for(const property of ["fontFamily","fontSize","lineHeight","color"])check(a.fonts[property]===b.fonts[property],"字体属性",{width,key:a.key,property,base:b.fonts[property],actual:a.fonts[property]});
+    const shortBubble=b.bubble&&b.bubble.outer<b.bubble.available;
+    if(shortBubble){
+      check(!!a.bubble,"短气泡形态保持",a.key);
+      check(JSON.stringify(whiteLineBreaks(a.chars))===JSON.stringify(whiteLineBreaks(b.chars)),"短气泡白话逐行断点",{width,base:whiteLineBreaks(b.chars),actual:whiteLineBreaks(a.chars)});
+      check(a.bubble.available===b.bubble.available,"短气泡可用宽度保持",{base:b.bubble.available,actual:a.bubble.available});
+      check(a.bubble.outer<=a.bubble.available,"气泡不超过可用宽度",a.bubble);
+      const expected=Math.min(a.bubble.available,Math.max(b.bubble.outer,a.bubble.natural));
+      check(Number.isFinite(expected)&&Math.abs(a.bubble.outer-expected)<=.5,"短气泡外框按内容实测",{width,base:b.bubble.outer,actual:a.bubble.outer,natural:a.bubble.natural,expected});
+      check(a.width===a.blockWidth-a.reserve,"短气泡白话宽度与控件留位一致",a);
+      check(!a.bubble.overflow,"短气泡外框无溢出",a.bubble);
+    }else if(width<1000){check(a.width===b.width,"窄屏宽度严格相等",{width,base:b.width,actual:a.width});check(JSON.stringify(a.chars)===JSON.stringify(b.chars),"窄屏换行严格相等",{width,key:a.key});}
+    else {
+      check(a.railWidth>0&&a.gap>=0,"控件列与间距",{width,rail:a.railWidth,gap:a.gap});
+      check(Math.abs(a.width-(b.width-a.railWidth-a.gap))<=.5,"宽度等于对照减控件列及间距",{width,base:b.width,actual:a.width,rail:a.railWidth,gap:a.gap});
+      check(a.chars.every(r=>r.x>=-.5&&r.x+r.w<=a.width+.5),"换行在正文宽度内",{width,key:a.key});
+    }
+    check(!a.overflow&&!a.overlap,"无溢出无重叠",{width,key:a.key,overflow:a.overflow,overlap:a.overlap});
+  }
+}
+export function whiteBlockNegatives(base,actual,width) {
+  assertWhiteBlocks(base,actual,width);if(!actual.length)return 0;let count=0;
+  const faults=[a=>a.blockPadding[0]="1px",a=>a.width+=1,a=>a.fonts.fontFamily="错误字体",a=>a.fonts.fontSize="1px",a=>a.fonts.lineHeight="1px",a=>a.fonts.color="rgb(1, 2, 3)",a=>a.overflow=true,a=>a.overlap=true];
+  if(base[0].bubble&&base[0].bubble.outer<base[0].bubble.available){
+    faults.push(a=>a.chars[0].y+=1,a=>a.bubble.outer=a.bubble.available+1,a=>a.bubble.outer+=1);
+  }else if(width<1000)faults.push(a=>a.chars[0].y+=1);else faults.push(a=>a.chars[0].x=a.width+1);
+  for(const mutate of faults){const changed=structuredClone(actual);mutate(changed[0]);let detected=false;try{assertWhiteBlocks(base,changed,width);}catch{detected=true;}if(!detected)throw Error("白话验收负对照漏检");count++;}
+  return count;
+}
+export function g76UIFacts(){
+ const css=el=>getComputedStyle(el),rect=el=>{const r=el.getBoundingClientRect();return{x:r.x,y:r.y,w:r.width,h:r.height,right:r.right,bottom:r.bottom};};
+ const token=name=>{const value=css(document.documentElement).getPropertyValue(name).trim();if(/^rgb\(\d+, \d+, \d+\)$/.test(value))return value;if(!/^#[0-9a-f]{6}$/i.test(value))throw Error("取色 token 格式不符 "+name);return "rgb("+[1,3,5].map(start=>parseInt(value.slice(start,start+2),16)).join(", ")+")";};
+ const controls=[...document.querySelectorAll(".gloss-block>.action-row,.explain-result>.action-row")].map(row=>{
+  const buttons=[...row.querySelectorAll("button")];
+  return {position:css(row).position,recall:!!row.querySelector(".action-row-recall"),buttons:buttons.map(b=>({label:b.getAttribute("aria-label"),saved:b.getAttribute("aria-pressed")==="true",color:css(b).color,border:css(b).borderTopWidth,...rect(b)})),gloss:token("--gloss"),hover:token("--hover"),box:rect(row)};
+ });
+ const explanations=[...document.querySelectorAll(".explain-result")].map(el=>{const s=css(el),root=el.closest(".gloss-panel");return {size:parseFloat(s.fontSize),white:parseFloat(css(root).fontSize),font:s.fontFamily,whiteFont:css(root).fontFamily,line:parseFloat(s.lineHeight),color:s.color,body:token("--text-body"),background:s.backgroundColor,side:token("--paper-side"),padding:[s.paddingTop,s.paddingRight,s.paddingBottom,s.paddingLeft],border:s.borderTopWidth,radius:s.borderTopLeftRadius,bubble:root.classList.contains("gloss-panel-bubble")};});
+ const names=[".reader-shelf-back",".reader-mobile-heading",".reader-selection-mobile",".reader-saved-mobile",".reader-typography-aa"];
+ const header=innerWidth<768&&document.querySelector(".reader-mobile-heading")?{boxes:names.map(selector=>{const el=document.querySelector(selector);return el?{selector,...rect(el)}:null;}),fonts:[".reader-mobile-title",".reader-mobile-progress",".reader-shelf-back",".reader-selection-mobile",".reader-typography-aa"].map(selector=>{const el=document.querySelector(selector),s=css(el);return {selector,font:s.fontFamily,size:s.fontSize,line:s.lineHeight,color:s.color};})}:null;
+ const modeFonts=[...document.querySelectorAll(".mode-label")].map(el=>{const s=css(el);return {font:s.fontFamily,size:s.fontSize,line:s.lineHeight,color:s.color};});
+ const savedKinds=[...document.querySelectorAll(".saved-kind")].map(el=>({kind:el.dataset.kind,text:el.textContent,size:css(el).fontSize}));
+ return {controls,explanations,header,modeFonts,savedKinds};
+}
+export function assertG76UI(base,actual,width){
+ const check=(v,label,d)=>{if(!v)throw Error("G76控件"+label+": "+JSON.stringify(d));};
+ for(const row of actual.controls){
+  check(row.position===(width<1000?"relative":"absolute"),"所在位置",{width,row});
+  check(row.buttons.length===(row.recall?3:2),"三格或两控件",{width,row});
+  for(const button of row.buttons){
+   check(["收藏","取消收藏","收起白话","收起脉络解读","白话","脉络解读"].includes(button.label),"名称",button);
+   check(button.color===(button.saved?row.hover:row.gloss),"主题颜色",button);
+   if(width<1000)check(button.w===36&&button.h===36,"窄屏36像素",button);
+   if(button.label==="白话"||button.label==="脉络解读")check(width>=1000||button.border==="1px","窄屏叫回细框",button);
+  }
+  check(row.buttons.every((a,i)=>row.buttons.every((b,j)=>i===j||Math.min(a.right,b.right)<=Math.max(a.x,b.x)||Math.min(a.bottom,b.bottom)<=Math.max(a.y,b.y))),"按钮无重叠",row);
+ }
+ for(const e of actual.explanations){
+  check(e.size===e.white+1&&e.font===e.whiteFont,"解读字号字体",e);
+  check(Math.abs(e.line-e.size*1.95)<1e-6,"解读行高",e);
+  check(e.color===e.body&&e.background===e.side,"解读主题色",e);
+  check(JSON.stringify(e.padding)===JSON.stringify(["14px",width<1000?"18px":"166px","14px","18px"])&&e.border==="0px"&&(!e.bubble||e.radius==="4px"),"解读内边距与边框",e);
+ }
+ check(JSON.stringify(actual.modeFonts)===JSON.stringify(base.modeFonts),"收藏模式标签字体颜色保持",actual.modeFonts);
+ for(const item of actual.savedKinds)check(["gloss","explain"].includes(item.kind)&&item.text===(item.kind==="gloss"?"白话":"脉络解读")&&item.size==="10px","收藏类型签",item);
+ if(actual.header){
+  check(!!base.header,"顶栏对照存在",actual.header);
+  const boxes=actual.header.boxes;check(boxes.every(Boolean),"顶栏五项存在",actual.header);
+  check(boxes[0].w===44&&boxes[3].w===44&&boxes[4].w===44,"顶栏命中尺寸",actual.header);
+  check(boxes.every((a,i)=>i===0||a.x>=boxes[i-1].right),"顶栏无重叠",actual.header);
+  check(JSON.stringify(actual.header.fonts)===JSON.stringify(base.header.fonts),"顶栏字体颜色保持",actual.header.fonts);
+ }
+}
+export function g76UINegatives(base,actual,width){
+ assertG76UI(base,actual,width);let count=0;
+ const faults=[];
+ if(actual.controls.length){faults.push(a=>a.controls[0].buttons[0].color="rgb(1, 2, 3)");faults.push(a=>a.controls[0].position="错误");if(width<1000)faults.push(a=>a.controls[0].buttons[0].w=37);}
+ if(actual.explanations.length){faults.push(a=>a.explanations[0].size+=1);faults.push(a=>a.explanations[0].line+=1);faults.push(a=>a.explanations[0].padding[0]="15px");faults.push(a=>a.explanations[0].color="rgb(1, 2, 3)");}
+ if(actual.header)faults.push(a=>a.header.boxes[3].w=43);
+ if(actual.modeFonts.length)faults.push(a=>a.modeFonts[0].size="1px");
+ if(actual.savedKinds.length)faults.push(a=>a.savedKinds[0].kind="错误");
+ for(const mutate of faults){const changed=structuredClone(actual);mutate(changed);let detected=false;try{assertG76UI(base,changed,width);}catch{detected=true;}if(!detected)throw Error("控件适配负对照漏检");count++;}
+ return count;
+}
+if(process.env.G76_IMPORT_ONLY!=='1'){
+const profile=await mkdtemp(join(tmpdir(),'gloss-g76-'));
+const edge=spawn('C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',['--headless=new','--disable-gpu','--no-sandbox','--no-first-run','--user-data-dir='+profile,'--remote-debugging-port=9512','--remote-allow-origins=*','about:blank'],{stdio:'ignore',windowsHide:true});
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+let c,checks=0,negative=0;
+const assert=(v,label)=>{if(!v)throw Error(label);checks++;};
+async function wait(fn,label){const end=Date.now()+20000;while(Date.now()<end){if(await fn())return;await sleep(50);}throw Error('等待失败 '+label);}
+const ev=(fn,...args)=>evaluate(c,fn,...args);
+// 等待新文档提交，不能把导航前旧页面的 readyState 当成本轮准备完成。
+async function navigate(url){const previous=(await c.call('Page.getFrameTree')).frameTree.frame.loaderId;const result=await c.call('Page.navigate',{url});if(result.errorText)throw Error(result.errorText);await wait(async()=>{const frame=(await c.call('Page.getFrameTree')).frameTree.frame;if(result.loaderId?frame.loaderId!==result.loaderId:frame.loaderId===previous)return false;return c.evaluate("document.readyState==='complete'").catch(()=>false);},'新导航完成');}
+async function reload(){const previous=(await c.call('Page.getFrameTree')).frameTree.frame.loaderId;await c.call('Page.reload');await wait(async()=>{const frame=(await c.call('Page.getFrameTree')).frameTree.frame;if(frame.loaderId===previous)return false;return c.evaluate("document.readyState==='complete'").catch(()=>false);},'新重载完成');}
+
+const originPoint=()=>{const body=document.querySelector('.reader-body'),node=document.querySelector('.sentence[data-index="0"]').firstChild,range=document.createRange();range.setStart(node,0);range.setEnd(node,1);const r=range.getBoundingClientRect(),b=body.getBoundingClientRect();return{x:r.x,y:r.y,bodyX:b.x,bodyWidth:b.width,font:getComputedStyle(body).fontSize};};
+const samePoint=(a,b)=>['x','y','bodyX','bodyWidth'].every(key=>Math.abs(a[key]-b[key])<=.5)&&a.font===b.font;
+async function baselineFrame(theme,shape){
+ await navigate('http://127.0.0.1:3513/read/g76');await wait(()=>c.evaluate("document.readyState==='complete'"),'对照页面');
+ await ev((theme,shape)=>{localStorage.clear();localStorage.setItem('gloss:doc:g76',JSON.stringify({version:1,docId:'g76',paragraphs:['春风吹过山谷。河水流向海洋。'],headings:[],footnotes:[],meta:{format:'txt',fileName:'验证.txt',charCount:16},savedAt:1}));localStorage.setItem('gloss:settings:gloss-shape',shape);localStorage.setItem('gloss:settings:theme',theme==='dark'?'parchment':theme);localStorage.setItem('gloss:settings:appearance',theme==='dark'?'dark':'light');},theme,shape);
+ await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'对照阅读器');await c.evaluate('document.fonts.ready');const before=await ev(originPoint);
+ await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("document.querySelector('.gloss-panel')?.dataset.state==='done'"),'对照白话');const whiteOnly=await ev(whiteBlockFacts);await ev(()=>document.querySelector('.action-row-explain').click());await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),'对照解读');
+ return{before,after:await ev(originPoint),whiteOnly,white:await ev(whiteBlockFacts)};
+}
+
+async function negativeCheck(label,predicate,mutate,restore){assert(await ev(predicate),label+'正对照');await ev(mutate);try{assert(!await ev(predicate),label+'负对照检出');negative++;}finally{await ev(restore);}}
+
+async function shortBubbleRuntimeNegative(base,width,kind){
+ const positive=await ev(whiteBlockFacts);assertWhiteBlocks(base,positive,width);
+ assert(!!positive[0]?.bubble&&base[0].bubble.outer<base[0].bubble.available,"短气泡负对照正样本");
+ if(kind==="无故增宽")assert(!positive[0].bubble.hasExplain&&positive[0].bubble.natural<=base[0].bubble.outer,"无解读且控件无需增宽正样本");
+ const style=await ev(()=>document.querySelector(".gloss-panel-bubble").getAttribute("style"));
+ try{
+  await ev((kind,base,positive)=>{const panel=document.querySelector(".gloss-panel-bubble");let width;if(kind==="断点")width=positive.reserve+(positive.bubble.outer-positive.blockWidth)+Math.max(1,base.chars[0].w*2);else if(kind==="超出可用宽度")width=positive.bubble.available+1;else width=positive.bubble.outer+1;panel.style.setProperty("width",width+"px","important");panel.style.setProperty("max-width","none","important");},kind,base[0],positive[0]);
+  const changed=await ev(whiteBlockFacts);let message="";try{assertWhiteBlocks(base,changed,width);}catch(error){message=error.message;}
+  const expected=kind==="断点"?"短气泡白话逐行断点":kind==="超出可用宽度"?"气泡不超过可用宽度":"短气泡外框按内容实测";
+  assert(message.includes(expected),"实际短气泡负对照检出 "+kind+"："+message);negative++;console.log(JSON.stringify({shortBubbleNegative:kind,width,detected:true}));
+ }finally{await ev(style=>{const panel=document.querySelector(".gloss-panel-bubble");if(style===null)panel.removeAttribute("style");else panel.setAttribute("style",style);},style);assertWhiteBlocks(base,await ev(whiteBlockFacts),width);assert(true,"短气泡负对照恢复正样本");}
+}
+
+async function verifyRecallOpacity(selector,width){
+ const expected=width<768?'1':'0.45';
+ assert(await ev(selector=>getComputedStyle(document.querySelector(selector)).opacity=== (innerWidth<768?'1':'0.45'),selector),'生成过的叫回平时不透明度');
+ const point=await ev(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};},selector);
+ await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+ assert(await ev(selector=>getComputedStyle(document.querySelector(selector)).opacity==='1',selector),'悬停叫回常亮');
+ await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});
+ await ev(selector=>document.querySelector(selector).closest('.action-row').querySelector('.action-row-save').focus({preventScroll:true}),selector);
+ await c.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers:8});
+ await c.call('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers:8});
+ assert(await ev(selector=>{const el=document.querySelector(selector);return document.activeElement===el&&el.matches(':focus-visible')&&getComputedStyle(el).opacity==='1';},selector),'键盘聚焦叫回常亮');
+ await ev(()=>document.activeElement.blur());
+ assert(await ev(selector=>getComputedStyle(document.querySelector(selector)).opacity,selector)===expected,'移出与失焦后恢复不透明度');
+}
+try {
+ let tab;await wait(async()=>{try{tab=(await(await fetch('http://127.0.0.1:9512/json')).json()).find(t=>t.type==='page');return !!tab;}catch{return false;}},'Edge');c=new Cdp(tab.webSocketDebuggerUrl);await c.call('Page.enable');await c.call('Runtime.enable');
+ await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`window.__g76Events=[];addEventListener('gloss:analytics',e=>__g76Events.push(e.detail));const nativeFetch=fetch;window.fetch=async function(url,options){if(String(url).includes('/api/gloss'))return new Response('这是用于验证的白话。',{headers:{'Content-Type':'text/event-stream'}});if(String(url).includes('/api/explain'))return new Response(JSON.stringify({type:'sentence',text:localStorage.getItem('g76-long')?'这是用于验证的脉络解读。'.repeat(90):'这是用于验证的脉络解读。'})+'\\n'+JSON.stringify({type:'done'})+'\\n',{headers:{'Content-Type':'text/event-stream'}});if(String(url).includes('/api/structure')||String(url).includes('/api/analytics'))return new Response(null,{status:204});return nativeFetch.apply(this,arguments);};`});
+ await c.call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+ await c.call('Emulation.setDeviceMetricsOverride',{width:375,height:900,deviceScaleFactor:1,mobile:false});
+ await navigate('http://127.0.0.1:3512/');await wait(()=>c.evaluate("document.readyState==='complete'"),'首页');
+ await ev(()=>{localStorage.clear();localStorage.setItem('gloss:settings:reading-mode','review');localStorage.setItem('gloss:doc:g76',JSON.stringify({version:1,docId:'g76',paragraphs:['春风吹过山谷。河水流向海洋。'],headings:[],footnotes:[],meta:{format:'txt',fileName:'验证.txt',charCount:16},savedAt:1}));});
+ await navigate('http://127.0.0.1:3512/read/g76');await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'阅读器');
+ await ev(()=>document.querySelector('.sentence[data-index="0"]').click());
+ await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-explain')"),'入口');
+ await ev(()=>document.querySelector('.gloss-block .action-row-explain').click());
+ await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),'解读');
+ assert(await c.evaluate("document.querySelectorAll('.action-row-recall').length===0"),'两块显示第一格为空');
+ await ev(()=>document.querySelector('.explain-result .action-row-save').click());await sleep(500);
+ assert(await c.evaluate("__g76Events.filter(e=>e.event==='explain_save').length===1"),'解读收藏一次');
+ await ev(()=>document.querySelector('.gloss-block .action-row-fold').click());await sleep(350);
+ await ev(()=>document.querySelector('.explain-result .action-row-fold').click());await sleep(350);
+ assert(await c.evaluate("!document.querySelector('.gloss-panel')"),'两块全收');
+ assert(await c.evaluate("document.querySelector('.sentence[data-index=\"0\"]')?.classList.contains('sentence-saved-collapsed')"),'收起后收藏原句标记保留');
+ await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await sleep(350);
+ assert(await c.evaluate("!!document.querySelector('.explain-result')&&!document.querySelector('.gloss-block')"),'仅解读收藏重新打开');
+ await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'刷新');
+ assert(await c.evaluate("!!document.querySelector('.explain-result')&&!document.querySelector('.gloss-block')"),'刷新恢复解读收藏');
+ await ev(()=>document.querySelector('.explain-result .action-row-save').click());await sleep(350);
+ assert(await c.evaluate("!!document.querySelector('.explain-result-text')&&!document.querySelector('.gloss-block')"),'取消唯一解读收藏仍保留正在看的块');
+ await ev(()=>document.querySelector('.explain-result .action-row-save').click());await sleep(350);
+ await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'重存后刷新');
+ await ev(()=>document.querySelector('.explain-result .action-row-recall').click());
+ await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-save:not(:disabled)')"),'叫回白话可收藏');
+ await ev(()=>document.querySelector('.gloss-block .action-row-save').click());await sleep(500);
+ await negativeCheck('书签可访问名称与收藏状态',()=>document.querySelector('.gloss-block .action-row-save')?.getAttribute('aria-label')==='取消收藏'&&document.querySelector('.gloss-block .action-row-save')?.getAttribute('aria-pressed')==='true',()=>document.querySelector('.gloss-block .action-row-save').setAttribute('aria-label','收藏'),()=>document.querySelector('.gloss-block .action-row-save').setAttribute('aria-label','取消收藏'));
+ await negativeCheck('两块显示第一格为空',()=>document.querySelectorAll('.action-row-recall').length===0,()=>{const button=document.createElement('button');button.id='g76-negative';button.className='action-row-recall';document.querySelector('.action-row-recall-slot').append(button);},()=>document.querySelector('#g76-negative').remove());
+ await ev(()=>document.querySelector('.reader-saved-mobile').click());await sleep(350);
+ assert(await c.evaluate("document.querySelectorAll('#reader-saved-sheet .saved-link').length===2"),'两类条目分别计数');
+ await negativeCheck('收藏类型签',()=>document.querySelectorAll('#reader-saved-sheet .saved-kind[data-kind="gloss"]').length===1&&document.querySelectorAll('#reader-saved-sheet .saved-kind[data-kind="explain"]').length===1,()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="explain"]').setAttribute('data-kind','wrong'),()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="wrong"]').setAttribute('data-kind','explain'));
+ await negativeCheck('抽屉互斥',()=>document.querySelectorAll('#reader-saved-sheet,.reader-typography-sheet,.feedback-card').length===1,()=>{const div=document.createElement('div');div.className='reader-typography-sheet';div.id='g76-negative';document.body.append(div);},()=>document.querySelector('#g76-negative').remove());
+ await ev(()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="gloss"]').closest('button').click());await sleep(350);
+ assert(await c.evaluate("!!document.querySelector('.gloss-block')&&!document.querySelector('.explain-result')&&!document.querySelector('#reader-saved-sheet')"),'白话条目只开白话且关闭抽屉');
+ await negativeCheck('手机叫回常亮',()=>getComputedStyle(document.querySelector('.action-row-recall')).opacity==='1',()=>document.querySelector('.action-row-recall').style.opacity='.45',()=>document.querySelector('.action-row-recall').style.removeProperty('opacity'));
+ await ev(()=>document.querySelector('.reader-saved-mobile').click());await sleep(350);await ev(()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="explain"]').closest('button').click());await sleep(350);
+ assert(await c.evaluate("!!document.querySelector('.explain-result')&&!document.querySelector('.gloss-block')&&!document.querySelector('#reader-saved-sheet')"),'解读条目只开解读且关闭抽屉');
+ await ev(()=>document.querySelector('.explain-result .action-row-save').click());await sleep(350);
+ await negativeCheck('取消不发explain_save',()=>__g76Events.filter(e=>e.event==='explain_save').length===0,()=>__g76Events.push({event:'explain_save',sentenceIndex:0}),()=>__g76Events.pop());
+ await ev(()=>document.querySelector('.reader-saved-mobile').click());await sleep(350);await ev(()=>document.querySelector('.reader-typography-aa').click());await sleep(350);
+ assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')&&!document.querySelector('#reader-saved-sheet')"),'设置关闭收藏抽屉');
+ await ev(()=>document.querySelector('.reader-settings-feedback').click());await sleep(350);
+ assert(await c.evaluate("!!document.querySelector('.feedback-card')&&!document.querySelector('.reader-typography-sheet')&&!document.querySelector('#reader-saved-sheet')"),'反馈关闭设置抽屉');
+ await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'抽屉后刷新');
+ for (const width of [375,506,767,768,999,1000,1024,1280]) for(const theme of ['parchment','moon-white','eye-green','dark']) for(const shape of ['inline','bubble']) {
+  await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+  const reference=await baselineFrame(theme,shape);
+  await navigate('http://127.0.0.1:3512/read/g76');await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'候选阅读器返回');
+  await ev((theme,shape)=>{localStorage.removeItem('gloss:saved:g76');localStorage.removeItem('gloss:explain-saved:g76');localStorage.removeItem('gloss:explain:g76');localStorage.setItem('gloss:settings:gloss-shape',shape);localStorage.setItem('gloss:settings:theme',theme==='dark'?'parchment':theme);localStorage.setItem('gloss:settings:appearance',theme==='dark'?'dark':'light');},theme,shape);
+  await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'矩阵阅读器');
+  assert(samePoint(await ev(originPoint),reference.before),'同场景原句与正文宽度对照：展开前');
+  if(width<768){const boxes=await ev(()=>['.reader-shelf-back','.reader-mobile-heading','.reader-selection-mobile','.reader-saved-mobile','.reader-typography-aa'].map(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return{selector,left:r.left,right:r.right,top:r.top,bottom:r.bottom};}));assert(boxes.every((a,i)=>boxes.every((b,j)=>i===j||Math.min(a.right,b.right)<=Math.max(a.left,b.left)||Math.min(a.bottom,b.bottom)<=Math.max(a.top,b.top))),'手机五项命中区域无重叠 '+JSON.stringify(boxes));}
+  await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-explain')"),'矩阵入口');
+  assert(await c.evaluate("getComputedStyle(document.querySelector('.action-row-recall')).opacity==='1'"),'未生成入口常亮');
+  await wait(()=>c.evaluate("document.querySelector('.gloss-block')?.dataset.state==='done'"),"生成解读前白话取样就绪");
+  assertWhiteBlocks(reference.whiteOnly,await ev(whiteBlockFacts),width);assert(true,"生成解读前白话宽度与断点");
+  if(width===375&&theme==="parchment"&&shape==="bubble")await shortBubbleRuntimeNegative(reference.whiteOnly,width,"无故增宽");
+  await ev(()=>document.querySelector('.gloss-block .action-row-explain').click());await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),'矩阵解读');
+  assert(await c.evaluate("document.querySelectorAll('.action-row-recall').length===0"),'矩阵两块显示第一格空');
+  await wait(()=>c.evaluate("document.querySelector('.gloss-block')?.dataset.state==='done'"),"白话宽度取样就绪");
+  const whiteFacts=await ev(whiteBlockFacts);
+  assertWhiteBlocks(reference.white,whiteFacts,width);
+  negative+=whiteBlockNegatives(reference.white,whiteFacts,width);
+  if(width===375&&theme==="parchment"&&shape==="bubble"){await shortBubbleRuntimeNegative(reference.white,width,"断点");await shortBubbleRuntimeNegative(reference.white,width,"超出可用宽度");}
+  assert(true,'白话宽度与字体、换行验收');
+  if(width<1000){
+    const layout=await ev(()=>{const block=document.querySelector('.gloss-block'),text=block.querySelector('.gloss-panel-text'),row=block.querySelector('.action-row');return{bottom:text.getBoundingClientRect().bottom,top:row.getBoundingClientRect().top,buttons:[...row.querySelectorAll('button')].map(b=>({w:b.getBoundingClientRect().width,h:b.getBoundingClientRect().height}))};});
+    assert(layout.top>=layout.bottom&&layout.buttons.every(b=>b.w===36&&b.h===36),'窄屏底部操作行与36px按钮');
+  }
+  assert(samePoint(await ev(originPoint),reference.after),'同场景原句与正文宽度对照：生成解读后');
+  assert(await c.evaluate("document.documentElement.scrollWidth<=innerWidth"),'矩阵无页面溢出');
+  const sizes=await ev(()=>({gloss:parseFloat(getComputedStyle(document.querySelector('.gloss-panel-text')).fontSize),explain:parseFloat(getComputedStyle(document.querySelector('.explain-result-text')).fontSize)}));
+  assert(Math.abs(sizes.explain-sizes.gloss-1)<.01,'解读字号加一');
+  await ev(()=>{window.__g76OriginalTop=()=>{const node=document.querySelector('.sentence[data-index="0"]').firstChild,range=document.createRange();range.setStart(node,0);range.setEnd(node,1);return range.getBoundingClientRect().top;};window.__g76BeforeFold=__g76OriginalTop();});
+  await ev(()=>document.querySelector('.gloss-block .action-row-fold').click());await sleep(350);
+  const originalDelta=await ev(()=>Math.abs(__g76OriginalTop()-__g76BeforeFold));assert(originalDelta<=.5,'视口顶部收白话原句参照字位移 '+originalDelta);
+  await verifyRecallOpacity('.explain-result .action-row-recall',width);
+  await ev(()=>document.querySelector('.explain-result .action-row-recall').click());await sleep(350);
+  await ev(()=>document.querySelector('.explain-result .action-row-fold').click());await sleep(350);
+  await verifyRecallOpacity('.gloss-block .action-row-recall',width);
+  console.log(JSON.stringify({width,theme,shape,checks}));
+ }
+ // 原文和保留块分别取真实字框；负对照禁用补偿而不修改判据。
+ await ev(()=>{const record=JSON.parse(localStorage.getItem('gloss:doc:g76'));record.paragraphs=Array.from({length:12},()=>record.paragraphs[0]);localStorage.setItem('gloss:doc:g76',JSON.stringify(record));localStorage.setItem('g76-long','1');localStorage.removeItem('gloss:saved:g76');});
+ for(const disable of [false,true]) {
+  await ev(()=>{localStorage.removeItem('gloss:explain:g76');localStorage.removeItem('gloss:explain-saved:g76');});
+  await c.call('Emulation.setDeviceMetricsOverride',{width:375,height:900,deviceScaleFactor:1,mobile:false});
+  await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'补偿阅读器');
+  await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-explain')"),'补偿入口');
+  await ev(()=>document.querySelector('.gloss-block .action-row-explain').click());await wait(()=>c.evaluate("document.querySelector('.explain-result-text')?.textContent.length>500"),'长解读');
+  await ev(()=>{window.scrollTo(0,200);window.__g76Char=offset=>{const node=document.querySelector('.explain-result-text').firstChild,range=document.createRange();range.setStart(node,offset);range.setEnd(node,offset+1);return range.getBoundingClientRect().top;};});await sleep(350);
+  await ev(()=>{let offset=0;while(__g76Char(offset)<60)offset++;window.__g76Reference={offset,top:__g76Char(offset)};});
+  if(disable)await ev(()=>{window.__g76ScrollBy=window.scrollBy;window.scrollBy=()=>{};const style=document.createElement('style');style.id='g76-no-compensation';style.textContent='.reader-body{translate:0 0!important}';document.head.append(style);});
+  await ev(()=>document.querySelector('.gloss-block .action-row-fold').click());await sleep(350);
+  const delta=await ev(()=>Math.abs(__g76Char(__g76Reference.offset)-__g76Reference.top));
+  console.log(JSON.stringify({scenario:'长解读保留字',disable,delta}));
+  assert(disable?delta>.5:delta<=.5,disable?'关闭补偿必须检出':'长解读保留字位移');if(disable)negative++;
+  if(disable)await ev(()=>{window.scrollBy=__g76ScrollBy;document.querySelector('#g76-no-compensation').remove();});
+ }
+ await ev(()=>{window.__g76PixelX=document.querySelector('.sentence').getBoundingClientRect().x;});
+ await negativeCheck('原文1px位移',()=>Math.abs(document.querySelector('.sentence').getBoundingClientRect().x-__g76PixelX)<.5,()=>document.querySelector('.reader-body').style.transform='translateX(1px)',()=>document.querySelector('.reader-body').style.removeProperty('transform'));
+ console.log(JSON.stringify({checks,negative,profile}));
+}catch(error){if(c)console.log(await c.evaluate("({mock:fetch.toString(),body:document.body.innerText,events:window.__g76Events})"));throw error;}finally{if(c){try{await c.call('Browser.close');}catch{}c.close();}}
+
+}

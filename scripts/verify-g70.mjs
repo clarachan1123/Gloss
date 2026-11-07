@@ -14,6 +14,8 @@ const FIXED='这是固定的本地白话，用来检查字体放大和面板增�
 const TEXT=Array.from({length:18},(_,p)=>Array.from({length:8},(_,s)=>`第${p+1}段第${s+1}句介绍树林里的一次观察，雨后的树叶和溪流显得十分清楚。`).join('')).join('\n\n');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const assert=(ok,label,detail)=>{if(!ok)throw Error(label+(detail===undefined?'':': '+JSON.stringify(detail)));};
+process.env.G76_IMPORT_ONLY='1';
+const {whiteBlockFacts,assertWhiteBlocks,whiteBlockNegatives,g76UIFacts,assertG76UI,g76UINegatives}=await import('./verify-g76.mjs');
 const report={A:0,B:0,C:0,D:0,E:0,reveal:[],revealNegative:[],noAnchor:0,topExceptions:0,negative:[],nonzero:{growth:0,rounding:0},styles:[],hashes:[],tallest:[],baseline:{total:0,unstable:0}};
 async function health(c){const s=await c.evaluate('({hidden:document.hidden,ever:window.__g70?.hidden,error:window.__g70?.error})');assert(!s.hidden&&!s.ever&&!s.error,'Visible error-free page',s);const {targetInfos}=await c.call('Target.getTargets');assert(targetInfos.filter(t=>t.type==='page').length===1,'Exactly one page');}
 async function wait(c,expr,label){const end=Date.now()+20000;while(Date.now()<end){await health(c);if(await c.evaluate('Boolean('+expr+')'))return;await sleep(100);}throw Error('Timeout: '+label);}
@@ -68,7 +70,7 @@ async function launch(origin,width,fn,replayFaultInjection=false){
     c.g70Diagnostics=[];c.socket.on('message',data=>{const m=JSON.parse(data);if(m.method==='Runtime.consoleAPICalled'&&m.params.args?.[0]?.value==='G70DIAG')c.g70Diagnostics.push(JSON.parse(m.params.args[1].value));});
     const raw=c.call.bind(c);c.call=async(method,params={})=>{if(!['Page.navigate','Page.reload'].includes(method))return raw(method,params);let handler,timer;const loaded=new Promise((r,j)=>{handler=data=>{if(JSON.parse(data).method==='Page.domContentEventFired')r();};c.socket.on('message',handler);timer=setTimeout(()=>j(Error('Navigation DOMContentLoaded timeout')),20000);});try{const result=await raw(method,params);await loaded;await raw('Page.bringToFront');return result;}finally{clearTimeout(timer);c.socket.off('message',handler);}};
     c.socket.on('message',async data=>{const m=JSON.parse(data);if(m.method!=='Fetch.requestPaused')return;try{const p=new URL(m.params.request.url).pathname;if(replayFaultInjection&&p.endsWith('.js')){await interceptReplayFault(raw,m.params,c.g70FaultFiles);return;}const body=p==='/api/gloss'?FIXED:p==='/api/explain'?[JSON.stringify({type:'sentence',text:FIXED.slice(0,60)}),JSON.stringify({type:'done'}),''].join('\n'):p==='/api/structure'?JSON.stringify({structure:'固定本地结构。',prompt:'structure-v1'}):null;assert(body!==null,'Unexpected API',p);await raw('Fetch.fulfillRequest',{requestId:m.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:p==='/api/explain'?'application/x-ndjson':'text/plain; charset=utf-8'}],body:Buffer.from(body).toString('base64')});}catch(e){errors.push(e.message);}});
-    await c.call('Fetch.enable',{patterns:[{urlPattern:'*/api/*',requestStage:'Request'},...(replayFaultInjection?[{urlPattern:'*/_next/static/chunks/*.js',requestStage:'Response'}]:[])]});await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`(${setup.toString()})();(${install.toString()})();(${installReveal.toString()})();`});
+    await c.call('Fetch.enable',{patterns:[{urlPattern:'*/api/*',requestStage:'Request'},...(replayFaultInjection?[{urlPattern:'*/_next/static/chunks/*.js',requestStage:'Response'}]:[])]});await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`(${setup.toString()})();(${install.toString()})();(${installReveal.toString()})();window.__g70.autoMarginFacts=${autoMarginFacts.toString()};`});
     const nav=async path=>{await c.call('Page.navigate',{url:origin+path});await settle(c);};
     await nav('/');await wait(c,"!!document.querySelector('.landing-secondary')",'landing');
     const inputPath=join(profile,'gloss-g70-import.txt');await writeFile(inputPath,TEXT);
@@ -144,40 +146,103 @@ async function checkBranding(c){
   adaptationNegatives.add('brand-'+kind);
 }
 
-async function snapshot(c){
+// 只对双方声明仍为 auto 的水平边距使用实际几何，其他属性保持原比较。
+function autoMarginFacts(el){
+  const parent=el.parentElement;if(!parent)return null;
+  const names=['margin-left','margin-right','margin-inline-start','margin-inline-end'],map=el.computedStyleMap(),s=getComputedStyle(el),p=getComputedStyle(parent),r=el.getBoundingClientRect(),pr=parent.getBoundingClientRect();
+  const borderLeft=parseFloat(p.borderLeftWidth),borderRight=parseFloat(p.borderRightWidth);
+  const leftGutter=Math.max(0,parent.clientLeft-borderLeft),rightGutter=Math.max(0,parent.offsetWidth-parent.clientWidth-parent.clientLeft-borderRight);
+  const contentLeft=pr.left+borderLeft+leftGutter+parseFloat(p.paddingLeft),contentRight=pr.right-borderRight-rightGutter-parseFloat(p.paddingRight);
+  return {declarations:Object.fromEntries(names.map(name=>[name,map.get(name)?.toString()])),direction:s.direction,writingMode:s.writingMode,left:r.left-contentLeft,right:contentRight-r.right};
+}
+function compareAutoMargin(base,actual,property,label){
+  const b=base.autoMargins,a=actual.autoMargins;
+  if(!b||!a||b.declarations[property]!=='auto'||a.declarations[property]!=='auto'||b.writingMode!=='horizontal-tb'||a.writingMode!=='horizontal-tb')return false;
+  const side=property==='margin-left'?'left':property==='margin-right'?'right':property==='margin-inline-start'?(a.direction==='rtl'?'right':'left'):property==='margin-inline-end'?(a.direction==='rtl'?'left':'right'):null;
+  if(!side||!Number.isFinite(b[side])||!Number.isFinite(a[side]))return false;
+  assert(b[side]===a[side],'B auto margin geometry',{label,node:actual.key,property,side,base:b[side],actual:a[side]});return true;
+}
+async function autoMarginNegatives(c,rows){
+  const row=rows.find(row=>row.key.includes(':ARTICLE:reader-body reader-body-reader'));
+  if(!row?.autoMargins||row.autoMargins.declarations['margin-left']!=='auto'||row.autoMargins.declarations['margin-right']!=='auto')return;
+  const width=rows[0].viewport,key='auto-margin-'+width;if(adaptationNegatives.has(key))return;
+  if(await c.evaluate('location.origin')!==new URL(process.env.G70_CANDIDATE_ORIGIN??'http://127.0.0.1:3482').origin)return;
+  for(const fault of ['article-right-1px','parent-padding-1px']){
+    await evaluate(c,fault=>{const el=document.querySelector('article.reader-body.reader-body-reader'),parent=el.parentElement;window.__g70.autoMarginRestore={el,parent,article:el.getAttribute('style'),parentStyle:parent.getAttribute('style')};
+      if(fault==='article-right-1px'){const values=getComputedStyle(el).translate.split(/\s+/);el.style.translate=((parseFloat(values[0])||0)+1)+'px '+(parseFloat(values[1])||0)+'px';}
+      else parent.style.paddingLeft=(parseFloat(getComputedStyle(parent).paddingLeft)+1)+'px';
+    },fault);
+    let detected=false,criterion;
+    try{const changed=await snapshot(c,false);try{compareStyles(rows,changed,key+'/'+fault,false);}catch(error){criterion=error.message;detected=criterion.startsWith('B auto margin geometry')||criterion.startsWith('B standard/old custom computed style');if(!detected)throw error;}}
+    finally{await c.evaluate('(()=>{const r=__g70.autoMarginRestore;r.article===null?r.el.removeAttribute("style"):r.el.setAttribute("style",r.article);r.parentStyle===null?r.parent.removeAttribute("style"):r.parent.setAttribute("style",r.parentStyle);delete __g70.autoMarginRestore;})()');await wait(c,"document.querySelector('.reader-body-reader')?.dataset.measuring==='false'",'auto margin negative restored');}
+    assert(detected,'自动边距负对照检出 '+fault);if(fault==='article-right-1px')assert(criterion.startsWith('B auto margin geometry'),'右移必须由自动边距几何检出');
+    compareStyles(rows,await snapshot(c,false),key+'/restore',false);report.negative.push({adaptation:key+'-'+fault,detected,criterion});
+  }
+  for(const mode of ['both-fixed','one-fixed']){
+    const b=structuredClone(row),a=structuredClone(row);b.textLayout=a.textLayout=false;b.referenceStyles=a.referenceStyles=null;
+    if(mode==='both-fixed')b.autoMargins.declarations['margin-left']='24.5px';a.autoMargins.declarations['margin-left']='0px';b.styles[0]['margin-left']='24.5px';a.styles[0]['margin-left']='0px';
+    let detected=false;try{compareStyles([b],[a],key+'/'+mode,false);}catch(error){detected=error.message.startsWith('B standard/old custom computed style');}
+    assert(detected,'非双方 auto 不得几何替代 '+mode);report.negative.push({adaptation:key+'-'+mode,detected});
+  }adaptationNegatives.add(key);
+  console.log(JSON.stringify({autoMarginNegative:{width,detected:report.negative.filter(row=>row.adaptation?.startsWith(key+'-')).length}}));
+}
+function savedSectionFacts(){
+  const section=document.querySelector('.side-section[aria-labelledby="saved-title"]');if(!section)return null;
+  return {title:section.querySelector('#saved-title').textContent.replace(/\s+/g,' ').trim(),empty:section.querySelector(':scope>.side-empty')?.textContent??null,items:[...section.querySelectorAll('.saved-list>li')].map(li=>{const tag=li.querySelector('.saved-kind');return{kind:tag?.dataset.kind,text:tag?.textContent};})};
+}
+function assertSavedSection(f){
+  if(!f)return;assert(f.title==='收藏 · '+f.items.length,'G76收藏标题与实际条目总数',f);
+  assert(f.items.length?f.empty===null:f.empty==='在白话或脉络解读下点书签，就会收在这里。','G76收藏空提示',f);
+  for(const item of f.items)assert(['gloss','explain'].includes(item.kind)&&item.text===(item.kind==='gloss'?'白话':'脉络解读'),'G76收藏类型签',item);
+}
+async function snapshot(c,checkMargins=true){
+  await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});await settle(c);
   await checkBranding(c);
-  return evaluate(c,()=>{
+  const white=await evaluate(c,whiteBlockFacts),ui=await evaluate(c,g76UIFacts);
+  const result=await evaluate(c,()=>{
     for(const a of document.getAnimations()){a.pause();a.currentTime=0;}
     const skip=new Set(['SCRIPT','STYLE','LINK','META','TITLE','NEXT-ROUTE-ANNOUNCER']);
-    const separate='.wordmark,.reader-sidebar-brand,.brand-wordmark,.shelf-mobile-brand,.shelf-brand-footer'+(innerWidth<768?',.shelf-heading':'');
+    const separate='.wordmark,.reader-sidebar-brand,.brand-wordmark,.shelf-mobile-brand,.shelf-brand-footer,.action-row,.explain-result,.saved-kind,.mode-label,.reader-saved-mobile,.landing-demo-pointer'+(innerWidth<768?',.shelf-heading,.reader-mobile-heading,.reader-mobile-progress-track,.reader-selection-mobile,.reader-typography-aa':'');
     const newVariables=new Set(['--brand-english','--brand-lockup','--font-brand','--font-brand-chinese']);
-    const selector='.action-row-save,.action-row-explain,.action-row-notice,.landing-step-answer,.landing-demo-step-text,.mode-label,.reader-saved-empty,.saved-empty';
+    const selector='.action-row-save,.action-row-explain,.action-row-notice,.landing-step-answer,.landing-demo-step-text,.mode-label,.reader-saved-empty,.saved-empty,.side-section[aria-labelledby="saved-title"]>.side-empty';
     const protectedNode=el=>el.matches('.reader-body,.reader-body-reader,.sentence,.gloss-panel-text,.explain-result-text,.shell,.col-middle')||!!el.closest('.sentence,.gloss-panel-text,.explain-result-text');
-    const nodes=[...document.querySelectorAll('html,body,body *')].filter(el=>!skip.has(el.tagName)&&!el.closest(separate));
+    const nodes=[...document.querySelectorAll('html,body,body *')].filter(el=>!skip.has(el.tagName)&&!el.closest(separate)&&!el.matches('.gloss-block'));
     const readStyles=el=>[null,'::before','::after'].map(p=>{const s=getComputedStyle(el,p);return Object.fromEntries([...s].filter(k=>k!=='--reader-gloss-font-size'&&!newVariables.has(k)).map(k=>[k,s.getPropertyValue(k)]));});
     const box=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return{x:r.x,y:r.y,w:r.width,h:r.height,visible:r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none',scroll:el.scrollWidth,client:el.clientWidth};};
-    const rows=nodes.map((el,i)=>({key:i+':'+el.tagName+':'+(el.tagName==='HTML'?'':el.className),styles:readStyles(el),derived:getComputedStyle(el).getPropertyValue('--reader-gloss-font-size'),box:box(el),viewport:innerWidth}));
+    const panels=[...document.querySelectorAll(".gloss-panel")];
+    const rows=nodes.map((el,i)=>({key:i+':'+el.tagName+':'+(el.tagName==='HTML'?'':el.className),styles:readStyles(el),derived:getComputedStyle(el).getPropertyValue('--reader-gloss-font-size'),box:box(el),viewport:innerWidth,autoMargins:window.__g70.autoMarginFacts(el),g76:{
+      panel:el.matches(".gloss-panel")?panels.indexOf(el):null,
+      panels:panels.map((panel,id)=>el===panel||el.contains(panel)?id:null).filter(id=>id!==null),
+      parentPanels:panels.map((panel,id)=>el.parentElement?.contains(panel)?id:null).filter(id=>id!==null),
+      white:!!el.closest(".gloss-panel-text"),headerGrid:innerWidth<768&&el.matches(".col-left"),
+      landingTracks:el.matches(".landing-layout")&&innerWidth>=1000?{demo:el.querySelector(".landing-demonstration").getBoundingClientRect().height,actions:el.querySelector(".landing-action-area").getBoundingClientRect().height,gap:parseFloat(getComputedStyle(el).rowGap)}:null,
+      expectedPanelHeight:el.matches(".gloss-panel")&&el.querySelector(":scope>.gloss-block")?[...el.children].reduce((sum,child)=>sum+child.getBoundingClientRect().height+parseFloat(getComputedStyle(child).marginTop)+parseFloat(getComputedStyle(child).marginBottom),0)+parseFloat(getComputedStyle(el).paddingTop)+parseFloat(getComputedStyle(el).paddingBottom)+parseFloat(getComputedStyle(el).borderTopWidth)+parseFloat(getComputedStyle(el).borderBottomWidth):null
+    }}));
     const affected=new Set(),changes=[],baseline=!document.querySelector('.brand-wordmark');
-    const replacements=[['听不懂','脉络解读'],['取消留下','取消收藏'],['留下的白话','收藏的白话'],['留下','收藏']];
+    const legacySaved=document.querySelector('.side-section[aria-labelledby="saved-title"]>.side-empty')?.textContent==='点白话下面的「收藏」，这句白话就固定下来，不会再变，并收在这里。';
+    const replacements=[['点白话下面的「收藏」，这句白话就固定下来，不会再变，并收在这里。','在白话或脉络解读下点书签，就会收在这里。'],['听不懂','脉络解读'],['取消留下','取消收藏'],['留下的白话','收藏的白话'],['留下','收藏']];
     for(const el of document.querySelectorAll(selector)){
       if(protectedNode(el)||el.closest(separate))continue;
       for(const node of el.childNodes){if(node.nodeType!==Node.TEXT_NODE)continue;const before=node.nodeValue;let after=before;
-        if(baseline)for(const [oldName,newName] of replacements)after=after.replaceAll(oldName,newName);
-        if(!baseline&&!/脉络解读|收藏/.test(before)||baseline&&before===after)continue;
+        if(baseline||legacySaved)for(const [oldName,newName] of replacements)after=after.replaceAll(oldName,newName);
+        if(!baseline&&!/脉络解读|收藏/.test(before)&&!el.matches('.side-section[aria-labelledby="saved-title"]>.side-empty')||baseline&&before===after)continue;
         changes.push([node,before,after]);affected.add(el);
         if(el.parentElement){affected.add(el.parentElement);for(const sibling of el.parentElement.children)affected.add(sibling);}
       }
     }
     try{
-      if(baseline)for(const [node,,after] of changes)node.nodeValue=after;
+      if(baseline||legacySaved)for(const [node,,after] of changes)node.nodeValue=after;
       for(let i=0;i<nodes.length;i++){const el=nodes[i];if(!affected.has(el)||protectedNode(el))continue;
-        rows[i].textLayout=true;rows[i].referenceStyles=baseline?readStyles(el):null;rows[i].expectedBox=baseline?box(el):null;
+        rows[i].textLayout=true;rows[i].referenceStyles=baseline||legacySaved?readStyles(el):null;rows[i].expectedBox=baseline||legacySaved?box(el):null;
         const siblings=[...el.parentElement?.children??[]].filter(other=>other!==el&&!other.contains(el)&&!el.contains(other));
         rows[i].overlap=siblings.some(other=>{const a=box(el),b=box(other);return a.visible&&b.visible&&Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x)>.5&&Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y)>.5;});
       }
     }finally{for(const [node,before] of changes)node.nodeValue=before;}
     return rows;
   });
+  result[0].g76Bundle={white,ui,saved:await evaluate(c,savedSectionFacts)};
+  if(checkMargins)await autoMarginNegatives(c,result);
+  return result;
 }
 
 function unchangedStylesNegative(rows,width){
@@ -214,10 +279,11 @@ function textSizeNegatives(base,actual,label){
   const index=base.findIndex((row,i)=>row.textLayout&&row.expectedBox?.visible&&actual[i].box.visible);
   if(index<0)return;
   const original=actual[index];
-  for(const fault of ['少字尺寸','多字尺寸','推移量','溢出','字号']){
+  for(const fault of ['少字尺寸','多字尺寸','高度','推移量','溢出','字号']){
     const changed=structuredClone(original);
     if(fault==='少字尺寸')changed.box.w-=1;
     if(fault==='多字尺寸')changed.box.w+=1;
+    if(fault==='高度')changed.box.h+=1;
     if(fault==='推移量')changed.box.x+=1;
     if(fault==='溢出')changed.box.scroll=changed.box.client+1;
     if(fault==='字号')changed.styles[0]['font-size']='1px';
@@ -225,7 +291,76 @@ function textSizeNegatives(base,actual,label){
     assert(detected,'改名尺寸负对照 '+fault);report.negative.push({adaptation:key+'-'+fault,detected});
   }adaptationNegatives.add(key);
 }
-function compareStyles(base,actual,label){
+function projectG76Styles(base,actual,label,negative=true){
+  const width=actual[0].viewport,reference=base[0].g76Bundle,current=actual[0].g76Bundle;
+  assertWhiteBlocks(reference.white,current.white,width);assertG76UI(reference.ui,current.ui,width);assertSavedSection(current.saved);
+  const projected=structuredClone(base);
+  assert(projected.length===actual.length,"G76结构规范化后的节点数",{label,base:projected.length,actual:actual.length});
+  const deltas=new Map();
+  for(let i=0;i<actual.length;i++){
+    const a=actual[i],b=projected[i];assert(normalizeBuildKey(a.key)===normalizeBuildKey(b.key),"G76保留节点身份",{label,base:b.key,actual:a.key});
+    if(a.g76.panel!==null){
+      if(a.g76.expectedPanelHeight!==null)assert(Math.abs(a.box.h-a.g76.expectedPanelHeight)<=.5,"G76面板高度等于实际块结构",{label,key:a.key,actual:a.box.h,expected:a.g76.expectedPanelHeight});
+      deltas.set(a.g76.panel,a.box.h-b.box.h);
+    }
+  }
+  const sum=ids=>ids.reduce((value,id)=>value+(deltas.get(id)??0),0);
+  const dimension=new Set(["height","block-size"]),origin=new Set(["perspective-origin","transform-origin"]);
+  for(let i=0;i<actual.length;i++){
+    const a=actual[i],b=projected[i],dy=a.box.h-b.box.h,dx=a.box.w-b.box.w;
+    const white=a.g76.white&&width>=1000,root=a.g76.panel!==null,derived=!root&&a.g76.panels.length>0;
+    if(derived&&dy!==0)assert(Math.abs(dy-sum(a.g76.panels))<=.5,"G76容器增高等于子面板尺寸差",{label,key:a.key,actual:dy,panels:sum(a.g76.panels)});
+    for(let p=0;p<3;p++)for(const property of Object.keys(a.styles[p])){
+      const before=b.styles[p][property],after=a.styles[p][property];if(before===after)continue;
+      if(a.g76.headerGrid&&p===0&&property==="grid-template-columns"){b.styles[p][property]=after;continue;}
+      if(root&&["min-height","min-block-size"].includes(property)&&p===0){b.styles[p][property]=after;continue;}
+      if((root||derived||white)&&dimension.has(property)&&p===0){
+        assert(Math.abs((parseFloat(after)-parseFloat(before))-dy)<=.5,"G76高度属性与实测尺寸差相同",{label,key:a.key,property,before,after,dy});b.styles[p][property]=after;continue;
+      }
+      if(white&&["width","inline-size"].includes(property)&&p===0){
+        assert(Math.abs((parseFloat(after)-parseFloat(before))-dx)<=.5,"G76宽度属性与实测尺寸差相同",{label,key:a.key,property,before,after,dx});b.styles[p][property]=after;continue;
+      }
+      if((root||derived||white)&&origin.has(property)&&p===0){
+        const old=before.split(" ").map(parseFloat),now=after.split(" ").map(parseFloat);
+        assert(Math.abs(now[0]-old[0]-(white?dx/2:0))<=.5&&Math.abs(now[1]-old[1]-dy/2)<=.5,"G76尺寸原点随实测尺寸变化",{label,key:a.key,property,before,after,dx,dy});b.styles[p][property]=after;continue;
+      }
+      if(derived&&property==="grid-template-rows"&&p===0){
+        const old=before.match(/-?[\d.]+px/g)??[],now=after.match(/-?[\d.]+px/g)??[];
+        if(a.g76.landingTracks){
+          const tracks=a.g76.landingTracks;
+          assert(old.length===2&&now.length===2&&Math.abs(parseFloat(now[0])-parseFloat(old[0]))<=.5&&Math.abs(parseFloat(now[1])-Math.max(tracks.actions,tracks.demo-parseFloat(old[0])-tracks.gap))<=.5,"G76演示卡跨两行且按钮区提供最小轨道高度",{label,key:a.key,before,after,tracks});
+        }else assert(old.length===now.length&&Math.abs(now.reduce((n,v)=>n+parseFloat(v),0)-old.reduce((n,v)=>n+parseFloat(v),0)-sum(a.g76.panels))<=.5,"G76网格行高只跟随子面板增高",{label,key:a.key,before,after,dy});
+        b.styles[p][property]=after;continue;
+      }
+      if(["bottom","inset-block-end"].includes(property)&&a.g76.parentPanels.length>0&&p===0){
+        assert(Math.abs((parseFloat(after)-parseFloat(before))-sum(a.g76.parentPanels))<=.5,"G76相邻绝对定位边界跟随父面板增高",{label,key:a.key,property,before,after});b.styles[p][property]=after;
+      }
+    }
+  }
+  if(negative){
+    if(current.saved){
+      for(const fault of ['标题计数','空提示','类型签']){
+        if(fault==='空提示'&&current.saved.empty===null||fault==='类型签'&&!current.saved.items.length)continue;
+        const changed=structuredClone(current.saved);if(fault==='标题计数')changed.title='收藏 · 999';if(fault==='空提示')changed.empty='错误提示';if(fault==='类型签')changed.items[0].kind='错误';
+        let detected=false;try{assertSavedSection(changed);}catch{detected=true;}assert(detected,'G76收藏区负对照 '+fault);report.negative.push({adaptation:'g76-saved-'+label+'-'+fault,detected});
+      }
+      const sideIndex=actual.findIndex(a=>a.key.includes(':reader-book-title'));
+      if(sideIndex>=0){const changed=structuredClone(actual);changed[sideIndex].styles[0]['font-size']='1px';let detected=false;try{compareStyles(projected,changed,label+'书名负对照');}catch{detected=true;}assert(detected,'G76其余侧栏仍逐项相等负对照');report.negative.push({adaptation:'g76-sidebar-unchanged-'+label,detected});}
+    }
+    const count=whiteBlockNegatives(reference.white,current.white,width)+g76UINegatives(reference.ui,current.ui,width);
+    report.negative.push({adaptation:"g76-components-"+label,detected:true,count});
+    const trackIndex=actual.findIndex(a=>a.g76.landingTracks);
+    if(trackIndex>=0){
+      const changed=structuredClone(actual),value=changed[trackIndex].styles[0]["grid-template-rows"].split(" ");
+      value[1]=(parseFloat(value[1])+1)+"px";changed[trackIndex].styles[0]["grid-template-rows"]=value.join(" ");
+      let detected=false;try{projectG76Styles(base,changed,label,false);}catch{detected=true;}assert(detected,"G76网格轨道新增1px负对照检出");report.negative.push({adaptation:"g76-grid-track-"+label,detected});
+    }
+    const index=actual.findIndex((a,i)=>a.g76.panel===null&&a.g76.panels.length>0&&a.box.h!==base[i].box.h);
+    if(index>=0){const changed=structuredClone(actual);changed[index].box.h+=1;let detected=false;try{projectG76Styles(base,changed,label,false);}catch{detected=true;}assert(detected,"G76容器新增1px负对照检出");report.negative.push({adaptation:"g76-container-height-"+label,detected});}
+  }
+  return projected;
+}
+function compareStyles(base,actual,label,count=true){
   assert(base.length===actual.length,'B DOM node count '+label,{base:base.length,actual:actual.length});let vars=0;
   for(let i=0;i<base.length;i++){
     assert(normalizeBuildKey(base[i].key)===normalizeBuildKey(actual[i].key),'B DOM identity '+label,{i,base:base[i].key,actual:actual[i].key});
@@ -235,11 +370,13 @@ function compareStyles(base,actual,label){
       for(const k of keys){
         const expected=p===0&&base[i].referenceStyles&&TEXT_SIZE_PROPERTIES.has(k)?base[i].referenceStyles[p][k]:base[i].styles[p][k];
         const value=actual[i].styles[p][k];
+        if(p===0&&compareAutoMargin(base[i],actual[i],k,label))continue;
         assert(expected===value,'B standard/old custom computed style',{label,node:actual[i].key,pseudo:p,property:k,base:expected,actual:value});
       }
     }
     if(base[i].derived!==actual[i].derived)vars++;
   }
+  if(!count)return;
   textSizeNegatives(base,actual,label);
   report.B++;report.styles.push({label,nodes:actual.length,standardDifferences:0,newVariableDifferences:vars});
 }
@@ -270,27 +407,44 @@ async function negative(c,nav,own,width){async function detects(label,inject,che
   await evaluate(c,key=>localStorage.setItem(key,JSON.stringify({...JSON.parse(localStorage.getItem(key)),fontSize:21})),KEY);await evaluate(c,id=>localStorage.removeItem('gloss:doc:'+id),own.split('/').at(-1));await nav('/');await wait(c,"!!document.querySelector('.landing-demo-visible .gloss-panel')",'negative landing');await detects('landing-leak',()=>style('.landing-demo-visible .gloss-panel{font-size:16.8px!important}'),async()=>assert(await c.evaluate("getComputedStyle(document.querySelector('.landing-demo-visible .gloss-panel')).fontSize")==='14px','Landing isolated'),remove);await evaluate(c,doc=>localStorage.setItem('gloss:doc:'+doc.docId,JSON.stringify(doc)),windowDocCache.get(c));
   await reset(c,nav,own);const glyph=await c.evaluate('__g19.glyphs().find(g=>g.char.trim())');await detects('original-one-pixel-shift',()=>style('.reader-body-reader .sentence{position:relative;left:1px}'),async()=>{const after=await evaluate(c,key=>__g19.rect(key),glyph.key);assert(after.x===glyph.x&&after.y===glyph.y,'Clicked glyph strict geometry');},remove);
 }
+function layoutHashSnapshot(){
+ const changes=[],baseline=!document.querySelector('.brand-wordmark');
+ if(baseline)for(const el of document.querySelectorAll('.action-row-save,.action-row-explain,.action-row-notice,.mode-label,.reader-saved-empty,.saved-empty')){
+  for(const node of el.childNodes){if(node.nodeType!==Node.TEXT_NODE)continue;const old=node.nodeValue;let text=old;for(const [a,b]of [['听不懂','脉络解读'],['取消留下','取消收藏'],['留下的白话','收藏的白话'],['留下','收藏']])text=text.replaceAll(a,b);if(text!==old){changes.push([node,old]);node.nodeValue=text;}}
+ }
+ try{
+  // 只移除授权面板的正常流占位；原文文本框本身的宽高和余下坐标仍逐项相等。
+  const body=document.querySelector('.reader-body-reader');
+  const flows=[...body.querySelectorAll('.reader-paragraph')].filter(parent=>parent.querySelector('.gloss-panel')).map(parent=>{
+   const panels=[...parent.querySelectorAll('.gloss-panel')],p=parent.getBoundingClientRect(),style=getComputedStyle(parent),source=[...parent.querySelectorAll('.reader-para')],sourceHeight=source.reduce((sum,el)=>sum+el.getBoundingClientRect().height,0),advance=p.height-sourceHeight;
+   if(panels.length!==1||!source.length||advance<0||[style.paddingTop,style.paddingBottom,style.borderTopWidth,style.borderBottomWidth].some(value=>parseFloat(value)!==0))throw Error('面板正常流模型不符');
+   const panel=panels[0],rect=panel.getBoundingClientRect();return {parent,panel,bottom:rect.bottom,advance,sourceHeight,panelHeight:rect.height};
+  });
+  window.__g70.hashFlow=flows.map(({advance,sourceHeight,panelHeight})=>({advance,sourceHeight,panelHeight}));
+  return [...document.querySelectorAll('.shell,.shell *')].flatMap(el=>{
+   if(el.closest('.wordmark,.reader-sidebar-brand,.brand-wordmark,.gloss-panel,.side-section[aria-labelledby="saved-title"]'))return [];
+   if(body.contains(el)&&el.querySelector('.gloss-panel')&&!el.querySelector('.sentence'))return [];
+   const style=getComputedStyle(el),r=el.getBoundingClientRect();let y=r.y,height=r.height;
+   if(el===body||body.contains(el)||el.contains(body))for(const flow of flows){if(el.contains(flow.panel))height-=flow.advance;else if(r.top>=flow.bottom)y-=flow.advance;}
+   if(style.display==='none'||style.visibility==='hidden'||Number(style.opacity)===0||r.width<=0||height<=0||y+height<=0||y>=innerHeight)return [];
+   return [[el.tagName,r.x,y,r.width,height]];
+  });
+ }finally{for(const [node,old]of changes)node.nodeValue=old;}
+}
 async function layoutHash(c,nav,own){
-  await reset(c,nav,own);await openPanel(c,0);await reset(c,nav,own);
-  const snap=()=>{
-    const changes=[],baseline=!document.querySelector('.brand-wordmark');
-    if(baseline)for(const el of document.querySelectorAll('.action-row-save,.action-row-explain,.action-row-notice,.mode-label,.reader-saved-empty,.saved-empty')){
-      for(const node of el.childNodes){if(node.nodeType!==Node.TEXT_NODE)continue;const old=node.nodeValue;let text=old;for(const [a,b] of [['听不懂','脉络解读'],['取消留下','取消收藏'],['留下的白话','收藏的白话'],['留下','收藏']])text=text.replaceAll(a,b);if(text!==old){changes.push([node,old]);node.nodeValue=text;}}
-    }
-    try{return [...document.querySelectorAll('.shell,.shell *')].filter(el=>{
-      if(el.closest('.wordmark,.reader-sidebar-brand,.brand-wordmark'))return false;
-      const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity)!==0&&r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight;
-    }).map(el=>{const r=el.getBoundingClientRect();return[el.tagName,r.x,r.y,r.width,r.height];});}
-    finally{for(const [node,old] of changes)node.nodeValue=old;}
-  };
-  const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
-  const before=await evaluate(c,snap);await openPanel(c,0);const after=await evaluate(c,snap);
-  if(!adaptationNegatives.has('layout-hash-body-1px')){
-    await evaluate(c,()=>{const el=document.querySelector('.reader-body-reader');window.__g70OldTransform=el.style.transform;el.style.transform='translateX(1px)';});
-    let detected;try{detected=hash(await evaluate(c,snap))!==hash(after);}finally{await evaluate(c,()=>{document.querySelector('.reader-body-reader').style.transform=window.__g70OldTransform;delete window.__g70OldTransform;});}
-    assert(detected,'整页几何哈希仍检出正文1px位移');report.negative.push({adaptation:'layout-hash-body-1px',detected});adaptationNegatives.add('layout-hash-body-1px');
-  }
-  return{before:hash(before),after:hash(after)};
+ await reset(c,nav,own);await openPanel(c,0);await reset(c,nav,own);
+ const snap=layoutHashSnapshot,hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+ const before=await evaluate(c,snap);await openPanel(c,0);const after=await evaluate(c,snap),origin=await c.evaluate('location.origin'),key='layout-hash-'+origin;
+ if(!adaptationNegatives.has(key)){
+  for(const [fault,selector,transform]of [['body-x1','.reader-body-reader','translateX(1px)'],['source-y1','.reader-para','translateY(1px)']]){
+   const moved=await evaluate(c,(selector,transform)=>{const el=document.querySelector(selector),before=el.getBoundingClientRect();window.__g70HashRestore={el,style:el.getAttribute('style')};el.style.transform=transform;const after=el.getBoundingClientRect();return {x:after.x-before.x,y:after.y-before.y};},selector,transform);
+   assert(fault==='body-x1'?moved.x===1:moved.y===1,'哈希负对照实际移动1px',{fault,moved});
+   let detected;try{detected=hash(await evaluate(c,snap))!==hash(after);}finally{await c.evaluate('(()=>{const r=__g70HashRestore;r.style===null?r.el.removeAttribute("style"):r.el.setAttribute("style",r.style);delete window.__g70HashRestore;})()');}
+   assert(detected,'整页几何哈希检出正文1px '+fault);assert(hash(await evaluate(c,snap))===hash(after),'哈希负对照恢复');report.negative.push({adaptation:key+'-'+fault,detected});
+  }adaptationNegatives.add(key);
+ }
+ (report.hashFlows??=[]).push({origin,flows:await c.evaluate('__g70.hashFlow')});
+ return {before:hash(before),after:hash(after)};
 }
 
 // E inspects the existing Reader clock through the DOM owner; no product diagnostics.
@@ -364,7 +518,7 @@ if(process.env.G70_DIAG_ONLY==='1'){const rows=[];for(let order=1;order<=6;order
 else {
 
 const baselineOrigin=process.env.G70_BASELINE_ORIGIN??'http://127.0.0.1:3483',candidateOrigin=process.env.G70_CANDIDATE_ORIGIN??'http://127.0.0.1:3482';
-for(const width of WIDTHS){console.log(JSON.stringify({width,stage:'baseline-pass-1'}));const b1=await suite(baselineOrigin,width,false,true);console.log(JSON.stringify({width,stage:'baseline-pass-2'}));const b2=await suite(baselineOrigin,width,false);console.log(JSON.stringify({width,stage:'candidate'}));const a=await suite(candidateOrigin,width,true);for(const state of Object.keys(b1.styles)){compareStyles(b1.styles[state],a.styles[state],width+'/'+state);}comparePoints(b1.points,b2.points,a.points,width);if(width===1024){assert(JSON.stringify(a.hashes)===JSON.stringify(b1.hashes),'Default 1024 visible layout hashes',{a:a.hashes,b:b1.hashes});report.hashes.push({width,...a.hashes});}console.log(JSON.stringify({width,completed:true,counts:{A:report.A,B:report.B,C:report.C,D:report.D,E:report.E}}));}
+for(const width of WIDTHS){console.log(JSON.stringify({width,stage:'baseline-pass-1'}));const b1=await suite(baselineOrigin,width,false,true);console.log(JSON.stringify({width,stage:'baseline-pass-2'}));const b2=await suite(baselineOrigin,width,false);console.log(JSON.stringify({width,stage:'candidate'}));const a=await suite(candidateOrigin,width,true);for(const state of Object.keys(b1.styles)){compareStyles(projectG76Styles(b1.styles[state],a.styles[state],width+'/'+state),a.styles[state],width+'/'+state);}comparePoints(b1.points,b2.points,a.points,width);if(width===1024){assert(JSON.stringify(a.hashes)===JSON.stringify(b1.hashes),'Default 1024 visible layout hashes',{a:a.hashes,b:b1.hashes});report.hashes.push({width,...a.hashes});}console.log(JSON.stringify({width,completed:true,counts:{A:report.A,B:report.B,C:report.C,D:report.D,E:report.E}}));}
 console.log(JSON.stringify(report));
 console.log('G-70 gloss-size checks passed');
 

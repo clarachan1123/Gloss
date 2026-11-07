@@ -23,7 +23,7 @@ export type ReadingMode = "reading" | "review";
 export interface SelectionResult {
   id: string; selection: SourceSelection; index: number; resultKind: "term" | "range";
   view: GlossView; saved: SavedSelection | null; expanded: boolean; nonMouse: boolean;
-  input: SelectionInput | null; retry: number; promptVersion: string; model: string; actionsVisible?: boolean;
+  input: SelectionInput | null; retry: number; promptVersion: string; model: string; actionsVisible?: boolean; manuallyCollapsed?: boolean;
 }
 export interface SelectionSlot {
   result: SelectionResult; panelRef: Ref<HTMLDivElement>;
@@ -45,6 +45,8 @@ export interface Region {
   presentation: GlossShape;
   actionVisible: boolean;
   explainView: ExplainView;
+  blocks?: { gloss: boolean; explain: boolean };
+  explainSaved?: boolean;
   glossKey?: string;
   selectionSlot?: SelectionSlot;
 }
@@ -78,6 +80,9 @@ export interface ParagraphProps {
   onBeforeReveal: (index: number) => CharAnchor | null;
   onAfterReveal: (anchor: CharAnchor | null) => void;
   onSave: (index: number) => Promise<"saved" | "removed" | StorageErrorCode>;
+  onBlockToggle?: (index: number, block: "gloss" | "explain", visible: boolean) => void;
+  onExplainSave?: (index: number) => Promise<"saved" | "removed" | StorageErrorCode>;
+  onSelectionFold?: (id: string) => void;
   onExplain: (index: number) => void;
   onExplainRetry: (index: number) => void;
   onExplainBlocked: (index: number) => void;

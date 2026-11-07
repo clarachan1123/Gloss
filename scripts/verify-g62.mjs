@@ -153,7 +153,7 @@ function pageSetup() {
     const button=document.querySelector('.landing-demo-visible .action-row-explain');
     const actions=document.querySelector('.landing-demo-visible .action-row');
     const cs=getComputedStyle(document.documentElement);
-    return {t:performance.now(),phase,opacity:pointer?Number(getComputedStyle(pointer).opacity):null,replayStage:pointer?.className.split(" ").find(c=>c.startsWith("landing-demo-pointer-replay-"))??null,pointer:rect(pointer),button:rect(button),explainHidden:button?.getAttribute('aria-hidden'),explainDisabled:button?.getAttribute('aria-disabled'),steps,listCount:lists.length,totalLists:allLists.length,compact:rect(document.querySelector('.landing-demo-steps')),viewport:{width:document.documentElement.clientWidth,height:innerHeight},elements,glyph,target:glyph.find(c=>c.index===10),tail,stage:rect(document.querySelector('.landing-demo-stage')),card:rect(document.querySelector('.landing-demonstration')),canvas:rect(document.querySelector('.landing-demo-canvas')),scrollY,scrollX,overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth,bodyOverflow:document.body.scrollWidth-document.documentElement.clientWidth,gutter:cs.scrollbarGutter,gloss:document.querySelector('.landing-demo-visible .gloss-panel-text')?.textContent??'',explain:explain?.textContent??'',pending:document.querySelector('.explain-result-pending')?.textContent??'',buttons:[...document.querySelectorAll('.landing-demo-panel-play button')].map(b=>({text:b.textContent,inert:!!b.closest('[inert]')})),animations:[...document.querySelectorAll('.landing-steps,.landing-steps *,.landing-demo-steps,.landing-demo-steps *,.landing-demo-stage,.landing-demo-stage *')].flatMap(el=>el.getAnimations()).filter(a=>a.playState==='running').length,actionVisible:actions?getComputedStyle(actions).display!=='none':false,saveDisabled:document.querySelector('.landing-demo-visible .action-row-save')?.disabled};
+    return {t:performance.now(),phase,opacity:pointer?Number(getComputedStyle(pointer).opacity):null,replayStage:pointer?.className.split(" ").find(c=>c.startsWith("landing-demo-pointer-replay-"))??null,pointer:rect(pointer),button:rect(button),explainHidden:button?.getAttribute('aria-hidden'),explainDisabled:button?.getAttribute('aria-disabled'),steps,listCount:lists.length,totalLists:allLists.length,compact:rect(document.querySelector('.landing-demo-steps')),viewport:{width:document.documentElement.clientWidth,height:innerHeight},elements,glyph,target:glyph.find(c=>c.index===10),tail,stage:rect(document.querySelector('.landing-demo-stage')),card:rect(document.querySelector('.landing-demonstration')),canvas:rect(document.querySelector('.landing-demo-canvas')),scrollY,scrollX,overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth,bodyOverflow:document.body.scrollWidth-document.documentElement.clientWidth,gutter:cs.scrollbarGutter,gloss:document.querySelector('.landing-demo-visible .gloss-panel-text')?.textContent??'',explain:explain?.textContent??'',pending:document.querySelector('.explain-result-pending')?.textContent??'',buttons:[...document.querySelectorAll('.landing-demo-panel-play button')].map(b=>({text:b.getAttribute('aria-label')??b.textContent,inert:!!b.closest('[inert]')})),animations:[...document.querySelectorAll('.landing-steps,.landing-steps *,.landing-demo-steps,.landing-demo-steps *,.landing-demo-stage,.landing-demo-stage *')].flatMap(el=>el.getAnimations()).filter(a=>a.playState==='running').length,actionVisible:actions?getComputedStyle(actions).display!=='none':false,saveDisabled:document.querySelector('.landing-demo-visible .action-row-save')?.disabled};
   }
   window.__g62.sample=sample;
   const observer=new MutationObserver(()=>{
@@ -236,8 +236,8 @@ function metrics(frames,width,run,commits) {
   check(last&&p,'f missing endpoint',width,run);
   const fx=p.x-last.right,fy=p.y-last.y;
   check(fx>=0&&fx<=24&&p.y>=last.y&&p.y<=last.bottom&&p.x>=stage.x&&p.y>=stage.y&&p.right<=stage.right&&p.bottom<=stage.bottom,'f',width,run,{fx,fy,pointer:p,last,stage});
-  check(final.explain===EXPECTED_EXPLANATION&&final.explainDisabled==='true','h',width,run);
-  check(final.buttons.length===2&&final.buttons.every(b=>b.inert)&&final.buttons.map(b=>b.text).join('|')==='收藏|脉络解读','inert buttons',width,run);
+  check(final.explain===EXPECTED_EXPLANATION&&final.button===null,'h',width,run);
+  check(final.buttons.length===4&&final.buttons.every(b=>b.inert)&&final.buttons.map(b=>b.text).join('|')==='收藏|收起白话|收藏|收起脉络解读','inert buttons',width,run);
   const phaseTimes=new Map();for(const frame of frames)if(!phaseTimes.has(frame.phase))phaseTimes.set(frame.phase,frame.t);
   for(const [phase,next,duration] of [['moving','clicking',650],['clicking','revealing',180],['gloss-ready','explain-moving',1600],['explain-moving','explain-clicking',700],['explain-clicking','explain-pending',260],['explain-pending','explain-revealing',700],['explain-complete','settled',600]]) {
     check(phaseTimes.has(phase)&&phaseTimes.has(next),'missing timing phase',width,run,{phase,next});
@@ -302,7 +302,7 @@ async function run(width,reduce=false) {
     if(reduce) {
       const first=await cdp.evaluate('window.__g62.firstVisible');
       check(first.totalLists===2&&first.listCount===1&&first.steps.length===2,'one visible steps list',width,'reduce',first);
-      check(!first.pointer&&first.gloss.length>0&&first.explain===EXPECTED_EXPLANATION&&first.steps[1].current&&first.buttons.length===2&&first.buttons.every(b=>b.inert)&&first.animations===0,'k',width,'reduce',first);
+      check(!first.pointer&&first.gloss.length>0&&first.explain===EXPECTED_EXPLANATION&&first.steps[1].current&&first.buttons.length===4&&first.buttons.every(b=>b.inert)&&first.animations===0,'k',width,'reduce',first);
       await clickReplay(cdp);
       const final=await cdp.evaluate('window.__g62.sample()');
       check(final.totalLists===2&&final.listCount===1&&final.steps.length===2,'one visible steps list',width,'reduce replay',final);
@@ -324,6 +324,14 @@ async function run(width,reduce=false) {
     await assertSinglePage(browser,target.id,'first:single-page');
     const first=await cdp.evaluate('({frames:window.__g62.frames,commits:window.__g62.commits})');
     const firstMetrics=metrics(first.frames,width,'first',first.commits);
+    // 用实际取样验证四控件名称与第一格空位的旧判据适配能够检错。
+    await cdp.evaluate("document.querySelector('.landing-demo-visible .action-row-save').setAttribute('aria-label','错误名称')");
+    check(await cdp.evaluate("window.__g62.sample().buttons.map(b=>b.text).join('|')!=='收藏|收起白话|收藏|收起脉络解读'"),'四控件名称负对照',width,'first');
+    await cdp.evaluate("document.querySelector('.landing-demo-visible .action-row-save').setAttribute('aria-label','收藏')");
+    await cdp.evaluate("(()=>{const b=document.createElement('button');b.className='action-row-explain';b.id='g76-old-negative';document.querySelector('.landing-demo-visible .action-row').append(b)})()");
+    check(await cdp.evaluate("window.__g62.sample().button!==null"),'第一格空位负对照',width,'first');
+    await cdp.evaluate("document.querySelector('#g76-old-negative').remove()");
+    console.log(JSON.stringify({width,adaptationNegatives:2}));
     // Arm before the real replay click so its return movement is sampled too.
     await cdp.evaluate('window.__g62.frames=[];window.__g62.commits=[]');
     await clickReplay(cdp);
@@ -338,7 +346,7 @@ async function run(width,reduce=false) {
     // Real pointer events and keyboard navigation cannot activate inert demo controls.
     const storage=await cdp.evaluate('JSON.stringify({...localStorage})');
     const state=await cdp.evaluate('window.__g62.sample()');
-    for(const selector of ['.action-row-save','.action-row-explain']) {
+    for(const selector of ['.gloss-block .action-row-save','.gloss-block .action-row-fold','.explain-result .action-row-save','.explain-result .action-row-fold']) {
       const point=await cdp.evaluate(`(()=>{const r=document.querySelector('.landing-demo-visible ${selector}').getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};})()`);
       await cdp.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});
       await cdp.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});

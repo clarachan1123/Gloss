@@ -924,3 +924,50 @@ body {
   .reader-sidebar-top > .reader-sidebar-brand { position: static; flex: 0 0 auto; height: 36px; }
 }
 @media (min-width: 768px) and (max-width: 999.98px) { .shell > .col-left { padding: 20px; } }
+
+/* G-76：块内正文和右侧三格操作分开，手机操作行在块底部。 */
+.gloss-panel[data-state="busy"] { min-height: 0; }
+.gloss-block { position: relative; padding-right: 148px; box-sizing: border-box; }
+.gloss-block[data-state="busy"] { min-height: calc(3 * 2.05em); }
+.explain-result { position: relative; margin-top: 12px; border: 0; padding: 14px 166px 14px 18px; background: var(--paper-side); color: var(--text-body); font-size: calc(max(14px, var(--reader-font-size, 17.5px) * .8) + 1px); line-height: 1.95; }
+.gloss-panel-bubble .explain-result { border-radius: 4px; }
+.action-row { position: absolute; right: 0; top: 0; margin: 0; display: grid; grid-template-columns: 84px 28px 28px; gap: 4px; align-items: start; min-height: 36px; }
+.explain-result > .action-row { top: 10px; right: 6px; }
+.action-row-recall-slot { width: 84px; min-height: 36px; }
+.action-row button { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; padding: 0; min-width: 0; height: 36px; border: 0; background: transparent; color: var(--gloss); cursor: pointer; }
+.action-row .action-row-recall { width: 84px; gap: 3px; white-space: nowrap; font-size: inherit; opacity: 1; }
+.action-row .action-row-recall[data-generated="true"] { opacity: .45; }
+.action-row .action-row-recall:hover, .action-row .action-row-recall:focus-visible { opacity: 1; }
+.action-row-save[aria-pressed="true"] { color: var(--hover); }
+.action-row-notice { position: absolute; top: 100%; right: 0; width: 180px; background: var(--paper-main); z-index: 2; }
+.saved-kind { display: inline-block; margin-right: 7px; padding: 1px 5px; border-radius: 3px; font-size: 10px; line-height: 1.7; background: var(--paper-side); color: var(--gloss); }
+.saved-kind[data-kind="explain"] { background: color-mix(in srgb, var(--hover) 12%, var(--paper-main)); color: var(--hover); }
+.reader-saved-mobile { display: none; }
+.reader-saved-sheet { position: fixed; z-index: 95; bottom: 0; left: 0; right: 0; max-height: min(65vh, 600px); overflow: auto; overscroll-behavior: contain; padding: 20px 20px max(20px, env(safe-area-inset-bottom)); background: var(--paper-main); border-top: 1px solid var(--rule); box-shadow: 0 -4px 24px var(--shadow-context); }
+.reader-saved-sheet header { display: flex; justify-content: space-between; align-items: center; }
+.reader-saved-sheet h2 { margin: 0; font-size: 16px; font-weight: 400; }
+.reader-saved-sheet button { background: transparent; color: var(--gloss); border: 0; cursor: pointer; }
+.saved-filters { display: flex; gap: 8px; margin: 16px 0; }
+.saved-filters button { padding: 8px 12px; border: 1px solid var(--rule); }
+.saved-filters button[aria-pressed="true"] { background: var(--paper-side); color: var(--ink); }
+@media (max-width: 999.98px) {
+  .gloss-block { padding-right: 0; }
+  .explain-result { padding: 14px 18px; }
+  .action-row, .explain-result > .action-row { position: relative; inset: auto; margin-top: 8px; display: flex; justify-content: flex-end; gap: 6px; }
+  /* 三行生成占位同时预留底部控件新增高度，避免写完时把上方新增高度推给原文。 */
+  .gloss-block[data-state="busy"] { min-height: calc(3 * 2.05em + 36px + 8px - 32px - .5em); }
+  .action-row button { width: 36px; height: 36px; }
+  .action-row .action-row-recall { width: 36px; min-width: 0; border: 1px solid var(--rule); border-radius: 3px; padding: 0; }
+  .action-row-recall-label { display: none; }
+  .action-row-recall-slot { width: 36px; }
+}
+@media (max-width: 767.98px) {
+  .action-row .action-row-recall[data-generated="true"] { opacity: 1; }
+  .shell > .col-left { grid-template-columns: 44px minmax(0, 1fr) 36px 44px 44px; }
+  .reader-selection-mobile { grid-column: 3; grid-row: 1; width: 36px; padding: 0; gap: 0; }
+  .reader-selection-mobile > span { display: none; }
+  .reader-saved-mobile { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; color: var(--gloss); background: transparent; grid-column: 4; grid-row: 1; }
+  .col-left .reader-typography-aa { grid-column: 5; grid-row: 1; width: 44px; height: 44px; }
+  .reader-mobile-heading { grid-column: 2; }
+  .reader-mobile-progress-track { grid-column: 1 / -1; }
+}

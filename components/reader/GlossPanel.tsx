@@ -105,7 +105,13 @@ export default function GlossPanel({
   onExplain,
   onExplainRetry,
   onExplainBlocked,
+  blocks, onBlockToggle, explainSaved = false, onExplainSave, onSelectionFold,
 }: {
+  blocks?: { gloss: boolean; explain: boolean };
+  onBlockToggle?: (index: number, block: "gloss" | "explain", visible: boolean) => void;
+  explainSaved?: boolean;
+  onExplainSave?: (index: number) => Promise<"saved" | "removed" | StorageErrorCode>;
+  onSelectionFold?: () => void;
   ref?: Ref<HTMLDivElement>;
   view: GlossView;
   onRetry: () => void;
@@ -131,6 +137,8 @@ export default function GlossPanel({
   onExplainRetry: (index: number) => void;
   onExplainBlocked: (index: number) => void;
 }) {
+  const glossVisible = blocks?.gloss ?? true;
+  const explainVisible = !selectionOnly && (blocks?.explain ?? explainView.status !== "idle");
   const chars = Array.from(view.text);
   const [reducedMotion] = useState(prefersReducedMotion);
   // 每次渲染都判断：重复点击时面板先以「加载中」出现，下一次渲染才拿到会话缓存
@@ -144,13 +152,13 @@ export default function GlossPanel({
   }, [view.revealProgress, visible]);
 
   useEffect(() => {
-    if (!revealing) return;
+    if (!revealing || !glossVisible) return;
     const timer = window.setTimeout(() => {
       pendingRevealAnchor.current = onBeforeReveal(sentenceIndex);
       setShown(visible + REVEAL_CHARS);
     }, REVEAL_INTERVAL_MS);
     return () => window.clearTimeout(timer);
-  }, [onBeforeReveal, revealing, sentenceIndex, visible]);
+  }, [glossVisible, onBeforeReveal, revealing, sentenceIndex, visible]);
 
   // 断流时先把已收到的字放完，再显示提示
   const failure = view.status === "failed" && !revealing ? view.failure : null;
@@ -180,6 +188,7 @@ export default function GlossPanel({
    */
   const panelRef = useRef<HTMLDivElement | null>(null);
   const tallestRef = useRef(0);
+  const glossBlockRef = useRef<HTMLDivElement | null>(null);
   const setPanelRef = useCallback(
     (node: HTMLDivElement | null) => {
       panelRef.current = node;
@@ -189,8 +198,8 @@ export default function GlossPanel({
     [ref],
   );
   useLayoutEffect(() => {
-    const panel = panelRef.current;
-    if (!panel) return;
+    const panel = glossBlockRef.current;
+    if (!panel) { tallestRef.current = 0; return; }
     if (saved) {
       tallestRef.current = 0;
       panel.style.minHeight = "";
@@ -231,6 +240,7 @@ export default function GlossPanel({
       data-sentence-index={sentenceIndex}
       data-selection-id={selectionId}
     >
+      {glossVisible && <div className="gloss-block" ref={glossBlockRef} data-state={busy ? "busy" : failure ? "failed" : "done"}>
       {title && <p className="gloss-panel-title">{title}</p>}
       {visible > 0 && (
         <p className="gloss-panel-text">
@@ -272,7 +282,12 @@ export default function GlossPanel({
           )}
         </p>
       )}
-      {(explainView.text || explainBusy || explainView.status === "failed") && (
+      <ActionRow saved={saved} disabled={view.status !== "done" || revealing} onToggle={onSave}
+        onFold={() => selectionOnly ? onSelectionFold?.() : onBlockToggle?.(sentenceIndex, "gloss", false)}
+        recall={!explainVisible ? "脉络解读" : undefined} generated={explainView.status !== "idle"}
+        onRecall={() => { onBlockToggle?.(sentenceIndex, "explain", true); if (explainView.status === "idle") onExplain(sentenceIndex); }} selectionOnly={selectionOnly} />
+      </div>}
+      {explainVisible && (
         <section className="explain-result" aria-label="整句理解" aria-busy={explainBusy}>
           {explainView.text && <p className="explain-result-text">{explainView.text}</p>}
           {explainBusy && !explainView.text && <p className="explain-result-pending">……</p>}
@@ -293,20 +308,13 @@ export default function GlossPanel({
               )}
             </p>
           )}
+          <ActionRow block="explain" saved={explainSaved} disabled={explainView.status !== "done"}
+            onToggle={() => onExplainSave?.(sentenceIndex) ?? Promise.resolve("removed")}
+            onFold={() => onBlockToggle?.(sentenceIndex, "explain", false)} recall={!glossVisible ? "白话" : undefined}
+            generated onRecall={() => onBlockToggle?.(sentenceIndex, "gloss", true)} />
         </section>
       )}
-      {actionVisible && (
-        <ActionRow
-          saved={saved}
-          disabled={view.status !== "done" || revealing}
-          onToggle={onSave}
-          explainStatus={explainView.status}
-          onExplain={() => onExplain(sentenceIndex)}
-          onExplainBlocked={() => onExplainBlocked(sentenceIndex)}
-          explainVisible={actionsReady}
-          selectionOnly={selectionOnly}
-        />
-      )}
+
     </div>
   );
 }

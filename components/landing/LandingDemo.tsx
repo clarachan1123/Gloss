@@ -207,7 +207,7 @@ export default function LandingDemo({ replayIndex, onStepChange = ignoreStep }: 
     if (!host) return;
     const check = () => {
       const button = host.querySelector(".action-row-explain");
-      if (host.querySelector(".gloss-panel-text")?.textContent === gloss && button?.getAttribute("aria-hidden") === "false") setPhase("gloss-ready");
+      if (host.querySelector(".gloss-panel-text")?.textContent === gloss && !!button) setPhase("gloss-ready");
     };
     const observer = new MutationObserver(check);
     observer.observe(host, { childList: true, subtree: true, characterData: true, attributes: true });

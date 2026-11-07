@@ -67,6 +67,7 @@ const fields: Record<string, Record<string, Check>> = {
   deep_explain_click: { sentenceIndex: index, source: oneOf("action_row", "context_menu") },
   deep_explain_blocked: { sentenceIndex: index },
   report_error_click: { sentenceIndex: index },
+  explain_save: { sentenceIndex: index },
   gloss_save: { sentenceIndex: index, edited: (value) => value === false },
   reader_enter: { source: oneOf("shelf", "upload", "direct", "landing"), positionRestored: bool },
   shelf_book_click: { entry: oneOf("continue", "cover", "start"), daysSinceOpenBucket: daysSinceOpen },
@@ -97,12 +98,12 @@ export const CLIENT_EVENTS = new Set([
   "reader_first_seen", "reader_return_7d", "doc_reopen_7d", "doc_upload_attempt", "doc_upload_reject",
   "doc_parse_complete", "sentence_click", "sentence_reclick", "gloss_first_token", "gloss_complete",
   "gloss_read_complete", "gloss_abort", "gloss_fail", "gloss_dismiss_early", "deep_explain_click",
-  "deep_explain_blocked", "report_error_click", "gloss_save", "reader_enter", "shelf_book_click",
+  "deep_explain_blocked", "report_error_click", "gloss_save", "explain_save", "reader_enter", "shelf_book_click",
 ]);
 
 const SAMPLE_EVENTS = new Set([
   "sentence_click", "sentence_reclick", "gloss_complete", "gloss_read_complete",
-  "gloss_dismiss_early", "gloss_save", "deep_explain_click", "deep_explain_blocked",
+  "gloss_dismiss_early", "gloss_save", "explain_save", "deep_explain_click", "deep_explain_blocked",
   "report_error_click",
 ]);
 

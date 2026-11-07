@@ -120,7 +120,7 @@ it("G-62 同一次 act 提交指针移动与当前步骤；连播解释、重播
     await advance(650); await advance(180);
     expect(host.querySelector(".action-row-save")).not.toBeNull();
     expect(host.querySelector<HTMLButtonElement>(".action-row-save")?.disabled).toBe(true);
-    expect(host.querySelector(".action-row-explain")?.getAttribute("aria-hidden")).toBe("true");
+    expect(host.querySelector(".action-row-explain")?.getAttribute("aria-label")).toBe("脉络解读");
     for (let i = 4; i < Array.from(sample.glosses[10]).length; i += 4) await advance(45);
     expect(host.querySelector(".gloss-panel-text")?.textContent).toBe(sample.glosses[10]);
     expect(host.querySelector(".landing-demo-pointer-gloss-ready")).not.toBeNull();
@@ -143,7 +143,7 @@ it("G-62 同一次 act 提交指针移动与当前步骤；连播解释、重播
       expect(host.querySelector(".explain-result-text")?.textContent).toBe(chars.slice(0, n + 4).join(""));
       expect([point.style.left, point.style.top]).toEqual(frozen);
     }
-    expect(host.querySelector(".action-row-explain")?.getAttribute("aria-disabled")).toBe("true");
+    expect(host.querySelector(".action-row-explain")).toBeNull();
     await advance(600);
     expect(host.querySelector(".landing-demo-pointer-settled")).not.toBeNull();
     await act(async () => { host.querySelector<HTMLButtonElement>(".landing-demo-header button")!.click(); });
@@ -158,7 +158,7 @@ it("G-62 减少动态效果终态有两个 inert 演示按钮，真实入口列�
   try {
     expect([...host.querySelectorAll("a, button")].filter(el => !el.closest("[inert]")).map(el => el.textContent)).toEqual(["体验反馈体验反馈", "再看一遍", "读一段示例 →", "导入自己的书"]);
     const buttons = [...host.querySelectorAll(".landing-demo-panel-play button")];
-    expect(buttons.map(el => el.textContent)).toEqual(["收藏", "脉络解读"]);
+    expect(buttons.map(el => el.getAttribute("aria-label"))).toEqual(["收藏", "收起白话", "收藏", "收起脉络解读"]);
     expect(buttons.every(el => !!el.closest("[inert]"))).toBe(true);
     expect(host.querySelectorAll(".landing-step")[1].classList.contains("landing-step-current")).toBe(true);
     expect(host.querySelectorAll(".landing-demo-step")[1].getAttribute("aria-current")).toBe("step");

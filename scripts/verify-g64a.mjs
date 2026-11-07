@@ -108,8 +108,17 @@ async function seed(c, paragraphs, fileName) {
     localStorage.setItem("gloss:structure:g64a-fixture", JSON.stringify({ prompt: "structure-v1", structure: "本地验证结构。", savedAt: Date.now() }));
   }, paragraphs,fileName);
 }
+function headerFits(h) { return h.selection.width===36&&h.selection.height===44&&h.saved.width===44&&h.saved.height===44&&h.aa.width===44&&h.aa.height===44&&h.back.right<=h.heading.left&&h.heading.right<=h.selection.left&&h.selection.right<=h.saved.left&&h.saved.right<=h.aa.left&&h.overflow===0; }
+async function selectionControlsNegative(c) {
+  // 多出一个控件时，两按钮判据必须拒绝；不触发任何产品操作。
+  await c.evaluate("(()=>{const b=document.createElement('button');b.id='g76-selection-negative';document.querySelector('[data-selection-id] .action-row').append(b)})()");
+  assert(await c.evaluate("document.querySelectorAll('[data-selection-id] .action-row button').length")!==2,"划选两控件负对照检出");
+  await c.evaluate("document.querySelector('#g76-selection-negative').remove()");
+  assert(await c.evaluate("document.querySelectorAll('[data-selection-id] .action-row button').length")===2,"划选两控件负对照恢复");
+  console.log(JSON.stringify({selectionControlsNegativeDetected:1}));
+}
 async function header(c) {
-  return c.evaluate("(()=>{const bar=document.querySelector('.col-left');const q=s=>{const e=document.querySelector(s),r=e.getBoundingClientRect(),style=getComputedStyle(e);return {left:r.left,right:r.right,width:r.width,height:r.height,font:style.fontSize,textAlign:style.textAlign}};const textLeft=s=>{const e=document.querySelector(s),n=document.createTreeWalker(e,NodeFilter.SHOW_TEXT).nextNode();if(!n)return null;const r=document.createRange();r.setStart(n,0);r.setEnd(n,1);return r.getBoundingClientRect().left};return {available:bar.clientWidth,back:q('.reader-shelf-back'),heading:q('.reader-mobile-heading'),title:q('.reader-mobile-title'),titleTextLeft:textLeft('.reader-mobile-title'),progress:q('.reader-mobile-progress'),progressTextLeft:textLeft('.reader-mobile-progress'),aa:q('.col-left .reader-typography-aa'),selection:document.querySelector('.reader-selection-mobile')?q('.reader-selection-mobile'):null,overflow:bar.scrollWidth-bar.clientWidth}})()");
+  return c.evaluate("(()=>{const bar=document.querySelector('.col-left');const q=s=>{const e=document.querySelector(s),r=e.getBoundingClientRect(),style=getComputedStyle(e);return {left:r.left,right:r.right,width:r.width,height:r.height,font:style.fontSize,textAlign:style.textAlign}};const textLeft=s=>{const e=document.querySelector(s),n=document.createTreeWalker(e,NodeFilter.SHOW_TEXT).nextNode();if(!n)return null;const r=document.createRange();r.setStart(n,0);r.setEnd(n,1);return r.getBoundingClientRect().left};return {available:bar.clientWidth,back:q('.reader-shelf-back'),heading:q('.reader-mobile-heading'),title:q('.reader-mobile-title'),titleTextLeft:textLeft('.reader-mobile-title'),progress:q('.reader-mobile-progress'),progressTextLeft:textLeft('.reader-mobile-progress'),aa:q('.col-left .reader-typography-aa'),saved:q('.reader-saved-mobile'),selection:document.querySelector('.reader-selection-mobile')?q('.reader-selection-mobile'):null,overflow:bar.scrollWidth-bar.clientWidth}})()");
 }
 async function ordinary(c) {
   await c.evaluate("getSelection()?.removeAllRanges();document.dispatchEvent(new MouseEvent('click',{bubbles:true}))");
@@ -396,7 +405,8 @@ async function resultFunctionalSmoke(c,width,source){
   await c.evaluate('localStorage.setItem("gloss:analytics:optout","0");__g64.resultEvents=[]');
   const panel="[data-selection-id]";
   assert(await c.evaluate("document.querySelector('[data-selection-id] .gloss-panel-title').textContent")==="「潮汐」在这里指什么","语境标题");
-  assert(await c.evaluate("document.querySelectorAll('[data-selection-id] .action-row button').length")===1,"仅留下，无解释占位");
+  assert(await c.evaluate("document.querySelectorAll('[data-selection-id] .action-row button').length")===2,"仅留下，无解释占位");
+  await selectionControlsNegative(c);
   await click(c,panel+" .action-row-save");
   await wait(c,"!!document.querySelector('.gloss-panel-saved[data-selection-id]')&&document.querySelectorAll('[data-saved-selection-id]').length===1","保存成功才切换");
   const record=await c.evaluate('JSON.parse(localStorage.getItem("gloss:selection-saved:g64a-fixture")).entries[0]');
@@ -591,7 +601,8 @@ async function resultMerge(c,width){
   const last=segmentParagraphs(RESULT_PARAGRAPHS).sentences.filter(s=>s.paraIndex===3&&s.start<source.end.offset).at(-1);
   assert(await c.evaluate("Number(document.querySelector('[data-selection-id]').dataset.sentenceIndex)")===last.index,"合并结果插在末字源句之后");
   await finishResult(c);
-  assert(await c.evaluate("!document.querySelector('[data-selection-id] .gloss-panel-title')&&document.querySelectorAll('[data-selection-id] .action-row button').length===1"),"范围无标题且仅留下");
+  assert(await c.evaluate("!document.querySelector('[data-selection-id] .gloss-panel-title')&&document.querySelectorAll('[data-selection-id] .action-row button').length===2"),"范围无标题且仅留下");
+  await selectionControlsNegative(c);
   counts.ii=(counts.ii??0)+1;
   for(const kind of ["escape","blank","other","source"]){
     if(kind!=="escape"){await prepareResults(c,width);await chooseResult(c,width,0,32);await confirmResult(c);await finishResult(c);}
@@ -867,8 +878,13 @@ async function run(width) {
       const paragraphs=["😀".repeat(1000)+"尾。","😀".repeat(1001)+"尾。",...Array.from({length:1198},()=> "本地段落。")];
       await seed(c,paragraphs,"这是一本超过二十个汉字的超长书名用来检查手机顶栏布局.txt");
       await navigate(c,ORIGIN+"/read/g64a-fixture");const h=await header(c);
-      assert(h.selection.width===72&&h.selection.height===44&&h.back.right<=h.heading.left&&h.heading.right<=h.selection.left&&h.selection.right<=h.aa.left&&h.overflow===0,"375顶栏装得下",h);
-      console.log(JSON.stringify({width,header:h}));counts.a++;
+      assert(headerFits(h),"375顶栏装得下",h);
+      // 书签宽度错误必须被同一五项顶栏判据检出。
+      await c.evaluate("document.querySelector('.reader-saved-mobile').style.width='45px'");
+      assert(!headerFits(await header(c)),"顶栏书签宽度负对照检出");
+      await c.evaluate("document.querySelector('.reader-saved-mobile').style.removeProperty('width')");
+      assert(headerFits(await header(c)),"顶栏负对照恢复");
+      console.log(JSON.stringify({width,header:h,headerNegativeDetected:1}));counts.a++;
       for(const [para,n]of [[0,1000],[1,1001]]) {
         await click(c,toggle(width));await touch(c,await glyph(c,para,0,true));
         await touch(c,await glyph(c,para,(n-1)*2,true));

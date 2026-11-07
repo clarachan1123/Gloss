@@ -462,6 +462,7 @@ export function removeShelfDocument(docId: string): boolean {
     storage.removeItem(STRUCTURE_PREFIX + docId);
     storage.removeItem(SAVED_GLOSS_PREFIX + docId);
     storage.removeItem(EXPLAIN_PREFIX + docId);
+    storage.removeItem("gloss:explain-saved:" + docId);
     storage.removeItem("gloss:selection-saved:" + docId);
     delete record.entries[docId];
     storage.setItem(SHELF_KEY, JSON.stringify(record));
@@ -528,4 +529,36 @@ export function loadStructure(docId: string, prompt: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** 脉络解读收藏只保存身份标记，正文仍由自动保存记录拥有。 */
+export type SavedExplanation = Pick<SavedGloss, "paraIndex" | "start" | "sourceHash" | "savedAt">;
+function readSavedExplanations(docId: string): SavedExplanation[] {
+  const raw = getStorage().getItem("gloss:explain-saved:" + docId);
+  if (!raw) return [];
+  try {
+    const record = JSON.parse(raw);
+    if (record?.version !== 1 || !Array.isArray(record.entries)) return [];
+    return record.entries.filter((entry: SavedExplanation) => entry && Number.isInteger(entry.paraIndex) && entry.paraIndex >= 0 &&
+      Number.isInteger(entry.start) && entry.start >= 0 && /^[a-f0-9]{64}$/.test(entry.sourceHash) && Number.isFinite(entry.savedAt));
+  } catch { return []; }
+}
+export async function loadSavedExplanations(docId: string, sentences: readonly Sentence[]): Promise<Map<number, SavedExplanation>> {
+  const entries = readSavedExplanations(docId);
+  const matches = await Promise.all(sentences.map(async sentence => {
+    const entry = entries.find(item => item.paraIndex === sentence.paraIndex && item.start === sentence.start);
+    return entry && entry.sourceHash === await hashSentence(sentence.text) ? [sentence.index, entry] as const : null;
+  }));
+  return new Map(matches.filter((item): item is readonly [number, SavedExplanation] => item !== null));
+}
+export async function toggleSavedExplanation(docId: string, sentence: Pick<Sentence, "paraIndex" | "start" | "text">): Promise<SavedExplanation | null> {
+  const sourceHash = await hashSentence(sentence.text);
+  const entries = readSavedExplanations(docId);
+  const exists = entries.some(item => item.paraIndex === sentence.paraIndex && item.start === sentence.start && item.sourceHash === sourceHash);
+  const next = entries.filter(item => item.paraIndex !== sentence.paraIndex || item.start !== sentence.start || item.sourceHash !== sourceHash);
+  const entry = exists ? null : { paraIndex: sentence.paraIndex, start: sentence.start, sourceHash, savedAt: Date.now() };
+  if (entry) next.push(entry);
+  try { getStorage().setItem("gloss:explain-saved:" + docId, JSON.stringify({version: 1, entries: next})); }
+  catch (err) { throw new StorageError(isQuotaError(err) ? "E1" : "E2", err); }
+  return entry;
 }

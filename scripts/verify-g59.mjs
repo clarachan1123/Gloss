@@ -300,7 +300,7 @@ async function checkSentenceHover(cdp, width, index) {
 }
 async function clickButton(cdp,scope,label){
   if(scope.includes('mode')&&['显示','收起'].includes(label)){await selectVisibleMode(cdp,label);return;}
-  await cdp.evaluate(`(()=>{const cycle=document.querySelector(".reader-shape-cycle");if(${JSON.stringify(scope)}.includes("白话显示形态")&&cycle){if(!cycle.ariaLabel.includes("："+${JSON.stringify(label)}+"，"))cycle.click();return;}const b=[...document.querySelectorAll(${JSON.stringify(scope)}+' button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw new Error('Missing enabled button '+${JSON.stringify(label)});b.click();})()`,false,'click:button:'+label);await settled(cdp);
+  await cdp.evaluate(`(()=>{const cycle=document.querySelector(".reader-shape-cycle");if(${JSON.stringify(scope)}.includes("白话显示形态")&&cycle){if(!cycle.ariaLabel.includes("："+${JSON.stringify(label)}+"，"))cycle.click();return;}const b=[...document.querySelectorAll(${JSON.stringify(scope)}+' button')].find(b=>(b.getAttribute('aria-label')??b.textContent.trim())===${JSON.stringify(label)});if(!b||b.disabled)throw new Error('Missing enabled button '+${JSON.stringify(label)});b.click();})()`,false,'click:button:'+label);await settled(cdp);
 }
 async function reload(cdp){await cdp.call('Page.reload',{},'reader:refresh');await waitForValue(()=>cdp.evaluate("document.readyState==='complete'&&!!window.__g59",false,'wait:refresh'),'refresh');await readyReader(cdp);}
 async function gutterMetrics(cdp) {
@@ -342,7 +342,9 @@ async function runReader(cdp,width){
     console.log(JSON.stringify({width,index,maxAbsDeltaX:Math.max(result.maxX,result.lowerX,closed.maxX),maxAbsDeltaY:Math.max(result.maxY,closed.maxY),lowerDeltaYError:result.lowerYError,tail:result.noTail?'无尾巴':'尾行'}));
   }
   await clickSentence(cdp,10);await clickButton(cdp,'.gloss-panel[data-sentence-index="10"]','收藏');
-  await reload(cdp);await clickSentence(cdp,10);
+  await reload(cdp);
+  // 显示模式刷新后收藏块已展开；再点原句按 G-76 会将它收起。
+  await waitForValue(()=>cdp.evaluate("!!document.querySelector('.reader-body .gloss-panel[data-sentence-index=\"10\"][data-state=\"done\"]')",false,'wait:saved-refresh'),'saved gloss after refresh');
   compare(baselines[10],await snap(cdp),10,width);
   await clickButton(cdp,(width>=1000?'.reader-sidebar-mode':'.reader-legacy-mode'),'收起');await clickButton(cdp,(width>=1000?'.reader-sidebar-mode':'.reader-legacy-mode'),'显示');compare(baselines[10],await snap(cdp),10,width);
   await clickButton(cdp,'[aria-label="白话显示形态"]','气泡');compare(baselines[10],await snap(cdp),10,width);
@@ -425,7 +427,9 @@ async function runBrowser(width,landing){
     if(landing)await runLanding(cdp,width);else await runReader(cdp,width);
     await assertSinglePage(browserCdp,target.id,'finish:single-page');
   }finally{
-    cdp?.close();browserCdp?.close();chrome.kill();
+    // 先让浏览器关闭全部子进程，避免残留进程持有继承的管道使脚本不退出。
+    if(browserCdp)await browserCdp.call('Browser.close',{},'cleanup:browser-close');
+    cdp?.close();browserCdp?.close();if(chrome.exitCode===null)chrome.kill();
     if(chrome.exitCode===null)await Promise.race([new Promise(done=>chrome.once('exit',done)),sleep(5000)]);
     const resolved=resolve(profile);if(!resolved.startsWith(resolve(tmpdir(),'gloss-g59-')))throw new Error('Unexpected profile path');
     await rm(resolved,{recursive:true,force:true}).catch(error=>console.warn('Profile cleanup: '+error.code));

@@ -57,8 +57,8 @@ it("G-52 系统减少动态效果时首个演示状态已完整展开且无指�
   expect(host.querySelector(".landing-demo-pointer")).toBeNull();
   expect(host.querySelector(".landing-demo-panel-play .gloss-panel-text")?.textContent).toBe(sampleContent.glosses[10]);
   expect(host.querySelector(".explain-result-text")?.textContent).toBe(DEMO_EXPLANATION);
-  expect(host.querySelector(".action-row-explain")?.getAttribute("aria-disabled")).toBe("true");
-  expect([...host.querySelectorAll(".landing-demo-panel-play button")].map(button => button.textContent)).toEqual(["收藏", "脉络解读"]);
+  expect(host.querySelector(".action-row-explain")).toBeNull();
+  expect([...host.querySelectorAll(".landing-demo-panel-play button")].map(button => button.getAttribute("aria-label"))).toEqual(["收藏", "收起白话", "收藏", "收起脉络解读"]);
   expect([...host.querySelectorAll(".landing-demo-panel-play button")].every(button => !!button.closest("[inert]"))).toBe(true);
 });
 

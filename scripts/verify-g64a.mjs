@@ -748,10 +748,21 @@ async function prepareCompensationNegative(){
   const chunks=[];
   for(const file of await readdir(join(ROOT,".next/static/chunks")))if(file.endsWith(".js")){
     const body=await readFile(join(ROOT,".next/static/chunks",file),"utf8"),tree=ts.createSourceFile(file,body,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
-    const scan=node=>{if(ts.isBinaryExpression(node)&&node.operatorToken.kind===ts.SyntaxKind.AmpersandAmpersandToken&&/^[$\w]+\?\.anchor$/.test(node.left.getText(tree))&&node.right.getText(tree).includes(".scrollY=window.scrollY"))chunks.push({file,body,start:node.getStart(tree),end:node.end,condition:node.left.getText(tree)});ts.forEachChild(node,scan);};scan(tree);
+    const scan=node=>{
+      const isIf=ts.isIfStatement(node);
+      const isAnd=ts.isBinaryExpression(node)&&node.operatorToken.kind===ts.SyntaxKind.AmpersandAmpersandToken;
+      if(isIf||isAnd){
+        const condition=isIf?node.expression:node.left,branch=isIf?node.thenStatement:node.right;
+        if(/^[$\w]+\?\.anchor$/.test(condition.getText(tree))&&branch.getText(tree).includes(".scrollY=window.scrollY")){
+          // 两种编译形态都只关闭同一个补偿分支。
+          chunks.push({file,body,start:condition.getStart(tree),end:condition.end});
+        }
+      }
+      ts.forEachChild(node,scan);
+    };scan(tree);
   }
   assert(chunks.length===1,"补偿构建整文件匹配恰好一处",chunks.length);
-  const chunk=chunks[0],patched=chunk.body.slice(0,chunk.start)+"void 0"+chunk.body.slice(chunk.end);
+  const chunk=chunks[0],patched=chunk.body.slice(0,chunk.start)+"false"+chunk.body.slice(chunk.end);
   await writeFile(sourceCopy,source.slice(0,sourceNode.getStart(ast))+"if (transaction?.anchor) { /* 诊断副本：插入后的锚定补偿已注释 */ }"+source.slice(sourceNode.end));
   await writeFile(chunkCopy,patched);
   diagnostic={sourcePath,sourceCopy,chunkCopy,file:chunk.file,body:patched,before:createHash("sha256").update(source).digest("hex"),hits:0};

@@ -205,6 +205,14 @@ export default function Reader({ docId }: { docId: string }) {
   const [savedSheetOpen, setSavedSheetOpen] = useState(false);
   const [savedFilter, setSavedFilter] = useState<"all"|"gloss"|"explain">("all");
   const savedButtonRef = useRef<HTMLButtonElement>(null);
+  const savedDragStart = useRef<number | null>(null);
+  const savedDragMoved = useRef(false);
+  const [savedDragY, setSavedDragY] = useState(0);
+  function closeSavedSheet() {
+    savedDragStart.current = null;
+    setSavedDragY(0);
+    setSavedSheetOpen(false);
+  }
   const [feedbackCloseRequest, setFeedbackCloseRequest] = useState(0);
   const [mobileTypographyOpen, setMobileTypographyOpen] = useState(false);
   const mobileTypographyOpenRef = useRef(false);
@@ -2531,10 +2539,11 @@ export default function Reader({ docId }: { docId: string }) {
 
   const [savedJumpKey, setSavedJumpKey] = useState<string | null>(null);
   const savedItems = [
-    ...[...savedGlosses].map(([index,saved])=>({ kind:"gloss" as const, key:"sentence:"+index, text:saved.text, point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0}, time:saved.savedAt, index, selectionId:null as string|null })),
-    ...[...selectionResults.values()].filter(result=>result.saved).map(result=>({kind:"gloss" as const,key:"selection:"+result.id,text:result.saved!.text,point:result.selection.start,time:result.saved!.savedAt,index:result.index,selectionId:result.id as string|null}))
-    ,...[...savedExplanations].map(([index,mark])=>({kind:"explain" as const,key:"explain:"+index,text:explainViews.get(index)?.text??"",point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0},time:mark.savedAt,index,selectionId:null as string|null}))
+    ...[...savedGlosses].map(([index,saved])=>({ kind:"gloss" as const, key:"sentence:"+index, text:saved.text, source:sentences[index]?.text ?? "", point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0}, time:saved.savedAt, index, selectionId:null as string|null })),
+    ...[...selectionResults.values()].filter(result=>result.saved).map(result=>({kind:"gloss" as const,key:"selection:"+result.id,text:result.saved!.text,source:result.selection.text,point:result.selection.start,time:result.saved!.savedAt,index:result.index,selectionId:result.id as string|null}))
+    ,...[...savedExplanations].map(([index,mark])=>({kind:"explain" as const,key:"explain:"+index,text:explainViews.get(index)?.text??"",source:sentences[index]?.text ?? "",point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0},time:mark.savedAt,index,selectionId:null as string|null}))
   ].sort((a,b)=>comparePoints(a.point,b.point)||a.time-b.time||(a.kind===b.kind?0:a.kind==="gloss"?-1:1));
+  const filteredSavedItems = savedItems.filter(item => savedFilter === "all" || item.kind === savedFilter);
   function jumpItem(item: typeof savedItems[number]) {
     if (item.selectionId) jumpToSelection(item.selectionId);
     else {
@@ -2549,7 +2558,7 @@ export default function Reader({ docId }: { docId: string }) {
   const highlightedSaved = savedItems.find(item => item.key === savedJumpKey);
   const highlightedSavedVisible = !!highlightedSaved && (highlightedSaved.selectionId
     ? !!selectionResults.get(highlightedSaved.selectionId) && selectionVisible(selectionResults.get(highlightedSaved.selectionId)!)
-    : readingMode === "review" || expandedSavedIndexes.has(highlightedSaved.index));
+    : blocksFor(highlightedSaved.index)[highlightedSaved.kind] && (readingMode === "review" || expandedSavedIndexes.has(highlightedSaved.index)));
   useEffect(() => {
     if (!savedJumpKey) return;
     if (!highlightedSavedVisible) { setSavedJumpKey(null); return; }
@@ -2670,7 +2679,7 @@ export default function Reader({ docId }: { docId: string }) {
               {savedItems.map(item => (
                 <li key={item.key}>
                   <button type="button" className="saved-link" data-jump-highlight={savedJumpKey === item.key && highlightedSavedVisible || undefined} data-saved-selection-id={item.selectionId ?? undefined} onClick={event => { if (window.innerWidth >= 768) setSavedJumpKey(item.key); event.stopPropagation(); jumpItem(item); }}>
-                    <span className="saved-kind" data-kind={item.kind}>{item.kind === "explain" ? "脉络解读" : "白话"}</span>{item.text}
+                    <span className="saved-kind" data-kind={item.kind}>{item.kind === "explain" ? "脉络解读" : "白话"}</span><span className="saved-item-text">{item.text}</span>
                   </button>
                 </li>
               ))}
@@ -2768,11 +2777,42 @@ export default function Reader({ docId }: { docId: string }) {
           <SettingsPanel selectionActive={selectionMode} onSelectionToggle={toggleSelection} glossShape={glossShape} onGlossShapeChange={changeGlossShape} typography={typography} onTypographyChange={changeTypography}
             onTypographyGestureStart={startTypographyGesture} onTypographyGestureEnd={endTypographyGesture} />
       </aside>
-      {savedSheetOpen && <div id="reader-saved-sheet" className="reader-saved-sheet" data-reader-settings role="dialog" aria-labelledby="reader-saved-title">
-        <header><h2 id="reader-saved-title" tabIndex={-1}>收藏 · {savedItems.length} 条 · 全书</h2><button type="button" aria-label="关闭收藏" onClick={()=>setSavedSheetOpen(false)}>关闭</button></header>
-        <div className="saved-filters" role="group" aria-label="收藏筛选">{([["all","全部"],["gloss","白话"],["explain","脉络解读"]] as const).map(([kind,label])=><button type="button" key={kind} aria-pressed={savedFilter===kind} onClick={()=>setSavedFilter(kind)}>{label}</button>)}</div>
-        {savedItems.filter(item=>savedFilter==="all"||item.kind===savedFilter).length===0 ? <p>在白话或脉络解读下点书签，就会收在这里。</p> : <ol className="saved-list">{savedItems.filter(item=>savedFilter==="all"||item.kind===savedFilter).map(item=><li key={item.key}><button type="button" className="saved-link" onClick={()=>jumpItem(item)}><span className="saved-kind" data-kind={item.kind}>{item.kind==="explain"?"脉络解读":"白话"}</span>{item.text}</button></li>)}</ol>}
-      </div>}
+      {savedSheetOpen && <>
+        <div className="reader-saved-backdrop" data-reader-settings aria-hidden="true" onClick={closeSavedSheet} />
+        <div id="reader-saved-sheet" className="reader-saved-sheet" data-reader-settings role="dialog" aria-labelledby="reader-saved-title"
+          style={{ translate: savedDragY ? "0 " + savedDragY + "px" : undefined }}
+          onKeyDown={event => { if (event.key === "Escape") { closeSavedSheet(); savedButtonRef.current?.focus(); } }}>
+          <div className="reader-saved-drag"
+            onPointerDown={event => { if (!event.isPrimary || event.button !== 0) return; savedDragStart.current = event.clientY; savedDragMoved.current = false; (event.target as Element).setPointerCapture(event.pointerId); }}
+            onPointerMove={event => { if (!event.isPrimary || savedDragStart.current === null) return; const distance = event.clientY - savedDragStart.current; savedDragMoved.current ||= Math.abs(distance) > 4; setSavedDragY(Math.max(0, distance)); }}
+            onPointerUp={event => {
+              if (!event.isPrimary || savedDragStart.current === null) return;
+              if (event.clientY - savedDragStart.current > 80) closeSavedSheet();
+              else { savedDragStart.current = null; setSavedDragY(0); }
+            }}
+            onPointerCancel={() => { savedDragStart.current = null; setSavedDragY(0); }}>
+            <button type="button" className="reader-saved-grip" aria-label="关闭收藏" onClick={event => {
+              if (event.detail === 0 || !savedDragMoved.current) closeSavedSheet();
+            }} />
+          </div>
+          <header><h2 id="reader-saved-title">收藏</h2><span>{savedItems.length} 条 · 全书</span></header>
+          <div className="saved-filters" role="group" aria-label="收藏筛选">
+            {([["all", "全部"], ["gloss", "白话"], ["explain", "脉络解读"]] as const).map(([kind, label]) =>
+              <button type="button" key={kind} aria-pressed={savedFilter === kind} onClick={() => setSavedFilter(kind)}>{label}</button>)}
+          </div>
+          {filteredSavedItems.length === 0 ? <p className="reader-saved-empty-state">在白话或脉络解读下点书签，就会收在这里。</p> : (
+            <ol className="saved-list">
+              {filteredSavedItems.map(item => <li key={item.key}>
+                <button type="button" className="saved-link" onClick={() => jumpItem(item)}>
+                  <span className="saved-kind" data-kind={item.kind}>{item.kind === "explain" ? "脉络解读" : "白话"}</span>
+                  <span className="saved-item-source">{item.source}</span>
+                  <span className="saved-item-preview">{item.text}</span>
+                </button>
+              </li>)}
+            </ol>
+          )}
+        </div>
+      </>}
       {selectionMode && <><SelectionBar mobile={selectionMobile} started={selectionStart !== null} selection={selection} onReselect={clearSelection} onConfirm={confirmSelection} onExit={exitSelection} />
         <span ref={selectionMarkerRef} className="reader-selection-marker" data-kind={selection ? "end" : "start"} aria-hidden="true" hidden /></>}
       <button type="button" ref={attachFloatingTypographyButton} className="reader-typography-floating-aa" data-reader-settings

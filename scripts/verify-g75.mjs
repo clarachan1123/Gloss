@@ -74,7 +74,47 @@ try{
  await load('/',1280);assert(await c.evaluate('document.title')==='Glossline 句下','首页标题');
  for(const value of ['parchment','moon-white','eye-green','dark']){await theme(value);await brand('.landing-header',26);}
  await negativeCheck('Landing字标文字判据',()=>document.querySelector('.landing-header .wordmark').textContent==='Glossline句下',()=>document.querySelector('.landing-header .brand-english').textContent='GLOSS',()=>document.querySelector('.landing-header .brand-english').textContent='Glossline');
- assert((await platformFont('.landing-header .brand-english')).some(f=>f.isCustomFont&&f.glyphCount>0),'英文实际字体');
+ const englishFont=()=>{
+  const element=document.querySelector('.landing-header .brand-english'), style=getComputedStyle(element);
+  const family='Cormorant Garamond', first=style.fontFamily.split(',')[0].trim().replace(/^["']|["']$/g,'');
+  const loaded=[...document.fonts].some(face=>face.family.replace(/^["']|["']$/g,'')===family&&face.weight==='600'&&face.status==='loaded');
+  const probe=document.createElement('span');
+  Object.assign(probe.style,{position:'absolute',visibility:'hidden',whiteSpace:'nowrap',fontSize:style.fontSize,fontWeight:'600',letterSpacing:style.letterSpacing});
+  probe.textContent='Glossline';document.body.append(probe);
+  const width=font=>{probe.style.fontFamily=font;return probe.getBoundingClientRect().width;};
+  const expected=width('"Cormorant Garamond"'), fallback=width('"Cormorant Garamond Fallback"');
+  probe.remove();
+  const actual=element.getBoundingClientRect().width;
+  return {loaded,first,actual,expected,fallback,ok:loaded&&first===family&&Math.abs(expected-fallback)>.5&&Math.abs(actual-expected)<=.5};
+ };
+ const english=await ev(englishFont);assert(english.ok,'英文实际字体',english);
+ await ev(()=>document.querySelector('.landing-header .brand-english').style.fontFamily='"Cormorant Garamond Fallback"');
+ try{const fallback=await ev(englishFont);assert(!fallback.ok&&Math.abs(fallback.actual-fallback.fallback)<=.5,'英文实际字体回退负对照',fallback);negative++;}
+ finally{await ev(()=>document.querySelector('.landing-header .brand-english').style.removeProperty('font-family'));}
+ const latinURL=await ev(()=>{
+   for(const sheet of document.styleSheets)for(const rule of sheet.cssRules){
+     if(!(rule instanceof CSSFontFaceRule))continue;
+     const font=rule.style;
+     if(font.fontFamily.replace(/^["']|["']$/g,'')!=='Cormorant Garamond'||font.fontWeight!=='600'||!font.getPropertyValue('unicode-range').includes('U+0-FF'))continue;
+     const source=font.src.match(/url\(["']?([^"')]+)["']?\)/)?.[1];
+     if(source)return new URL(source,sheet.href??location.href).href;
+   }
+   return null;
+ });
+ assert(latinURL,'找到英文字标拉丁字体请求');
+ await c.call('Network.enable');await c.call('Network.setCacheDisabled',{cacheDisabled:true});
+ try{
+   await c.call('Page.navigate',{url:'about:blank'});
+   await c.call('Network.setBlockedURLs',{urls:[latinURL]});
+   await load('/',1280);
+   const blocked=await ev(englishFont);
+   assert(!blocked.ok&&!blocked.loaded,'英文实际字体请求阻断负对照',blocked);negative++;
+ }finally{
+   await c.call('Network.setBlockedURLs',{urls:[]});
+   await c.call('Network.setCacheDisabled',{cacheDisabled:false});
+ }
+ await load('/',1280);
+ assert((await ev(englishFont)).ok,'解除阻断后英文实际字体恢复');
  assert((await platformFont('.landing-header .brand-chinese')).some(f=>f.isCustomFont&&f.glyphCount===2),'句下实际自托管字体');
  await negativeCheck('字标回退Cinzel',()=>getComputedStyle(document.querySelector('.landing-header .brand-english')).fontFamily===getComputedStyle(document.documentElement).getPropertyValue('--font-brand').trim(),()=>document.querySelector('.landing-header .brand-english').style.fontFamily='var(--font-display)',()=>document.querySelector('.landing-header .brand-english').style.removeProperty('font-family'));
  await negativeCheck('句下系统字体',()=>{const p=document.createElement('span');p.style.fontFamily='var(--font-brand-chinese)';document.body.append(p);const expected=getComputedStyle(p).fontFamily;p.remove();return getComputedStyle(document.querySelector('.brand-chinese')).fontFamily===expected;},()=>document.querySelector('.brand-chinese').style.fontFamily='SimSun',()=>document.querySelector('.brand-chinese').style.removeProperty('font-family'));

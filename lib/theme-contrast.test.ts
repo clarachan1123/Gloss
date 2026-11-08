@@ -16,7 +16,7 @@ const AA_NORMAL_TEXT = 4.5;
 
 const CSS = readFileSync(path.resolve(__dirname, "../styles/tokens.css"), "utf8");
 
-type Token = "--selection-bg" | "--selection-start-bg" | "--tool-active-bg" | "--text-body" | "--paper-main" | "--paper-side" | "--ink" | "--gloss" | "--saved-inline" | "--term" | "--hover" | "--sentence-active-bg";
+type Token = "--selection-bg" | "--selection-start-bg" | "--tool-active-bg" | "--text-body" | "--paper-main" | "--paper-side" | "--ink" | "--gloss" | "--saved-inline" | "--term" | "--hover" | "--sentence-active-bg" | "--saved-tag-gloss-bg" | "--saved-tag-gloss-fg" | "--saved-tag-explain-bg" | "--saved-tag-explain-fg";
 
 /** 从 tokens.css 里取某套主题的色值。主题块按 [data-theme="…"] 分段 */
 function themeColors(theme: string): Record<Token, string> {
@@ -41,6 +41,10 @@ function themeColors(theme: string): Record<Token, string> {
     "--term": read("--term"),
     "--hover": read("--hover"),
     "--sentence-active-bg": read("--sentence-active-bg"),
+    "--saved-tag-gloss-bg": read("--saved-tag-gloss-bg"),
+    "--saved-tag-gloss-fg": read("--saved-tag-gloss-fg"),
+    "--saved-tag-explain-bg": read("--saved-tag-explain-bg"),
+    "--saved-tag-explain-fg": read("--saved-tag-explain-fg"),
   };
 }
 
@@ -122,6 +126,13 @@ const LIGHT_THEMES = ["parchment", "moon-white", "eye-green"];
 const THEMES = [...LIGHT_THEMES, "dark"] as const;
 
 describe("三套主题的对比度", () => {
+  it.each(THEMES)("%s：两类收藏小签达到正文对比度", (theme) => {
+    const colors = themeColors(theme);
+    expect(contrast(colors["--saved-tag-gloss-bg"], colors["--saved-tag-gloss-fg"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    expect(contrast(colors["--saved-tag-explain-bg"], colors["--saved-tag-explain-fg"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    expect(contrast(colors["--saved-tag-gloss-bg"], colors["--saved-tag-gloss-bg"])).toBeLessThan(AA_NORMAL_TEXT);
+  });
+
   it.each(THEMES)("%s：G-66 正文与底色对比度在 [7, 12]", (theme) => {
     const c = themeColors(theme);
     const ratio = contrast(c["--text-body"], c["--paper-main"]);

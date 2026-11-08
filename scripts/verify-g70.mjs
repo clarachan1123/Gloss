@@ -188,12 +188,25 @@ async function autoMarginNegatives(c,rows){
 }
 function savedSectionFacts(){
   const section=document.querySelector('.side-section[aria-labelledby="saved-title"]');if(!section)return null;
-  return {title:section.querySelector('#saved-title').textContent.replace(/\s+/g,' ').trim(),empty:section.querySelector(':scope>.side-empty')?.textContent??null,items:[...section.querySelectorAll('.saved-list>li')].map(li=>{const tag=li.querySelector('.saved-kind');return{kind:tag?.dataset.kind,text:tag?.textContent};})};
+  const heading=section.querySelector('.reader-saved-heading'), style=getComputedStyle(heading);
+  const rows=[...section.querySelectorAll('.saved-list>li')].map(li=>{
+    const button=li.querySelector('.saved-link'),text=button.querySelector('.saved-item-text'),css=getComputedStyle(button);
+    return {display:css.display,alignment:css.alignItems,gap:css.columnGap,padding:css.padding,border:css.borderLeftWidth,size:css.fontSize,line:css.lineHeight,font:css.fontFamily,weight:css.fontWeight,margin:getComputedStyle(li).marginTop,text:text&&[getComputedStyle(text).whiteSpace,getComputedStyle(text).textOverflow],content:text?.textContent??button.textContent};
+  });
+  const contentHeight=[...section.children].reduce((total,el)=>{
+    const css=getComputedStyle(el);return total+el.getBoundingClientRect().height+parseFloat(css.marginTop)+parseFloat(css.marginBottom);
+  },0);
+  return {rows,contentHeight,headingMargin:style.marginBottom,headingPadding:style.paddingBottom,headingBorder:style.borderBottomWidth,title:section.querySelector('#saved-title').textContent.replace(/\s+/g,' ').trim(),empty:section.querySelector(':scope>.side-empty')?.textContent??null,items:[...section.querySelectorAll('.saved-list>li')].map(li=>{const tag=li.querySelector('.saved-kind');return{kind:tag?.dataset.kind,text:tag?.textContent};})};
 }
-function assertSavedSection(f){
+function assertSavedSection(f,reference=null){
   if(!f)return;assert(f.title==='收藏 · '+f.items.length,'G76收藏标题与实际条目总数',f);
   assert(f.items.length?f.empty===null:f.empty==='在白话或脉络解读下点书签，就会收在这里。','G76收藏空提示',f);
   for(const item of f.items)assert(['gloss','explain'].includes(item.kind)&&item.text===(item.kind==='gloss'?'白话':'脉络解读'),'G76收藏类型签',item);
+  assert(f.headingMargin==='12px'&&f.headingPadding==='8px'&&f.headingBorder==='1px','G76收藏标题行尺寸',f);
+  for(const [index,row] of f.rows.entries()){
+    assert(row.display==='flex'&&row.alignment==='baseline'&&row.gap==='8px'&&row.padding==='0px'&&row.border==='0px'&&row.size==='13px'&&row.line==='22.1px'&&row.margin===(index?'10px':'0px')&&row.text?.join('/')==='nowrap/ellipsis'&&row.content,'G76收藏条目布局',row);
+    if(reference?.rows[index])assert(row.font===reference.rows[index].font&&row.weight===reference.rows[index].weight,'G76收藏条目字体保持',row);
+  }
 }
 async function snapshot(c,checkMargins=true){
   await c.evaluate('Promise.all([...document.querySelectorAll(".gloss-block,.explain-surface")].flatMap(el=>el.getAnimations({subtree:true})).filter(animation=>animation.animationName==="gloss-block-in").map(animation=>animation.finished.catch(()=>{})))');
@@ -203,8 +216,8 @@ async function snapshot(c,checkMargins=true){
   const result=await evaluate(c,()=>{
     for(const a of document.getAnimations()){a.pause();a.currentTime=0;}
     const skip=new Set(['SCRIPT','STYLE','LINK','META','TITLE','NEXT-ROUTE-ANNOUNCER']);
-    const separate='.wordmark,.reader-sidebar-brand,.brand-wordmark,.shelf-mobile-brand,.shelf-brand-footer,.action-row,.explain-result,.saved-kind,.mode-label,.reader-saved-mobile,.landing-demo-pointer'+(innerWidth<768?',.shelf-heading,.reader-mobile-heading,.reader-mobile-progress-track,.reader-selection-mobile,.reader-typography-aa':'');
-    const newVariables=new Set(['--brand-english','--brand-lockup','--font-brand','--font-brand-chinese']);
+    const separate='.wordmark,.reader-sidebar-brand,.brand-wordmark,.shelf-mobile-brand,.shelf-brand-footer,.action-row,.explain-result,.saved-kind,.side-section[aria-labelledby=saved-title]>.saved-list,.mode-label,.reader-saved-mobile,.landing-demo-pointer'+(innerWidth<768?',.shelf-heading,.reader-mobile-heading,.reader-mobile-progress-track,.reader-selection-mobile,.reader-typography-aa':'');
+    const newVariables=new Set(['--brand-english','--brand-lockup','--font-brand','--font-brand-chinese','--saved-tag-gloss-bg','--saved-tag-gloss-fg','--saved-tag-explain-bg','--saved-tag-explain-fg']);
     const selector='.action-row-save,.action-row-explain,.action-row-notice,.landing-step-answer,.landing-demo-step-text,.mode-label,.reader-saved-empty,.saved-empty,.side-section[aria-labelledby="saved-title"]>.side-empty';
     const protectedNode=el=>el.matches('.reader-body,.reader-body-reader,.sentence,.gloss-panel-text,.explain-result-text,.shell,.col-middle')||!!el.closest('.sentence,.gloss-panel-text,.explain-result-text');
     const nodes=[...document.querySelectorAll('html,body,body *')].filter(el=>!skip.has(el.tagName)&&!el.closest(separate)&&!el.matches('.gloss-block'));
@@ -212,6 +225,7 @@ async function snapshot(c,checkMargins=true){
     const box=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return{x:r.x,y:r.y,w:r.width,h:r.height,visible:r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none',scroll:el.scrollWidth,client:el.clientWidth};};
     const panels=[...document.querySelectorAll(".gloss-panel")];
     const rows=nodes.map((el,i)=>({key:i+':'+el.tagName+':'+(el.tagName==='HTML'?'':el.className),styles:readStyles(el),derived:getComputedStyle(el).getPropertyValue('--reader-gloss-font-size'),box:box(el),viewport:innerWidth,autoMargins:window.__g70.autoMarginFacts(el),g76:{
+      savedSection:el.matches('[aria-labelledby="saved-title"]'),savedHeading:el.matches('.reader-saved-heading'),savedEmpty:el.matches('[aria-labelledby="saved-title"]>.side-empty'),
       panel:el.matches(".gloss-panel")?panels.indexOf(el):null,inlinePanel:el.matches(".gloss-panel-inline:has(> .gloss-block, > .explain-result)"),
       panels:panels.map((panel,id)=>el===panel||el.contains(panel)?id:null).filter(id=>id!==null),
       parentPanels:panels.map((panel,id)=>el.parentElement?.contains(panel)?id:null).filter(id=>id!==null),
@@ -294,7 +308,7 @@ function textSizeNegatives(base,actual,label){
 }
 function projectG76Styles(base,actual,label,negative=true){
   const width=actual[0].viewport,reference=base[0].g76Bundle,current=actual[0].g76Bundle;
-  assertWhiteBlocks(reference.white,current.white,width);assertG76UI(reference.ui,current.ui,width);assertSavedSection(current.saved);
+  assertWhiteBlocks(reference.white,current.white,width);assertG76UI(reference.ui,current.ui,width);if(width>=768)assertSavedSection(current.saved,reference.saved);
   const projected=structuredClone(base);
   assert(projected.length===actual.length,"G76结构规范化后的节点数",{label,base:projected.length,actual:actual.length});
   const deltas=new Map();
@@ -310,6 +324,12 @@ function projectG76Styles(base,actual,label,negative=true){
   for(let i=0;i<actual.length;i++){
     const a=actual[i],b=projected[i],dy=a.box.h-b.box.h;
     const root=a.g76.panel!==null,derived=!root&&a.g76.panels.length>0;
+    const savedGeometry=width>=768&&current.saved&&reference.saved;
+    if(savedGeometry&&a.g76.savedSection){
+      assert(Math.abs(a.box.h-current.saved.contentHeight)<=.5&&a.box.w===b.box.w,'G76收藏区高度等于直接内容与间距',{label,actual:a.box.h,expected:current.saved.contentHeight});
+      if(b.expectedBox)b.expectedBox.h=a.box.h;
+    }
+    if(savedGeometry&&a.g76.savedEmpty&&b.expectedBox)b.expectedBox.y+=parseFloat(current.saved.headingMargin)-parseFloat(reference.saved.headingMargin);
     if(derived&&dy!==0)assert(Math.abs(dy-sum(a.g76.panels))<=.5,"G76容器增高等于子面板尺寸差",{label,key:a.key,actual:dy,panels:sum(a.g76.panels)});
     for(let p=0;p<3;p++)for(const property of Object.keys(a.styles[p])){
       const before=b.styles[p][property],after=a.styles[p][property];if(before===after)continue;
@@ -324,6 +344,16 @@ function projectG76Styles(base,actual,label,negative=true){
         const expected=widthProperty?Number(a.box.w.toPrecision(6)):0;
         assert(a.box.w===b.box.w&&parseFloat(after)===expected,"G76竖线移入白话后面板外框保持",{label,key:a.key,property,after,expected,baseWidth:b.box.w,actualWidth:a.box.w});
         b.styles[p][property]=after;continue;
+      }
+      if(savedGeometry&&a.g76.savedHeading&&p===0&&["margin-bottom","margin-block-end"].includes(property)){
+        assert(after===current.saved.headingMargin,'G76收藏标题边距',after);b.styles[p][property]=after;if(b.referenceStyles)b.referenceStyles[p][property]=after;continue;
+      }
+      if(savedGeometry&&a.g76.savedSection&&p===0&&dimension.has(property)){
+        assert(Math.abs(parseFloat(after)-parseFloat(before)-dy)<=.5,'G76收藏区计算高度跟随实测',after);b.styles[p][property]=after;if(b.referenceStyles)b.referenceStyles[p][property]=after;continue;
+      }
+      if(savedGeometry&&a.g76.savedSection&&p===0&&origin.has(property)){
+        const old=before.split(" ").map(parseFloat),now=after.split(" ").map(parseFloat);
+        assert(now[0]===old[0]&&Math.abs(now[1]-old[1]-dy/2)<=.5,'G76收藏区尺寸原点跟随实测',after);b.styles[p][property]=after;if(b.referenceStyles)b.referenceStyles[p][property]=after;continue;
       }
       if(a.g76.headerGrid&&p===0&&property==="grid-template-columns"){b.styles[p][property]=after;continue;}
       if(root&&["min-height","min-block-size"].includes(property)&&p===0){b.styles[p][property]=after;continue;}
@@ -348,10 +378,10 @@ function projectG76Styles(base,actual,label,negative=true){
     }
   }
   if(negative){
-    if(current.saved){
-      for(const fault of ['标题计数','空提示','类型签']){
-        if(fault==='空提示'&&current.saved.empty===null||fault==='类型签'&&!current.saved.items.length)continue;
-        const changed=structuredClone(current.saved);if(fault==='标题计数')changed.title='收藏 · 999';if(fault==='空提示')changed.empty='错误提示';if(fault==='类型签')changed.items[0].kind='错误';
+    if(width>=768&&current.saved){
+      for(const fault of ['标题计数','空提示','类型签','标题边距','旧竖线']){
+        if(fault==='空提示'&&current.saved.empty===null||['类型签','旧竖线'].includes(fault)&&!current.saved.items.length)continue;
+        const changed=structuredClone(current.saved);if(fault==='标题计数')changed.title='收藏 · 999';if(fault==='空提示')changed.empty='错误提示';if(fault==='类型签')changed.items[0].kind='错误';if(fault==='标题边距')changed.headingMargin='14px';if(fault==='旧竖线')changed.rows[0].border='2px';
         let detected=false;try{assertSavedSection(changed);}catch{detected=true;}assert(detected,'G76收藏区负对照 '+fault);report.negative.push({adaptation:'g76-saved-'+label+'-'+fault,detected});
       }
       const sideIndex=actual.findIndex(a=>a.key.includes(':reader-book-title'));

@@ -78,10 +78,10 @@ export function g76UIFacts(){
   const buttons=[...row.querySelectorAll("button")];
   const body=row.closest(".reader-body"),main=body?.closest(".col-main"),style=css(row);
   const bodyRight=body?.getBoundingClientRect().right;
-  const contentRight=main?main.getBoundingClientRect().right-parseFloat(css(main).paddingRight)-parseFloat(css(main).borderRightWidth):bodyRight;
+  const usableRight=main?main.getBoundingClientRect().right-8:bodyRight;
   const surface=row.parentElement.querySelector(":scope > .explain-surface");
   const block=surface??row.parentElement;
-  return {bodyRight,contentRight,gap:contentRight-bodyRight,mode:row.dataset.actionPlacement,
+  return {bodyRight,usableRight,gap:usableRight-bodyRight,mode:row.dataset.actionPlacement,
     display:style.display,columns:style.gridTemplateColumns,columnGap:style.columnGap,margin:style.marginTop,
     blockTop:block.getBoundingClientRect().top,blockRight:block.getBoundingClientRect().right,
     inline:block.closest(".gloss-panel")?.classList.contains("gloss-panel-inline"),
@@ -108,7 +108,7 @@ export function assertG76UI(base,actual,width){
   }
   if(side){
    check(row.display==="grid"&&row.columns==="84px 28px 28px"&&row.columnGap==="4px"&&near(row.box.w,148)&&near(row.box.h,28),"右侧三格尺寸",row);
-   check(row.box.x>=row.bodyRight&&near(row.box.x-row.bodyRight,16)&&row.box.right<=row.contentRight+.5,"控件在正文外且不超内容盒",row);
+   check(row.box.x>=row.bodyRight&&near(row.box.x-row.bodyRight,16)&&row.box.right<=row.usableRight+.5,"控件在正文外且保留中栏右缘8px",row);
    check(near(row.box.y-row.blockTop,row.surface?12:0),"控件顶部对齐",row);
   }else{
    check(row.display==="flex"&&row.columnGap==="2px"&&row.margin==="2px"&&near(row.box.h,36),"下方操作行尺寸",row);
@@ -135,7 +135,7 @@ export function assertG76UI(base,actual,width){
   check(JSON.stringify(e.padding)===JSON.stringify(["12px","18px","12px","18px"])&&e.border==="0px"&&(!e.bubble||e.radius==="4px"),"解读内边距与边框",e);
  }
  check(JSON.stringify(actual.modeFonts)===JSON.stringify(base.modeFonts),"收藏模式标签字体颜色保持",actual.modeFonts);
- for(const item of actual.savedKinds)check(["gloss","explain"].includes(item.kind)&&item.text===(item.kind==="gloss"?"白话":"脉络解读")&&item.size==="10px","收藏类型签",item);
+ for(const item of actual.savedKinds)check(["gloss","explain"].includes(item.kind)&&item.text===(item.kind==="gloss"?"白话":"脉络解读")&&item.size==="11px","收藏类型签",item);
  if(actual.header){
   check(!!base.header,"顶栏对照存在",actual.header);
   const boxes=actual.header.boxes;check(boxes.every(Boolean),"顶栏五项存在",actual.header);
@@ -147,7 +147,7 @@ export function assertG76UI(base,actual,width){
 export function g76UINegatives(base,actual,width){
  assertG76UI(base,actual,width);let count=0;
  const faults=[];
- if(actual.controls.length){faults.push(a=>a.controls[0].buttons[0].color="rgb(1, 2, 3)");faults.push(a=>a.controls[0].position="错误");faults.push(a=>a.controls[0].buttons[0].h+=1,a=>a.controls[0].buttons[0].path="M0 0",a=>a.controls[0].mode="side"===a.controls[0].mode?"below":"side");for(const row of actual.controls.filter(r=>r.mode==="side").slice(0,1)){const i=actual.controls.indexOf(row);faults.push(a=>a.controls[i].box.x=a.controls[i].bodyRight-1,a=>a.controls[i].box.right=a.controls[i].contentRight+1,a=>a.controls[i].columns="83px 28px 28px",a=>a.controls[i].gap=163);}}
+ if(actual.controls.length){faults.push(a=>a.controls[0].buttons[0].color="rgb(1, 2, 3)");faults.push(a=>a.controls[0].position="错误");faults.push(a=>a.controls[0].buttons[0].h+=1,a=>a.controls[0].buttons[0].path="M0 0",a=>a.controls[0].mode="side"===a.controls[0].mode?"below":"side");for(const row of actual.controls.filter(r=>r.mode==="side").slice(0,1)){const i=actual.controls.indexOf(row);faults.push(a=>a.controls[i].box.x=a.controls[i].bodyRight-1,a=>a.controls[i].box.right=a.controls[i].usableRight+1,a=>a.controls[i].columns="83px 28px 28px",a=>a.controls[i].gap=163);}}
  if(actual.explanations.length){faults.push(a=>a.explanations[0].size+=1);faults.push(a=>a.explanations[0].line+=1);faults.push(a=>a.explanations[0].padding[0]="15px");faults.push(a=>a.explanations[0].color="rgb(1, 2, 3)");}
  if(actual.header)faults.push(a=>a.header.boxes[3].w=43);
  if(actual.modeFonts.length)faults.push(a=>a.modeFonts[0].size="1px");
@@ -177,6 +177,100 @@ async function baselineFrame(theme,shape){
  return{before,after:await ev(originPoint),whiteOnly,white:await ev(whiteBlockFacts),ui:await ev(g76UIFacts)};
 }
 
+function savedDesignFacts(mobile) {
+ const root=document.querySelector(mobile?".reader-saved-sheet":"[aria-labelledby=saved-title]");
+ const style=(el,...properties)=>{const css=getComputedStyle(el);return properties.map(property=>css[property]);};
+ const tokens=(...names)=>{const probe=document.createElement("span");root.append(probe);const colors=names.map(name=>{probe.style.color="var("+name+")";return getComputedStyle(probe).color;});probe.remove();return colors;};
+ const [ink,gloss,rule,paper,hover,side]=tokens("--ink","--gloss","--rule","--paper-main","--hover","--paper-side");
+ const kinds=[...root.querySelectorAll(".saved-kind")].map(tag=>{
+  const kind=tag.dataset.kind;
+  return {kind,actual:style(tag,"fontSize","lineHeight","padding","borderRadius","whiteSpace","backgroundColor","color"),colors:tokens("--saved-tag-"+kind+"-bg","--saved-tag-"+kind+"-fg")};
+ });
+ const heading=root.querySelector(mobile?"header":".reader-saved-heading"), title=heading.querySelector("h2");
+ const list=[...root.querySelectorAll(".saved-link")];
+ if(!mobile)return {kinds,heading:style(heading,"paddingBottom","marginBottom","borderBottomWidth","borderBottomColor"),title:style(title,"fontSize","letterSpacing","fontWeight","color"),items:list.map(el=>({box:style(el,"display","alignItems","columnGap","padding","borderLeftWidth","fontSize","lineHeight"),text:style(el.querySelector(".saved-item-text"),"whiteSpace","textOverflow","color"),active:el.dataset.jumpHighlight==="true"})),spacing:[...root.querySelectorAll("li+li")].map(el=>style(el,"marginTop")[0]),ink,gloss,rule,hover};
+ const grip=root.querySelector(".reader-saved-grip"), filters=root.querySelector(".saved-filters"), backdrop=document.querySelector(".reader-saved-backdrop"), header=document.querySelector(".shell > .col-left");
+ const [shadow,dim]=[12,28].map(percent=>{const probe=document.createElement("span");probe.style.color="color-mix(in srgb, var(--ink) "+percent+"%, transparent)";root.append(probe);const color=getComputedStyle(probe).color;probe.remove();return color;});
+ return {kinds,ink,gloss,rule,paper,side,activeBackground:style(list[0],"backgroundColor")[0],countText:heading.querySelector("span").textContent,shadow,dim,sheet:style(root,"position","bottom","maxHeight","padding","borderRadius","backgroundColor","boxShadow","animationDuration"),maxHeight:innerHeight*.78,backdrop:style(backdrop,"backgroundColor"),top:[backdrop.getBoundingClientRect().top,header.getBoundingClientRect().bottom],grip:style(grip,"width","height","borderRadius","backgroundColor"),gripSpace:style(grip.parentElement,"paddingBottom"),heading:style(heading,"padding","alignItems"),title:style(title,"fontSize","fontWeight","color"),count:style(heading.querySelector("span"),"fontSize","color"),filters:style(filters,"padding","borderBottomWidth","borderBottomColor","columnGap"),chips:[...filters.children].map(el=>({active:el.getAttribute("aria-pressed")==="true",values:style(el,"height","padding","borderTopWidth","borderRadius","fontSize","backgroundColor","borderTopColor","color")})),items:list.map(el=>({box:style(el,"display","gridTemplateColumns","rowGap","columnGap","alignItems","padding","borderBottomWidth","borderBottomColor"),text:style(el.querySelector(".saved-item-source"),"fontSize","color","whiteSpace","textOverflow"),preview:el.querySelector(".saved-item-preview")&&style(el.querySelector(".saved-item-preview"),"gridColumnStart","fontSize","lineHeight","color","webkitLineClamp"),previewText:el.querySelector(".saved-item-preview")?.textContent}))};
+}
+function verifySavedDesign(facts,mobile) {
+ const {kinds,items,ink,gloss,rule,paper,hover}=facts;
+ const eq=(actual,expected,label)=>{if(JSON.stringify(actual)!==JSON.stringify(expected))throw Error(label+" "+JSON.stringify({actual,expected}));};
+ if(kinds.length!==2||!["gloss","explain"].every(kind=>kinds.some(tag=>tag.kind===kind)))throw Error("两类收藏均可见");
+ for(const tag of kinds)eq(tag.actual,["11px",mobile?"17.6px":"11px",mobile?"1px 6px":"3px 5px","3px","nowrap",...tag.colors],"收藏小签");
+ if(!mobile){
+  eq(facts.heading,["8px","12px","1px",rule],"左栏标题行");
+  eq(facts.title,["11px","1.1px","400",gloss],"左栏标题");
+  eq(facts.spacing,["10px"],"左栏条目间距");
+  for(const item of items){
+   eq(item.box,["flex","baseline","8px","0px","0px","13px","22.1px"],"左栏条目");
+   eq(item.text,["nowrap","ellipsis",item.active?hover:ink],"左栏文字和跳转颜色");
+  }
+ }else{
+  const [position,bottom,maxHeight,padding,radius,background,shadow,animation]=facts.sheet;
+  if(Math.abs(parseFloat(maxHeight)-facts.maxHeight)>.5||Math.abs(facts.top[0]-facts.top[1])>.5)throw Error("抽屉高度与压暗层起点 "+JSON.stringify(facts));
+  eq([position,bottom,padding,radius,background,shadow,animation],["fixed","0px","8px 0px 24px","16px 16px 0px 0px",paper,facts.shadow+" 0px -6px 24px 0px","0s"],"收藏抽屉");
+  eq(facts.backdrop,[facts.dim],"抽屉压暗");
+  eq(facts.grip,["36px","4px","2px",rule],"拖动条");
+  eq(facts.gripSpace,["10px"],"拖动条下间距");
+  eq(facts.heading,["0px 20px 10px","baseline"],"手机标题行");
+  eq(facts.title,["17px","700",ink],"手机标题");
+  eq(facts.count,["11px",gloss],"全书计数");eq(facts.countText,"2 条 · 全书","全书计数文案");
+  eq(facts.filters,["0px 20px 12px","1px",rule,"8px"],"筛选行");
+  for(const chip of facts.chips)eq(chip.values,["32px","0px 12px","1px","16px","13px",chip.active?ink:"rgba(0, 0, 0, 0)",chip.active?ink:rule,chip.active?paper:gloss],"筛选胶囊");
+  for(const item of items){
+   eq(item.box.map((value,index)=>index===1?value.split(" ")[0]:value),["grid","60px","4px","8px","baseline","14px 20px","1px",rule],"抽屉条目");
+   eq(item.text,["15px",ink,"nowrap","ellipsis"],"抽屉原句");
+   eq(item.preview,["2","12.5px","20px",gloss,"2"],"抽屉两行预览");
+   if(!item.previewText)throw Error("抽屉预览缺少正文");
+  }
+ }
+}
+async function verifySavedLayout(mobile){
+ const facts=await ev(savedDesignFacts,mobile);verifySavedDesign(facts,mobile);
+ console.log(JSON.stringify({savedDesign:mobile?"mobile":"sidebar",facts}));
+ const faults=mobile?[f=>f.chips.find(chip=>chip.active).values[5]="rgb(1, 2, 3)",f=>f.items[0].preview=null]:[f=>f.items[0].box[4]="2px",f=>f.kinds[0].actual[0]="10px",f=>{f.items[0].active=true;f.items[0].text[2]="rgb(1, 2, 3)";}];
+ for(const fault of faults){const broken=structuredClone(facts);fault(broken);let detected=false;try{verifySavedDesign(broken,mobile);}catch{detected=true;}assert(detected,"收藏设计稿负对照");negative++;}
+}
+async function forceSavedState(selector,state,check){
+ await c.call("DOM.enable");await c.call("CSS.enable");
+ const {root}=await c.call("DOM.getDocument"),{nodeId}=await c.call("DOM.querySelector",{nodeId:root.nodeId,selector});
+ await c.call("CSS.forcePseudoState",{nodeId,forcedPseudoClasses:[state]});
+ try{await check();}finally{await c.call("CSS.forcePseudoState",{nodeId,forcedPseudoClasses:[]});}
+}
+async function verifySavedSheetInteraction(){
+ await forceSavedState(".reader-saved-sheet .saved-link","active",async()=>{
+  const facts=await ev(savedDesignFacts,true);assert(facts.activeBackground===facts.side,"抽屉条目按下底色");
+ });
+ await c.call("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"no-preference"}]});
+ try{
+  const motion=await ev(()=>{
+   const sheet=document.querySelector(".reader-saved-sheet"),style=getComputedStyle(sheet);
+   const animation=sheet.getAnimations().find(animation=>animation.animationName==="saved-sheet-in");
+   return {duration:style.animationDuration,ease:style.animationTimingFunction,frames:animation?.effect.getKeyframes().map(({opacity,transform})=>[opacity,transform])};
+  });
+  assert(motion.duration==="0.22s"&&motion.ease==="cubic-bezier(0.2, 0.7, 0.2, 1)"&&JSON.stringify(motion.frames)===JSON.stringify([["0.5","translateY(24px)"],["1","none"]]),"抽屉入场动画 "+JSON.stringify(motion));
+  console.log(JSON.stringify({savedMotion:motion}));
+ }finally{await c.call("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"reduce"}]});}
+ const point=await ev(()=>{const r=document.querySelector(".reader-saved-grip").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+ await c.call("Emulation.setTouchEmulationEnabled",{enabled:true,maxTouchPoints:1});
+ try{
+  await c.call("Input.dispatchTouchEvent",{type:"touchStart",touchPoints:[point]});
+  await c.call("Input.dispatchTouchEvent",{type:"touchMove",touchPoints:[{x:point.x,y:point.y+100}]});
+  await c.call("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});
+  await wait(()=>c.evaluate("!document.querySelector('.reader-saved-sheet')"),"下滑关闭收藏抽屉");
+  assert(true,"下滑关闭收藏抽屉");
+ }finally{await c.call("Emulation.setTouchEmulationEnabled",{enabled:false});}
+ await ev(()=>document.querySelector(".reader-saved-mobile").click());
+ await wait(()=>c.evaluate("!!document.querySelector('.reader-saved-sheet')"),"恢复收藏抽屉场景");
+}
+async function savedScreenshot(name){
+ const dir=join(process.cwd(),"tmp-g76-shots");await mkdir(dir,{recursive:true});
+ await c.call("Page.bringToFront");
+ await c.evaluate("document.fonts.ready.then(()=>true)");
+ const shot=await c.call("Page.captureScreenshot",{format:"png",captureBeyondViewport:false,optimizeForSpeed:true});
+ await writeFile(join(dir,name+".png"),Buffer.from(shot.data,"base64"));
+}
 async function negativeCheck(label,predicate,mutate,restore){assert(await ev(predicate),label+'正对照');await ev(mutate);try{assert(!await ev(predicate),label+'负对照检出');negative++;}finally{await ev(restore);}}
 
 async function shortBubbleRuntimeNegative(base,width,kind){
@@ -253,6 +347,7 @@ try {
  await negativeCheck('两块显示第一格为空',()=>document.querySelectorAll('.action-row-recall').length===0,()=>{const button=document.createElement('button');button.id='g76-negative';button.className='action-row-recall';document.querySelector('.action-row-recall-slot').append(button);},()=>document.querySelector('#g76-negative').remove());
  await ev(()=>document.querySelector('.reader-saved-mobile').click());await sleep(350);
  assert(await c.evaluate("document.querySelectorAll('#reader-saved-sheet .saved-link').length===2"),'两类条目分别计数');
+ await verifySavedLayout(true);await savedScreenshot('375-saved-drawer');await verifySavedSheetInteraction();
  await negativeCheck('收藏类型签',()=>document.querySelectorAll('#reader-saved-sheet .saved-kind[data-kind="gloss"]').length===1&&document.querySelectorAll('#reader-saved-sheet .saved-kind[data-kind="explain"]').length===1,()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="explain"]').setAttribute('data-kind','wrong'),()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="wrong"]').setAttribute('data-kind','explain'));
  await negativeCheck('抽屉互斥',()=>document.querySelectorAll('#reader-saved-sheet,.reader-typography-sheet,.feedback-card').length===1,()=>{const div=document.createElement('div');div.className='reader-typography-sheet';div.id='g76-negative';document.body.append(div);},()=>document.querySelector('#g76-negative').remove());
  await ev(()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="gloss"]').closest('button').click());await sleep(350);
@@ -267,7 +362,7 @@ try {
  await ev(()=>document.querySelector('.reader-settings-feedback').click());await sleep(350);
  assert(await c.evaluate("!!document.querySelector('.feedback-card')&&!document.querySelector('.reader-typography-sheet')&&!document.querySelector('#reader-saved-sheet')"),'反馈关闭设置抽屉');
  await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'抽屉后刷新');
- for (const width of [1440,375,506,767,768,999,1000,1024,1280,1920]) for(const theme of ['parchment','moon-white','eye-green','dark']) for(const shape of ['inline','bubble']) {
+ for (const width of [1280,1440,375,506,767,768,999,1000,1024,1920]) for(const theme of ['parchment','moon-white','eye-green','dark']) for(const shape of ['inline','bubble']) {
   await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
   const reference=await baselineFrame(theme,shape);
   await navigate('http://127.0.0.1:3512/read/g76');await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'候选阅读器返回');
@@ -293,6 +388,7 @@ try {
   assertG76UI(reference.ui,ui,width);
   negative+=g76UINegatives(reference.ui,ui,width);
   if(shape==="inline"&&[1000,1024,1280,1440,1920].includes(width)&&theme==="parchment"){
+   if(width===1280)assert(ui.controls.every(row=>row.mode==="side"),"1280px 使用右侧模式");
    console.log(JSON.stringify({designWidth:width,gap:ui.controls[0].gap,mode:ui.controls[0].mode,controls:ui.controls,explanations:ui.explanations}));
   }
   if(width===1440&&shape==="inline"&&["parchment","dark"].includes(theme)){
@@ -313,7 +409,7 @@ try {
    assert(animation.styles.length===2&&animation.styles.every(([name,duration,timing])=>name==="gloss-block-in"&&duration==="0.22s"&&timing==="cubic-bezier(0.2, 0.7, 0.2, 1)")&&JSON.stringify(animation.frames)===JSON.stringify([["0","translateY(-3px)"],["1","none"]]),"入场动画数值 "+JSON.stringify(animation));
    console.log(JSON.stringify({designAnimation:animation}));
    const before=await ev(anchors);
-   const oldStyle=await ev(()=>{const main=document.querySelector(".col-main"),style=main.getAttribute("style"),css=getComputedStyle(main);main.style.paddingLeft=(parseFloat(css.paddingLeft)+100)+"px";main.style.paddingRight=(parseFloat(css.paddingRight)+100)+"px";return style;});
+   const oldStyle=await ev(()=>{const main=document.querySelector(".col-main"),style=main.getAttribute("style"),css=getComputedStyle(main);main.style.width=(main.getBoundingClientRect().width-110)+"px";main.style.paddingLeft=(parseFloat(css.paddingLeft)+110)+"px";return style;});
    try{
     await c.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
     const switched=await ev(g76UIFacts);
@@ -334,6 +430,26 @@ try {
   await ev(()=>document.querySelector('.explain-result .action-row-recall').click());await sleep(350);
   await ev(()=>document.querySelector('.explain-result .action-row-fold').click());await sleep(350);
   await verifyRecallOpacity('.gloss-block .action-row-recall',width);
+  if([1280,1440].includes(width)&&shape==="inline"&&theme==="parchment"){
+   await ev(()=>document.querySelector('.gloss-block .action-row-recall').click());
+   await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),"截图两块展开");
+   for(const block of [".gloss-block",".explain-result"]){
+    await ev(selector=>document.querySelector(selector+" .action-row-save").click(),block);
+    await wait(()=>ev(selector=>document.querySelector(selector+" .action-row-save")?.getAttribute("aria-pressed")==="true",block),"截图收藏状态");
+   }
+   await verifySavedLayout(false);await savedScreenshot(width+"-parchment-saved");
+   for(const pseudo of ["hover","focus-visible"]){
+    await forceSavedState('[aria-labelledby="saved-title"] .saved-link',pseudo,async()=>{
+     const facts=await ev(savedDesignFacts,false);assert(facts.items[0].text[2]===facts.hover,"左栏条目 "+pseudo+" 文字色");
+    });
+   }
+   await ev(()=>document.querySelector('[aria-labelledby="saved-title"] .saved-link').click());
+   await wait(()=>c.evaluate("!!document.querySelector('.saved-link[data-jump-highlight=true]')"),"左栏跳转高亮");
+   verifySavedDesign(await ev(savedDesignFacts,false),false);
+   await ev(()=>document.querySelector(".gloss-block .action-row-fold").click());
+   await wait(()=>c.evaluate("!document.querySelector('.saved-link[data-jump-highlight=true]')"),"收起对应块清除跳转高亮");
+   assert(true,"收起对应块清除跳转高亮");
+  }
   console.log(JSON.stringify({width,theme,shape,checks}));
  }
  // 原文和保留块分别取真实字框；负对照禁用补偿而不修改判据。

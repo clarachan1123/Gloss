@@ -26,11 +26,9 @@ export default function ActionRow({ saved, disabled, onToggle, onFold, recall, o
     if (!row || !blockElement || !body || !main) return;
 
     const update = () => {
-      const style = getComputedStyle(main);
-      const contentRight = main.getBoundingClientRect().right
-        - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+      const usableRight = main.getBoundingClientRect().right - 8;
       const bodyRight = body.getBoundingClientRect().right;
-      const gap = contentRight - bodyRight;
+      const gap = usableRight - bodyRight;
       // 三格总宽 148px，另留正文外侧 16px。
       const side = gap >= 148 + 16;
       row.dataset.actionPlacement = side ? "side" : "below";

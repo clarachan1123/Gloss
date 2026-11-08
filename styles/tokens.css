@@ -32,6 +32,10 @@
   --ink: #212121;
   --text-body: #3C3C3C;
   --gloss: #5D5750;
+  --saved-tag-gloss-bg: #E9E4D8;
+  --saved-tag-gloss-fg: #5D5750;
+  --saved-tag-explain-bg: #DCE4EC;
+  --saved-tag-explain-fg: #1F4E75;
   --saved-inline: #666057;
   --rule: #E5DFC8;
   --term: #233448; /* 候选 A 深·低饱和：vs 底色 11.73，vs 白话 1.78，ΔE 20.0 */
@@ -85,6 +89,10 @@
   --ink: #212121;
   --text-body: #3C3C3C;
   --gloss: #5A5A61;
+  --saved-tag-gloss-bg: #E9E4D8;
+  --saved-tag-gloss-fg: #5D5750;
+  --saved-tag-explain-bg: #DCE4EC;
+  --saved-tag-explain-fg: #1F4E75;
   --saved-inline: #626269;
   --rule: #E2E2E8;
   --term: #1F3341; /* 候选 A 深·低饱和：vs 底色 11.99，vs 白话 1.91，ΔE 16.4（月白的白话色偏冷灰，灰蓝难拉开） */
@@ -138,6 +146,10 @@
   --ink: #223027;
   --text-body: #3C3C3C;
   --gloss: #4F5D50;
+  --saved-tag-gloss-bg: #E9E4D8;
+  --saved-tag-gloss-fg: #5D5750;
+  --saved-tag-explain-bg: #DCE4EC;
+  --saved-tag-explain-fg: #1F4E75;
   --saved-inline: #58675A;
   --rule: #D5DFD0;
   --term: #326095; /* 候选 B 中·中饱和：vs 底色 5.70，vs 白话 1.08，ΔE 26.8 */
@@ -193,6 +205,10 @@
   --ink: #E4DED3;
   --text-body: #D6CFC3;
   --gloss: #B0A799;
+  --saved-tag-gloss-bg: #40392F;
+  --saved-tag-gloss-fg: #E8DDC9;
+  --saved-tag-explain-bg: #243B50;
+  --saved-tag-explain-fg: #B7DAF7;
   --saved-inline: #A39A8C;
   --rule: #3B3631;
   --term: #8DB0D4;

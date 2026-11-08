@@ -2542,7 +2542,7 @@ export default function Reader({ docId }: { docId: string }) {
     ...[...savedGlosses].map(([index,saved])=>({ kind:"gloss" as const, key:"sentence:"+index, text:saved.text, source:sentences[index]?.text ?? "", point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0}, time:saved.savedAt, index, selectionId:null as string|null })),
     ...[...selectionResults.values()].filter(result=>result.saved).map(result=>({kind:"gloss" as const,key:"selection:"+result.id,text:result.saved!.text,source:result.selection.text,point:result.selection.start,time:result.saved!.savedAt,index:result.index,selectionId:result.id as string|null}))
     ,...[...savedExplanations].map(([index,mark])=>({kind:"explain" as const,key:"explain:"+index,text:explainViews.get(index)?.text??"",source:sentences[index]?.text ?? "",point:{paraIndex:sentences[index]?.paraIndex??0,offset:sentences[index]?.start??0},time:mark.savedAt,index,selectionId:null as string|null}))
-  ].sort((a,b)=>comparePoints(a.point,b.point)||a.time-b.time||(a.kind===b.kind?0:a.kind==="gloss"?-1:1));
+  ].sort((a,b)=>comparePoints(a.point,b.point)||(a.kind===b.kind?0:a.kind==="gloss"?-1:1)||a.time-b.time);
   const filteredSavedItems = savedItems.filter(item => savedFilter === "all" || item.kind === savedFilter);
   function jumpItem(item: typeof savedItems[number]) {
     if (item.selectionId) jumpToSelection(item.selectionId);
@@ -2679,7 +2679,7 @@ export default function Reader({ docId }: { docId: string }) {
               {savedItems.map(item => (
                 <li key={item.key}>
                   <button type="button" className="saved-link" data-jump-highlight={savedJumpKey === item.key && highlightedSavedVisible || undefined} data-saved-selection-id={item.selectionId ?? undefined} onClick={event => { if (window.innerWidth >= 768) setSavedJumpKey(item.key); event.stopPropagation(); jumpItem(item); }}>
-                    <span className="saved-kind" data-kind={item.kind}>{item.kind === "explain" ? "脉络解读" : "白话"}</span><span className="saved-item-text">{item.text}</span>
+                    <span className="saved-kind" data-kind={item.kind}>{item.kind === "explain" ? "脉络解读" : "白话"}</span><span className="saved-item-text">{item.source}</span>
                   </button>
                 </li>
               ))}

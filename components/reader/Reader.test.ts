@@ -91,7 +91,7 @@ it("G-15a 已保存白话在 savedRegions 尚未测量时不发事件，普通�
       await act(async () => { await Promise.resolve(); });
       if (saved) {
         expect(container.querySelector(".reader-body")?.getAttribute("data-measuring")).toBe("true");
-        expect(container.querySelector(".saved-link")?.textContent).toBe("白话已保存白话。");
+        expect(container.querySelector(".saved-item-text")?.textContent).toBe(sentence);
       }
       events.length = 0;
       const target = container.querySelector<HTMLElement>(".sentence[data-index='0']");

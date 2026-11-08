@@ -1057,9 +1057,9 @@ body {
   .reader-saved-sheet { animation: saved-sheet-in .22s cubic-bezier(.2,.7,.2,1); }
 }
 @media (max-width: 767.98px) {
-  .shell > .col-left { grid-template-columns: 44px minmax(0, 1fr) 36px 44px 44px; }
-  .reader-selection-mobile { grid-column: 3; grid-row: 1; width: 36px; padding: 0; gap: 0; }
-  .reader-selection-mobile > span { display: none; }
+  .shell > .col-left { grid-template-columns: 44px minmax(0, 1fr) 72px 44px 44px; }
+  .reader-selection-mobile > svg { width: 18px; height: 18px; flex: none; }
+  .reader-selection-mobile > span { white-space: nowrap; }
   .reader-saved-mobile { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; color: var(--gloss); background: transparent; grid-column: 4; grid-row: 1; }
   .col-left .reader-typography-aa { grid-column: 5; grid-row: 1; width: 44px; height: 44px; }
   .reader-mobile-heading { grid-column: 2; }

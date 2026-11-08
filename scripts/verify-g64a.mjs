@@ -108,7 +108,7 @@ async function seed(c, paragraphs, fileName) {
     localStorage.setItem("gloss:structure:g64a-fixture", JSON.stringify({ prompt: "structure-v1", structure: "本地验证结构。", savedAt: Date.now() }));
   }, paragraphs,fileName);
 }
-function headerFits(h) { return h.selection.width===36&&h.selection.height===44&&h.saved.width===44&&h.saved.height===44&&h.aa.width===44&&h.aa.height===44&&h.back.right<=h.heading.left&&h.heading.right<=h.selection.left&&h.selection.right<=h.saved.left&&h.saved.right<=h.aa.left&&h.overflow===0; }
+function headerFits(h) { return h.selection.width===72&&h.selection.height===44&&h.selection.font==='14px'&&h.saved.width===44&&h.saved.height===44&&h.aa.width===44&&h.aa.height===44&&h.back.right<=h.heading.left&&h.heading.right<=h.selection.left&&h.selection.right<=h.saved.left&&h.saved.right<=h.aa.left&&h.overflow===0; }
 async function selectionControlsNegative(c) {
   // 多出一个控件时，两按钮判据必须拒绝；不触发任何产品操作。
   await c.evaluate("(()=>{const b=document.createElement('button');b.id='g76-selection-negative';document.querySelector('[data-selection-id] .action-row').append(b)})()");
@@ -337,11 +337,13 @@ function returnHarness(){
     const x=scrollX,y=scrollY,selection=getSelection(),saved=[...Array(selection.rangeCount)].map((_,i)=>selection.getRangeAt(i).cloneRange());
     selection.removeAllRanges();
     let first=null,count=0;
-    for(let i=0;i<3;i++){
+    while(true){
       if(!window.find(phrase,false,false,true,false,false,false))break;
       const range=selection.getRangeAt(0);
       if(first&&range.startContainer===first.node&&range.startOffset===first.offset)break;
-      first??={node:range.startContainer,offset:range.startOffset};count++;
+      first??={node:range.startContainer,offset:range.startOffset};
+      // 收藏摘要会重复原文，回接唯一性仍检查摘要之外的所有命中。
+      if(!range.startContainer.parentElement?.closest(".saved-item-text"))count++;
     }
     selection.removeAllRanges();saved.forEach(r=>selection.addRange(r));scrollTo({left:x,top:y,behavior:"instant"});
     return count;
@@ -657,6 +659,15 @@ async function resultMultiple(c,width){
   await chooseResult(c,width,6,32);await confirmResult(c);await finishResult(c);
   const order=await c.evaluate("[...document.querySelectorAll('[data-selection-id]')].map(e=>({id:e.dataset.selectionId,index:e.dataset.sentenceIndex,saved:e.classList.contains('gloss-panel-saved')}))");
   assert(order.length===3&&new Set(order.map(e=>e.index)).size===1&&order[0].id.split(':')[2]==='0'&&order[1].id.split(':')[2]==='4'&&!order[2].saved,"v 同一位置两保存加一临时按起点排序",order);
+  if(width===768){
+    const finds=await evaluate(c,phrase=>{
+      const duplicate=document.createElement('p');
+      duplicate.textContent=phrase;document.querySelector('.reader-body').append(duplicate);
+      try{return __g64.findUnique(phrase);}finally{duplicate.remove();}
+    },RESULT_PARAGRAPHS[3].slice(0,14));
+    assert(finds===2,"收藏摘要之外重复原文负对照检出",finds);
+    console.log(JSON.stringify({savedSourceSearchNegativeDetected:true}));
+  }
   await resultCollapseCheck(c,"escape",6);
   await resultReadingMode(c,width);
   await wait(c,"document.querySelectorAll('[data-selection-id]').length===0","阅读模式收起两条保存范围");
@@ -890,6 +901,9 @@ async function run(width) {
       await seed(c,paragraphs,"这是一本超过二十个汉字的超长书名用来检查手机顶栏布局.txt");
       await navigate(c,ORIGIN+"/read/g64a-fixture");const h=await header(c);
       assert(headerFits(h),"375顶栏装得下",h);
+      await c.evaluate("document.querySelector('.reader-selection-mobile').style.width='36px'");
+      assert(!headerFits(await header(c)),"旧划选宽度负对照检出");
+      await c.evaluate("document.querySelector('.reader-selection-mobile').style.removeProperty('width')");
       // 书签宽度错误必须被同一五项顶栏判据检出。
       await c.evaluate("document.querySelector('.reader-saved-mobile').style.width='45px'");
       assert(!headerFits(await header(c)),"顶栏书签宽度负对照检出");

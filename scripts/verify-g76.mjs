@@ -321,6 +321,20 @@ try {
  await navigate('http://127.0.0.1:3512/');await wait(()=>c.evaluate("document.readyState==='complete'"),'首页');
  await ev(()=>{localStorage.clear();localStorage.setItem('gloss:settings:reading-mode','review');localStorage.setItem('gloss:doc:g76',JSON.stringify({version:1,docId:'g76',paragraphs:['春风吹过山谷。河水流向海洋。'],headings:[],footnotes:[],meta:{format:'txt',fileName:'验证.txt',charCount:16},savedAt:1}));});
  await navigate('http://127.0.0.1:3512/read/g76');await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'阅读器');
+ const header=()=>{
+  const selectors=['.reader-shelf-back','.reader-mobile-heading','.reader-selection-mobile','.reader-saved-mobile','.reader-typography-aa'];
+  const elements=selectors.map(s=>document.querySelector(s));
+  const boxes=elements.map((el,index)=>{const r=el.getBoundingClientRect();return {selector:selectors[index],x:r.x,right:r.right,width:r.width,height:r.height};});
+  const label=elements[2].querySelector('span');
+  const labelBox=label.getBoundingClientRect();
+  return {boxes,ok:boxes.every((b,i)=>b.width>0&&b.x>=0&&b.right<=document.documentElement.clientWidth&&(i===0||boxes[i-1].right<=b.x))&&boxes[2].height===44&&label.textContent==='划选'&&getComputedStyle(label).fontSize==='14px'&&labelBox.width>0&&labelBox.x>=boxes[2].x&&labelBox.right<=boxes[2].right};
+ };
+ await c.call('Emulation.setDeviceMetricsOverride',{width:320,height:900,deviceScaleFactor:1,mobile:false});
+ const narrow=await ev(header);console.log(JSON.stringify({header320:narrow}));
+ assert(narrow.ok,'320px 顶栏宽度 '+JSON.stringify(narrow));
+ await c.call('Emulation.setDeviceMetricsOverride',{width:375,height:900,deviceScaleFactor:1,mobile:false});
+ await negativeCheck('划选文字可见且14px',()=>{const el=document.querySelector('.reader-selection-mobile span');return el.textContent==='划选'&&getComputedStyle(el).fontSize==='14px'&&el.getBoundingClientRect().width>0;},()=>document.querySelector('.reader-selection-mobile span').style.display='none',()=>document.querySelector('.reader-selection-mobile span').style.removeProperty('display'));
+ await savedScreenshot('375-selection-header');
  await ev(()=>document.querySelector('.sentence[data-index="0"]').click());
  await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-explain')"),'入口');
  await ev(()=>document.querySelector('.gloss-block .action-row-explain').click());
@@ -347,6 +361,15 @@ try {
  await negativeCheck('两块显示第一格为空',()=>document.querySelectorAll('.action-row-recall').length===0,()=>{const button=document.createElement('button');button.id='g76-negative';button.className='action-row-recall';document.querySelector('.action-row-recall-slot').append(button);},()=>document.querySelector('#g76-negative').remove());
  await ev(()=>document.querySelector('.reader-saved-mobile').click());await sleep(350);
  assert(await c.evaluate("document.querySelectorAll('#reader-saved-sheet .saved-link').length===2"),'两类条目分别计数');
+ await negativeCheck('左栏收藏使用原句摘要',()=>{
+  const source=document.querySelector('.sentence[data-index="0"]').textContent;
+  const items=[...document.querySelectorAll('[aria-labelledby="saved-title"] .saved-item-text')];
+  return items.length===2&&items.every(el=>el.textContent===source);
+ },()=>{const el=document.querySelector('.saved-item-text');el.dataset.original=el.textContent;el.textContent='这是用于验证的白话。';},()=>{const el=document.querySelector('.saved-item-text');el.textContent=el.dataset.original;delete el.dataset.original;});
+ await negativeCheck('左栏与抽屉都按白话、脉络解读排序',()=>{
+  const order=root=>[...document.querySelectorAll(root+' .saved-kind')].map(el=>el.dataset.kind).join(',');
+  return order('[aria-labelledby="saved-title"]')==='gloss,explain'&&order('#reader-saved-sheet')==='gloss,explain';
+ },()=>{const list=document.querySelector('#reader-saved-sheet .saved-list');list.prepend(list.lastElementChild);},()=>{const list=document.querySelector('#reader-saved-sheet .saved-list');list.append(list.firstElementChild);});
  await verifySavedLayout(true);await savedScreenshot('375-saved-drawer');await verifySavedSheetInteraction();
  await negativeCheck('收藏类型签',()=>document.querySelectorAll('#reader-saved-sheet .saved-kind[data-kind="gloss"]').length===1&&document.querySelectorAll('#reader-saved-sheet .saved-kind[data-kind="explain"]').length===1,()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="explain"]').setAttribute('data-kind','wrong'),()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="wrong"]').setAttribute('data-kind','explain'));
  await negativeCheck('抽屉互斥',()=>document.querySelectorAll('#reader-saved-sheet,.reader-typography-sheet,.feedback-card').length===1,()=>{const div=document.createElement('div');div.className='reader-typography-sheet';div.id='g76-negative';document.body.append(div);},()=>document.querySelector('#g76-negative').remove());

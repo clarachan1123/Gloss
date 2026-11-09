@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import WebSocket from "ws";
 
+process.env.G19_IMPORT_ONLY="1";
+const {clickControl}=await import("./verify-g19.mjs");
+
 const ORIGIN = "http://127.0.0.1:3463";
 const CHROME = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -112,17 +115,23 @@ async function refresh(cdp) {
   await readyReader(cdp);
 }
 async function visibleMode(cdp) {
-  await evalFn(cdp,()=>{
-    if(innerWidth>=768)return;
-    if(!document.querySelector('.reader-typography-sheet'))document.querySelector('.reader-typography-aa').click();
-  });
+  if(!await cdp.evaluate('innerWidth<768'))return;
+  if(!await cdp.evaluate("!!document.querySelector('.reader-typography-sheet')"))await clickControl(cdp,'.reader-typography-aa');
   await settled(cdp);
-  await evalFn(cdp,()=>{const more=document.querySelector('.reader-more-typography');if(more?.getAttribute('aria-expanded')==='false')more.click();});
+  if(await cdp.evaluate("!!document.querySelector('.reader-more-typography[aria-expanded=false]')"))await clickControl(cdp,'.reader-more-typography');
+  await settled(cdp);
+}
+async function closeMode(cdp){
+  if(!await cdp.evaluate('innerWidth<768'))return;
+  await settled(cdp);
+  await clickControl(cdp,'.reader-typography-sheet-header button');
+  await waitForValue(()=>cdp.evaluate("!document.querySelector('.reader-typography-sheet')"),'settings exit');
 }
 async function mode(cdp,label) {
   await visibleMode(cdp);
-  await evalFn(cdp,label=>{const button=[...document.querySelectorAll('.mode-option')].find(b=>b.getClientRects().length&&b.textContent.trim()===label);if(!button)throw Error('Missing mode '+label);button.click();},label);
-  await evalFn(cdp,()=>document.querySelector('.reader-typography-sheet-header button')?.click());
+  const selector=await cdp.evaluate("innerWidth<768?'.reader-typography-sheet .mode-options':'.reader-sidebar-mode .mode-options'");
+  await clickControl(cdp,selector+' .mode-option:nth-child('+(label==='显示'?1:2)+')');
+  await closeMode(cdp);
   await settled(cdp);
 }
 async function sentence(cdp,index,last=false) {
@@ -176,11 +185,12 @@ async function checks(cdp,width) {
   await cdp.evaluate("localStorage.removeItem('gloss:settings:reading-mode')");await refresh(cdp);
   for(const index of SAVED) {
     await sentence(cdp,index);
-    await evalFn(cdp,index=>{const button=document.querySelector('.gloss-panel[data-sentence-index="'+index+'"] .action-row-save');if((button?.getAttribute('aria-label')??button?.textContent.trim())!=='收藏')throw Error('Missing save button '+index);button.click();},index);
+    await evalFn(cdp,index=>{const button=document.querySelector('.gloss-panel[data-sentence-index="'+index+'"] .action-row-save');if((button?.getAttribute('aria-label')??button?.textContent.trim())!=='收藏')throw Error('Missing save button '+index);},index);
+    await clickControl(cdp,'.gloss-panel[data-sentence-index='+JSON.stringify(String(index))+'] .action-row-save');
     await waitForValue(()=>cdp.evaluate("!!document.querySelector('.gloss-panel-saved[data-sentence-index=\""+index+"\"]')"),'saved '+index);
     await settled(cdp);
     const text=await evalFn(cdp,index=>document.querySelector('.gloss-panel-saved[data-sentence-index="'+index+'"] .action-row-save')?.getAttribute('aria-label'),index);
-    assert(text==='取消收藏','saved action label '+index);
+    assert(text==='已收藏','saved action label '+index);
   }
   await sentence(cdp,3);await retained(cdp,'other sentence');
   await cdp.evaluate("document.querySelector('.reader-body').click()");await settled(cdp);await retained(cdp,'blank body');
@@ -207,7 +217,7 @@ async function checks(cdp,width) {
   }
   await visibleMode(cdp);
   const boxes=await evalFn(cdp,layout,width);
-  await evalFn(cdp,()=>document.querySelector('.reader-typography-sheet-header button')?.click());
+  await closeMode(cdp);
   console.log(JSON.stringify({width,storedModes:4,savedIndexes:SAVED,maxCharDelta:Math.max(removed,restored),characters:before.length,layout:boxes}));
 }
 async function run(width) {

@@ -863,10 +863,10 @@ body {
   .reader-sidebar-mode .mode-option + .mode-option { border-left: 0; }
   .reader-sidebar-mode .mode-option[aria-pressed="true"] { background: var(--paper-main); }
 }
-.reader-typography-sheet { transition: translate 180ms ease; }
-.reader-typography-sheet[data-dragging] { transition: none; }
-.reader-typography-sheet-header { touch-action: pan-x; }
-@media (prefers-reduced-motion: reduce) { .reader-typography-sheet { transition: none; } }
+.reader-typography-sheet, .reader-saved-sheet { transition: translate 180ms ease; }
+.reader-typography-sheet[data-dragging], .reader-saved-sheet[data-dragging] { transition: none; }
+.reader-typography-sheet-header, .reader-saved-sheet header { touch-action: none; }
+@media (prefers-reduced-motion: reduce) { .reader-typography-sheet, .reader-saved-sheet { transition: none; } }
 
 /* 数字区与跳转标记只作用于新版左栏。 */
 @media (min-width: 768px) {
@@ -996,8 +996,10 @@ body {
 .action-row button:focus-visible { outline: 2px solid var(--hover); outline-offset: 1px; }
 .action-row .action-row-save[aria-pressed="true"] { color: var(--hover); }
 .action-row[data-action-placement] .action-row-save:disabled { opacity: 1; }
+.action-row[data-block-actions="explain"] .action-row-save:disabled { opacity: .45; }
 @media (hover: hover) {
-  .action-row[data-action-placement="side"] button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+  .action-row[data-action-placement="side"] button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .action-row[data-action-placement="side"] button:hover:not(.action-row-save[aria-pressed="true"]) { color: var(--ink); }
   .action-row[data-action-placement="side"] button:hover::after {
     content: attr(data-tip);
     position: absolute;
@@ -1037,6 +1039,9 @@ body {
     padding: 8px 0 calc(24px + env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0;
     background: var(--paper-main); box-shadow: 0 -6px 24px color-mix(in srgb, var(--ink) 12%, transparent);
   }
+  .reader-typography-sheet { z-index: 95; border: 0; border-radius: 16px 16px 0 0; background: var(--paper-main); box-shadow: 0 -6px 24px color-mix(in srgb, var(--ink) 12%, transparent); }
+  .reader-typography-sheet-header { flex-wrap: wrap; }
+  .reader-typography-grip { flex: 0 0 36px; margin: 0 calc((100% - 36px) / 2) 10px; }
   .reader-saved-drag { display: grid; justify-items: center; padding-bottom: 10px; touch-action: none; }
   .reader-saved-grip { width: 36px; height: 4px; padding: 0; border: 0; border-radius: 2px; background: var(--rule); cursor: pointer; }
   .reader-saved-sheet header { display: flex; justify-content: space-between; align-items: baseline; padding: 0 20px 10px; }
@@ -1054,7 +1059,7 @@ body {
   .reader-saved-empty-state { margin: 14px 20px 0; font-size: 12px; color: var(--gloss); }
 }
 @media (max-width: 767.98px) and (prefers-reduced-motion: no-preference) {
-  .reader-saved-sheet { animation: saved-sheet-in .22s cubic-bezier(.2,.7,.2,1); }
+  .reader-saved-sheet, .reader-typography-sheet { animation: saved-sheet-in .22s cubic-bezier(.2,.7,.2,1); }
 }
 @media (max-width: 767.98px) {
   .shell > .col-left { grid-template-columns: 44px minmax(0, 1fr) 72px 44px 44px; }
@@ -1064,4 +1069,26 @@ body {
   .col-left .reader-typography-aa { grid-column: 5; grid-row: 1; width: 44px; height: 44px; }
   .reader-mobile-heading { grid-column: 2; }
   .reader-mobile-progress-track { grid-column: 1 / -1; }
+}
+
+@keyframes reader-sheet-out {
+  to { transform: translateY(100%); opacity: 0; }
+}
+@keyframes reader-sheet-backdrop-out {
+  to { opacity: 0; }
+}
+.reader-saved-sheet[data-closing], .reader-typography-sheet[data-closing],
+.reader-saved-backdrop[data-closing], .feedback-layer[data-closing],
+.feedback-layer[data-closing] .feedback-card, .feedback-layer[data-closing] .feedback-backdrop {
+  pointer-events: none;
+}
+.reader-saved-sheet[data-closing], .reader-typography-sheet[data-closing], .feedback-layer[data-closing] .feedback-card {
+  animation: reader-sheet-out .22s ease both;
+}
+.reader-saved-backdrop[data-closing], .feedback-layer[data-closing] .feedback-backdrop {
+  animation: reader-sheet-backdrop-out .22s ease both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-saved-sheet[data-closing], .reader-typography-sheet[data-closing], .reader-saved-backdrop[data-closing],
+  .feedback-layer[data-closing] .feedback-card, .feedback-layer[data-closing] .feedback-backdrop { animation-duration: 0s; }
 }

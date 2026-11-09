@@ -3,7 +3,7 @@ import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 process.env.G19_IMPORT_ONLY='1';
-const {Cdp,evaluate}=await import('./verify-g19.mjs');
+const {Cdp,evaluate,clickControl}=await import('./verify-g19.mjs');
 export function whiteBlockFacts() {
   return [...document.querySelectorAll(".gloss-panel-text")].filter(el=>{
     const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.display!=="none"&&s.visibility==="visible";
@@ -115,7 +115,7 @@ export function assertG76UI(base,actual,width){
   }
   check(row.buttons.length===(row.recall?3:2),"三格或两控件",{width,row});
   for(const button of row.buttons){
-   check(["收藏","取消收藏","收起白话","收起脉络解读","白话","脉络解读"].includes(button.label),"名称",button);
+   check(["收藏","取消收藏","已收藏","生成后才能收藏","收起白话","收起脉络解读","白话","脉络解读"].includes(button.label),"名称",button);
    check(button.color===(button.saved?row.hover:row.gloss),"主题颜色",button);
    const recall=button.label==="白话"||button.label==="脉络解读";
    const expectedPath=button.label==="白话"?"M5 6h14v9H10l-4 3v-3H5z":button.label==="脉络解读"?"M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z":button.label.startsWith("收起")?"M6 15l6-6 6 6":"M6 3h12v18l-6-4-6 4z";
@@ -163,6 +163,7 @@ let c,checks=0,negative=0;
 const assert=(v,label)=>{if(!v)throw Error(label);checks++;};
 async function wait(fn,label){const end=Date.now()+20000;while(Date.now()<end){if(await fn())return;await sleep(50);}throw Error('等待失败 '+label);}
 const ev=(fn,...args)=>evaluate(c,fn,...args);
+const click=selector=>clickControl(c,selector);
 // 等待新文档提交，不能把导航前旧页面的 readyState 当成本轮准备完成。
 async function navigate(url){const previous=(await c.call('Page.getFrameTree')).frameTree.frame.loaderId;const result=await c.call('Page.navigate',{url});if(result.errorText)throw Error(result.errorText);await wait(async()=>{const frame=(await c.call('Page.getFrameTree')).frameTree.frame;if(result.loaderId?frame.loaderId!==result.loaderId:frame.loaderId===previous)return false;return c.evaluate("document.readyState==='complete'").catch(()=>false);},'新导航完成');}
 async function reload(){const previous=(await c.call('Page.getFrameTree')).frameTree.frame.loaderId;await c.call('Page.reload');await wait(async()=>{const frame=(await c.call('Page.getFrameTree')).frameTree.frame;if(frame.loaderId===previous)return false;return c.evaluate("document.readyState==='complete'").catch(()=>false);},'新重载完成');}
@@ -173,7 +174,7 @@ async function baselineFrame(theme,shape){
  await navigate('http://127.0.0.1:3513/read/g76');await wait(()=>c.evaluate("document.readyState==='complete'"),'对照页面');
  await ev((theme,shape)=>{localStorage.clear();localStorage.setItem('gloss:doc:g76',JSON.stringify({version:1,docId:'g76',paragraphs:['春风吹过山谷。河水流向海洋。'],headings:[],footnotes:[],meta:{format:'txt',fileName:'验证.txt',charCount:16},savedAt:1}));localStorage.setItem('gloss:settings:gloss-shape',shape);localStorage.setItem('gloss:settings:theme',theme==='dark'?'parchment':theme);localStorage.setItem('gloss:settings:appearance',theme==='dark'?'dark':'light');},theme,shape);
  await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'对照阅读器');await c.evaluate('document.fonts.ready');const before=await ev(originPoint);
- await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("document.querySelector('.gloss-panel')?.dataset.state==='done'"),'对照白话');const whiteOnly=await ev(whiteBlockFacts);await ev(()=>document.querySelector('.action-row-explain').click());await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),'对照解读');
+ await click('.sentence[data-index="0"]');await wait(()=>c.evaluate("document.querySelector('.gloss-panel')?.dataset.state==='done'"),'对照白话');const whiteOnly=await ev(whiteBlockFacts);await click('.action-row-explain');await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),'对照解读');
  return{before,after:await ev(originPoint),whiteOnly,white:await ev(whiteBlockFacts),ui:await ev(g76UIFacts)};
 }
 
@@ -238,6 +239,13 @@ async function forceSavedState(selector,state,check){
  await c.call("CSS.forcePseudoState",{nodeId,forcedPseudoClasses:[state]});
  try{await check();}finally{await c.call("CSS.forcePseudoState",{nodeId,forcedPseudoClasses:[]});}
 }
+async function dragSheet(selector,distance,quick){
+ const point=await ev(selector=>{const el=document.querySelector(selector),r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;if(!el.contains(document.elementFromPoint(x,y)))throw Error("拖动起点未命中 "+selector);return {x,y};},selector);
+ await c.call("Input.dispatchTouchEvent",{type:"touchStart",touchPoints:[point]});
+ await c.call("Input.dispatchTouchEvent",{type:"touchMove",touchPoints:[{x:point.x,y:point.y+distance}]});
+ if(!quick)await sleep(120);
+ await c.call("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});
+}
 async function verifySavedSheetInteraction(){
  await forceSavedState(".reader-saved-sheet .saved-link","active",async()=>{
   const facts=await ev(savedDesignFacts,true);assert(facts.activeBackground===facts.side,"抽屉条目按下底色");
@@ -252,17 +260,72 @@ async function verifySavedSheetInteraction(){
   assert(motion.duration==="0.22s"&&motion.ease==="cubic-bezier(0.2, 0.7, 0.2, 1)"&&JSON.stringify(motion.frames)===JSON.stringify([["0.5","translateY(24px)"],["1","none"]]),"抽屉入场动画 "+JSON.stringify(motion));
   console.log(JSON.stringify({savedMotion:motion}));
  }finally{await c.call("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"reduce"}]});}
- const point=await ev(()=>{const r=document.querySelector(".reader-saved-grip").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
- await c.call("Emulation.setTouchEmulationEnabled",{enabled:true,maxTouchPoints:1});
+ const open=selector=>c.evaluate("!!document.querySelector("+JSON.stringify(selector)+")");
+ const saved='.reader-saved-sheet',settings='.reader-typography-sheet';
+ const filter='.saved-filters button:nth-child(2)';
+ const closeDrag=async()=>{
+  await ev(()=>{
+   window.__g76TouchEndConnected=null;
+   window.addEventListener('touchend',event=>{window.__g76TouchEndConnected=event.target.isConnected;},{once:true});
+  });
+  await dragSheet('.reader-saved-sheet header',100,true);
+  assert(await ev(()=>__g76TouchEndConnected===true),'touchend 时抽屉仍挂载');
+  await wait(()=>c.evaluate("!!document.querySelector('.reader-saved-sheet[data-closing]')"),'收藏退场开始');
+  const nonBlocking=()=>[...document.querySelectorAll('.reader-saved-sheet[data-closing],.reader-saved-backdrop[data-closing]')].length===2&&[...document.querySelectorAll('.reader-saved-sheet[data-closing],.reader-saved-backdrop[data-closing]')].every(el=>el.inert&&getComputedStyle(el).pointerEvents==='none');
+  assert(await ev(nonBlocking),'退场抽屉及压暗层不可交互');
+  await wait(async()=>!await open(saved),'动画后卸载收藏');
+ };
+ await c.call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
  try{
-  await c.call("Input.dispatchTouchEvent",{type:"touchStart",touchPoints:[point]});
-  await c.call("Input.dispatchTouchEvent",{type:"touchMove",touchPoints:[{x:point.x,y:point.y+100}]});
-  await c.call("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});
-  await wait(()=>c.evaluate("!document.querySelector('.reader-saved-sheet')"),"下滑关闭收藏抽屉");
-  assert(true,"下滑关闭收藏抽屉");
- }finally{await c.call("Emulation.setTouchEmulationEnabled",{enabled:false});}
- await ev(()=>document.querySelector(".reader-saved-mobile").click());
- await wait(()=>c.evaluate("!!document.querySelector('.reader-saved-sheet')"),"恢复收藏抽屉场景");
+  for(let trial=0;trial<3;trial++){
+   await sleep(600);
+   await dragSheet('.reader-saved-grip',25,false);
+   await wait(()=>c.evaluate("(()=>{const el=document.querySelector('.reader-saved-sheet');return !!el&&Math.abs(el.getBoundingClientRect().bottom-innerHeight)<.5&&!el.hasAttribute('data-dragging')})()"),'收藏抽屉回弹');
+   await sleep(600);
+   await click(filter);
+   assert(await ev(q=>document.querySelector(q).getAttribute('aria-pressed')==='true',filter),'回弹后筛选有效');
+   await click('.saved-filters button:first-child');
+   await sleep(600);
+   await closeDrag();
+   await sleep(600);
+   await click('.reader-saved-mobile');
+   await wait(()=>open(saved),'拖关后书签打开');
+   await sleep(600);
+   await closeDrag();
+   await sleep(600);
+   await click('.reader-typography-aa');
+   await wait(()=>open(settings),'拖关后 Aa 打开');
+   await click('[aria-label="关闭阅读设置"]');
+   await wait(async()=>!await open(settings),'设置动画后卸载');
+   await click('.reader-saved-mobile');
+   await wait(()=>open(saved),'下一轮收藏抽屉');
+  }
+  // 临时移除节点，模拟 touchend 同步卸载，再还原 React 持有的同一节点。
+  await ev(()=>{
+   const sheet=document.querySelector('.reader-saved-sheet'),parent=sheet.parentNode,next=sheet.nextSibling;
+   window.__g76SyncDetach=event=>{event.stopPropagation();sheet.remove();window.__g76SyncDetected=!event.target.isConnected;parent.insertBefore(sheet,next);};
+   document.addEventListener('touchend',__g76SyncDetach,{capture:true,once:true});
+  });
+  await sleep(600);await dragSheet('.reader-saved-sheet header',100,true);
+  assert(await ev(()=>__g76SyncDetected===true),'touchend 同步卸载负对照');negative++;
+  await ev(()=>{
+   const style=document.createElement('style');style.id='g76-closing-fault';
+   style.textContent='.reader-saved-backdrop[data-closing]{pointer-events:auto!important}';
+   document.head.append(style);
+  });
+  try{
+   await sleep(600);await dragSheet('.reader-saved-sheet header',100,true);
+   await wait(()=>c.evaluate("!!document.querySelector('.reader-saved-sheet[data-closing]')"),'负对照进入退场');
+   assert(await ev(()=>{
+    const backdrop=document.querySelector('.reader-saved-backdrop[data-closing]');
+    backdrop.inert=false;
+    return backdrop===document.elementFromPoint(20,100);
+   }),'退场压暗层实际拦截负对照');negative++;
+  }finally{await ev(()=>document.querySelector('#g76-closing-fault').remove());}
+  await wait(async()=>!await open(saved),'负对照退场后卸载');
+  await click('.reader-saved-mobile');await wait(()=>open(saved),'恢复收藏抽屉场景');
+ }finally{await c.call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});}
+
 }
 async function savedScreenshot(name){
  const dir=join(process.cwd(),"tmp-g76-shots");await mkdir(dir,{recursive:true});
@@ -329,37 +392,76 @@ try {
   const labelBox=label.getBoundingClientRect();
   return {boxes,ok:boxes.every((b,i)=>b.width>0&&b.x>=0&&b.right<=document.documentElement.clientWidth&&(i===0||boxes[i-1].right<=b.x))&&boxes[2].height===44&&label.textContent==='划选'&&getComputedStyle(label).fontSize==='14px'&&labelBox.width>0&&labelBox.x>=boxes[2].x&&labelBox.right<=boxes[2].right};
  };
+ for(const width of [600,638,700,767]){
+  await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+  assert(await ev(()=>{const el=document.querySelector('.reader-saved-mobile'),r=el.getBoundingClientRect();return !document.querySelector('.reader-saved-sheet,.reader-saved-backdrop')&&el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));}),width+'px 关闭时顶栏书签命中');
+ }
  await c.call('Emulation.setDeviceMetricsOverride',{width:320,height:900,deviceScaleFactor:1,mobile:false});
  const narrow=await ev(header);console.log(JSON.stringify({header320:narrow}));
  assert(narrow.ok,'320px 顶栏宽度 '+JSON.stringify(narrow));
  await c.call('Emulation.setDeviceMetricsOverride',{width:375,height:900,deviceScaleFactor:1,mobile:false});
  await negativeCheck('划选文字可见且14px',()=>{const el=document.querySelector('.reader-selection-mobile span');return el.textContent==='划选'&&getComputedStyle(el).fontSize==='14px'&&el.getBoundingClientRect().width>0;},()=>document.querySelector('.reader-selection-mobile span').style.display='none',()=>document.querySelector('.reader-selection-mobile span').style.removeProperty('display'));
  await savedScreenshot('375-selection-header');
- await ev(()=>document.querySelector('.sentence[data-index="0"]').click());
+ await click('.sentence[data-index="0"]');
  await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-explain')"),'入口');
- await ev(()=>document.querySelector('.gloss-block .action-row-explain').click());
- await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),'解读');
+ await ev(()=>{
+  window.__g76OriginalFetch=fetch;
+  window.fetch=(url,options)=>String(url).includes('/api/explain')?new Promise(resolve=>{window.__g76FailExplain=()=>resolve(new Response(null,{status:500}));}):__g76OriginalFetch(url,options);
+ });
+ const explainSave='.explain-result .action-row-save';
+ const blocked=()=>{const button=document.querySelector('.explain-result .action-row-save');return button?.disabled&&button.getAttribute('aria-disabled')==='true'&&getComputedStyle(button).opacity==='0.45'&&button.dataset.tip==='生成后才能收藏'&&!document.querySelector('.explain-result .action-row-fold').disabled;};
+ const marks=()=>ev(()=>({stored:localStorage.getItem('gloss:explain-saved:g76'),events:__g76Events.filter(e=>e.event==='explain_save').length}));
+ await click('.gloss-block .action-row-explain');
+ await wait(()=>c.evaluate("!!document.querySelector('.explain-result-pending')&&!!window.__g76FailExplain"),'解读生成中');
+ const beforeBlocked=await marks();
+ assert(await ev(blocked),'生成中禁用解读书签');
+ await click(explainSave);
+ assert(JSON.stringify(await marks())===JSON.stringify(beforeBlocked),'生成中点击零写入与埋点');
+ await ev(()=>{window.fetch=__g76OriginalFetch;__g76FailExplain();});
+ await wait(()=>c.evaluate("!!document.querySelector('.explain-result-note')"),'解读失败');
+ assert(await ev(blocked),'失败禁用解读书签');
+ await click(explainSave);
+ assert(JSON.stringify(await marks())===JSON.stringify(beforeBlocked),'失败点击零写入与埋点');
+ await ev(()=>{
+  const button=document.querySelector('.explain-result .action-row-save');
+  button.disabled=false;
+  button.addEventListener('click',()=>localStorage.setItem('gloss:explain-saved:g76','模拟错误写入'),{once:true});
+ });
+ try{
+  await click(explainSave);
+  assert(!await ev(blocked)&&JSON.stringify(await marks())!==JSON.stringify(beforeBlocked),'失败书签错误写入负对照');negative++;
+ }finally{await ev(()=>{document.querySelector('.explain-result .action-row-save').disabled=true;localStorage.removeItem('gloss:explain-saved:g76');});}
+ await click('.explain-result .gloss-panel-retry');
+ await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')&&!document.querySelector('.explain-result .action-row-save').disabled"),'解读重试成功');
  assert(await c.evaluate("document.querySelectorAll('.action-row-recall').length===0"),'两块显示第一格为空');
- await ev(()=>document.querySelector('.explain-result .action-row-save').click());await sleep(500);
+ await click('.explain-result .action-row-save');await sleep(500);
+ const savedLook=selector=>{const b=document.querySelector(selector),svg=b.querySelector('svg'),probe=document.createElement('span');probe.style.color='var(--hover)';b.append(probe);const expected=getComputedStyle(probe).color;probe.remove();return b.getAttribute('aria-pressed')==='true'&&b.getAttribute('aria-label')==='已收藏'&&b.dataset.tip==='已收藏'&&svg.getAttribute('fill')==='currentColor'&&getComputedStyle(svg).color===expected;};
+ assert(await ev(savedLook,explainSave),'解读收藏后实心、颜色和标签');
+ await ev(selector=>document.querySelector(selector).setAttribute('aria-pressed','false'),explainSave);
+ try{assert(!await ev(savedLook,explainSave),'收藏后状态未更新负对照');negative++;}finally{await ev(selector=>document.querySelector(selector).setAttribute('aria-pressed','true'),explainSave);}
+
  assert(await c.evaluate("__g76Events.filter(e=>e.event==='explain_save').length===1"),'解读收藏一次');
- await ev(()=>document.querySelector('.gloss-block .action-row-fold').click());await sleep(350);
- await ev(()=>document.querySelector('.explain-result .action-row-fold').click());await sleep(350);
+ await click('.gloss-block .action-row-fold');await sleep(350);
+ await click('.explain-result .action-row-fold');await sleep(350);
  assert(await c.evaluate("!document.querySelector('.gloss-panel')"),'两块全收');
  assert(await c.evaluate("document.querySelector('.sentence[data-index=\"0\"]')?.classList.contains('sentence-saved-collapsed')"),'收起后收藏原句标记保留');
- await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await sleep(350);
+ await click('.sentence[data-index="0"]');await sleep(350);
  assert(await c.evaluate("!!document.querySelector('.explain-result')&&!document.querySelector('.gloss-block')"),'仅解读收藏重新打开');
  await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'刷新');
  assert(await c.evaluate("!!document.querySelector('.explain-result')&&!document.querySelector('.gloss-block')"),'刷新恢复解读收藏');
- await ev(()=>document.querySelector('.explain-result .action-row-save').click());await sleep(350);
+ await click('.explain-result .action-row-save');await sleep(350);
  assert(await c.evaluate("!!document.querySelector('.explain-result-text')&&!document.querySelector('.gloss-block')"),'取消唯一解读收藏仍保留正在看的块');
- await ev(()=>document.querySelector('.explain-result .action-row-save').click());await sleep(350);
+ await click('.explain-result .action-row-save');await sleep(350);
  await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'重存后刷新');
- await ev(()=>document.querySelector('.explain-result .action-row-recall').click());
+ await click('.explain-result .action-row-recall');
  await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-save:not(:disabled)')"),'叫回白话可收藏');
- await ev(()=>document.querySelector('.gloss-block .action-row-save').click());await sleep(500);
- await negativeCheck('书签可访问名称与收藏状态',()=>document.querySelector('.gloss-block .action-row-save')?.getAttribute('aria-label')==='取消收藏'&&document.querySelector('.gloss-block .action-row-save')?.getAttribute('aria-pressed')==='true',()=>document.querySelector('.gloss-block .action-row-save').setAttribute('aria-label','收藏'),()=>document.querySelector('.gloss-block .action-row-save').setAttribute('aria-label','取消收藏'));
+ await click('.gloss-block .action-row-save');await sleep(500);
+ assert(await ev(savedLook,'.gloss-block .action-row-save'),'白话收藏后实心、颜色和标签');
+ await negativeCheck('关闭收藏抽屉不保留命中区域',()=>!document.querySelector('.reader-saved-sheet,.reader-saved-backdrop'),()=>{const e=document.createElement('div');e.className='reader-saved-sheet';e.style.height='100vh';e.id='closed-sheet-fault';document.body.append(e);},()=>document.querySelector('#closed-sheet-fault').remove());
+
+ await negativeCheck('书签可访问名称与收藏状态',()=>document.querySelector('.gloss-block .action-row-save')?.getAttribute('aria-label')==='已收藏'&&document.querySelector('.gloss-block .action-row-save')?.getAttribute('aria-pressed')==='true',()=>document.querySelector('.gloss-block .action-row-save').setAttribute('aria-label','收藏'),()=>document.querySelector('.gloss-block .action-row-save').setAttribute('aria-label','已收藏'));
  await negativeCheck('两块显示第一格为空',()=>document.querySelectorAll('.action-row-recall').length===0,()=>{const button=document.createElement('button');button.id='g76-negative';button.className='action-row-recall';document.querySelector('.action-row-recall-slot').append(button);},()=>document.querySelector('#g76-negative').remove());
- await ev(()=>document.querySelector('.reader-saved-mobile').click());await sleep(350);
+ await click('.reader-saved-mobile');await sleep(350);
  assert(await c.evaluate("document.querySelectorAll('#reader-saved-sheet .saved-link').length===2"),'两类条目分别计数');
  await negativeCheck('左栏收藏使用原句摘要',()=>{
   const source=document.querySelector('.sentence[data-index="0"]').textContent;
@@ -373,16 +475,25 @@ try {
  await verifySavedLayout(true);await savedScreenshot('375-saved-drawer');await verifySavedSheetInteraction();
  await negativeCheck('收藏类型签',()=>document.querySelectorAll('#reader-saved-sheet .saved-kind[data-kind="gloss"]').length===1&&document.querySelectorAll('#reader-saved-sheet .saved-kind[data-kind="explain"]').length===1,()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="explain"]').setAttribute('data-kind','wrong'),()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="wrong"]').setAttribute('data-kind','explain'));
  await negativeCheck('抽屉互斥',()=>document.querySelectorAll('#reader-saved-sheet,.reader-typography-sheet,.feedback-card').length===1,()=>{const div=document.createElement('div');div.className='reader-typography-sheet';div.id='g76-negative';document.body.append(div);},()=>document.querySelector('#g76-negative').remove());
- await ev(()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="gloss"]').closest('button').click());await sleep(350);
+ await click('#reader-saved-sheet button:has(.saved-kind[data-kind="gloss"])');await sleep(350);
  assert(await c.evaluate("!!document.querySelector('.gloss-block')&&!document.querySelector('.explain-result')&&!document.querySelector('#reader-saved-sheet')"),'白话条目只开白话且关闭抽屉');
  await negativeCheck('手机叫回常亮',()=>getComputedStyle(document.querySelector('.action-row-recall')).opacity==='1',()=>document.querySelector('.action-row-recall').style.opacity='.45',()=>document.querySelector('.action-row-recall').style.removeProperty('opacity'));
- await ev(()=>document.querySelector('.reader-saved-mobile').click());await sleep(350);await ev(()=>document.querySelector('#reader-saved-sheet .saved-kind[data-kind="explain"]').closest('button').click());await sleep(350);
+ await click('.reader-saved-mobile');await sleep(350);await click('#reader-saved-sheet button:has(.saved-kind[data-kind="explain"])');await sleep(350);
  assert(await c.evaluate("!!document.querySelector('.explain-result')&&!document.querySelector('.gloss-block')&&!document.querySelector('#reader-saved-sheet')"),'解读条目只开解读且关闭抽屉');
- await ev(()=>document.querySelector('.explain-result .action-row-save').click());await sleep(350);
+ await click('.explain-result .action-row-save');await sleep(350);
  await negativeCheck('取消不发explain_save',()=>__g76Events.filter(e=>e.event==='explain_save').length===0,()=>__g76Events.push({event:'explain_save',sentenceIndex:0}),()=>__g76Events.pop());
- await ev(()=>document.querySelector('.reader-saved-mobile').click());await sleep(350);await ev(()=>document.querySelector('.reader-typography-aa').click());await sleep(350);
+ await click('.reader-saved-mobile');await sleep(350);await click('.reader-typography-aa');await sleep(350);
  assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')&&!document.querySelector('#reader-saved-sheet')"),'设置关闭收藏抽屉');
- await ev(()=>document.querySelector('.reader-settings-feedback').click());await sleep(350);
+ const settingsSkin=()=>{const el=document.querySelector('.reader-typography-sheet'),grip=el.querySelector('.reader-typography-grip'),s=getComputedStyle(el),g=grip.getBoundingClientRect(),back=document.querySelector('.reader-typography-backdrop').getBoundingClientRect();return s.borderTopLeftRadius==='16px'&&s.borderTopRightRadius==='16px'&&g.width===36&&g.height===4&&getComputedStyle(grip).borderRadius==='2px'&&back.top===document.querySelector('.shell>.col-left').getBoundingClientRect().bottom&&s.boxShadow.includes('0px -6px 24px');};
+ await negativeCheck('阅读设置抽屉圆角和拖动条',settingsSkin,()=>document.querySelector('.reader-typography-sheet').style.borderRadius='0',()=>document.querySelector('.reader-typography-sheet').style.removeProperty('border-radius'));
+ await savedScreenshot('375-typography-sheet');
+ await dragSheet('.reader-typography-grip',25,false);
+ await wait(()=>c.evaluate("(()=>{const el=document.querySelector('.reader-typography-sheet');return !!el&&Math.abs(el.getBoundingClientRect().bottom-innerHeight)<.5&&!el.hasAttribute('data-dragging')})()"),"阅读设置抽屉回弹");
+ await sleep(600);await dragSheet('.reader-typography-grip',100,true);
+ await wait(()=>c.evaluate("!document.querySelector('.reader-typography-sheet')"),"下滑关闭阅读设置");
+ await click('.reader-typography-aa');
+ await wait(()=>c.evaluate("!!document.querySelector('.reader-typography-sheet')"),"恢复阅读设置场景");
+ await click('.reader-settings-feedback');await sleep(350);
  assert(await c.evaluate("!!document.querySelector('.feedback-card')&&!document.querySelector('.reader-typography-sheet')&&!document.querySelector('#reader-saved-sheet')"),'反馈关闭设置抽屉');
  await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'抽屉后刷新');
  for (const width of [1280,1440,375,506,767,768,999,1000,1024,1920]) for(const theme of ['parchment','moon-white','eye-green','dark']) for(const shape of ['inline','bubble']) {
@@ -393,13 +504,13 @@ try {
   await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'矩阵阅读器');
   assert(samePoint(await ev(originPoint),reference.before),'同场景原句与正文宽度对照：展开前');
   if(width<768){const boxes=await ev(()=>['.reader-shelf-back','.reader-mobile-heading','.reader-selection-mobile','.reader-saved-mobile','.reader-typography-aa'].map(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return{selector,left:r.left,right:r.right,top:r.top,bottom:r.bottom};}));assert(boxes.every((a,i)=>boxes.every((b,j)=>i===j||Math.min(a.right,b.right)<=Math.max(a.left,b.left)||Math.min(a.bottom,b.bottom)<=Math.max(a.top,b.top))),'手机五项命中区域无重叠 '+JSON.stringify(boxes));}
-  await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-explain')"),'矩阵入口');
+  await click('.sentence[data-index="0"]');await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-explain')"),'矩阵入口');
   assert(await c.evaluate("getComputedStyle(document.querySelector('.action-row-recall')).opacity==='1'"),'未生成入口常亮');
   await wait(()=>c.evaluate("document.querySelector('.gloss-block')?.dataset.state==='done'"),"生成解读前白话取样就绪");
   assertWhiteBlocks(reference.whiteOnly,await ev(whiteBlockFacts),width);assert(true,"生成解读前白话宽度与断点");
   assertG76UI(reference.ui,await ev(g76UIFacts),width);
   if(width===375&&theme==="parchment"&&shape==="bubble")await shortBubbleRuntimeNegative(reference.whiteOnly,width,"无故增宽");
-  await ev(()=>document.querySelector('.gloss-block .action-row-explain').click());await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),'矩阵解读');
+  await click('.gloss-block .action-row-explain');await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),'矩阵解读');
   assert(await c.evaluate("document.querySelectorAll('.action-row-recall').length===0"),'矩阵两块显示第一格空');
   await wait(()=>c.evaluate("document.querySelector('.gloss-block')?.dataset.state==='done'"),"白话宽度取样就绪");
   const whiteFacts=await ev(whiteBlockFacts);
@@ -447,29 +558,30 @@ try {
   const sizes=await ev(()=>({gloss:parseFloat(getComputedStyle(document.querySelector('.gloss-panel-text')).fontSize),explain:parseFloat(getComputedStyle(document.querySelector('.explain-result-text')).fontSize)}));
   assert(Math.abs(sizes.explain-sizes.gloss-1)<.01,'解读字号加一');
   await ev(()=>{window.__g76OriginalTop=()=>{const node=document.querySelector('.sentence[data-index="0"]').firstChild,range=document.createRange();range.setStart(node,0);range.setEnd(node,1);return range.getBoundingClientRect().top;};window.__g76BeforeFold=__g76OriginalTop();});
-  await ev(()=>document.querySelector('.gloss-block .action-row-fold').click());await sleep(350);
+  await click('.gloss-block .action-row-fold');await sleep(350);
   const originalDelta=await ev(()=>Math.abs(__g76OriginalTop()-__g76BeforeFold));assert(originalDelta<=.5,'视口顶部收白话原句参照字位移 '+originalDelta);
   await verifyRecallOpacity('.explain-result .action-row-recall',width);
-  await ev(()=>document.querySelector('.explain-result .action-row-recall').click());await sleep(350);
-  await ev(()=>document.querySelector('.explain-result .action-row-fold').click());await sleep(350);
+  await click('.explain-result .action-row-recall');await sleep(350);
+  await click('.explain-result .action-row-fold');await sleep(350);
   await verifyRecallOpacity('.gloss-block .action-row-recall',width);
   if([1280,1440].includes(width)&&shape==="inline"&&theme==="parchment"){
-   await ev(()=>document.querySelector('.gloss-block .action-row-recall').click());
+   await click('.gloss-block .action-row-recall');
    await wait(()=>c.evaluate("!!document.querySelector('.explain-result-text')"),"截图两块展开");
    for(const block of [".gloss-block",".explain-result"]){
-    await ev(selector=>document.querySelector(selector+" .action-row-save").click(),block);
+    await click(block+" .action-row-save");
     await wait(()=>ev(selector=>document.querySelector(selector+" .action-row-save")?.getAttribute("aria-pressed")==="true",block),"截图收藏状态");
    }
+   assert(await ev(savedLook,".gloss-block .action-row-save")&&await ev(savedLook,".explain-result .action-row-save"),"两块已收藏书签实心");
    await verifySavedLayout(false);await savedScreenshot(width+"-parchment-saved");
    for(const pseudo of ["hover","focus-visible"]){
     await forceSavedState('[aria-labelledby="saved-title"] .saved-link',pseudo,async()=>{
      const facts=await ev(savedDesignFacts,false);assert(facts.items[0].text[2]===facts.hover,"左栏条目 "+pseudo+" 文字色");
     });
    }
-   await ev(()=>document.querySelector('[aria-labelledby="saved-title"] .saved-link').click());
+   await click('[aria-labelledby="saved-title"] .saved-link');
    await wait(()=>c.evaluate("!!document.querySelector('.saved-link[data-jump-highlight=true]')"),"左栏跳转高亮");
    verifySavedDesign(await ev(savedDesignFacts,false),false);
-   await ev(()=>document.querySelector(".gloss-block .action-row-fold").click());
+   await click(".gloss-block .action-row-fold");
    await wait(()=>c.evaluate("!document.querySelector('.saved-link[data-jump-highlight=true]')"),"收起对应块清除跳转高亮");
    assert(true,"收起对应块清除跳转高亮");
   }
@@ -481,12 +593,14 @@ try {
   await ev(()=>{localStorage.removeItem('gloss:explain:g76');localStorage.removeItem('gloss:explain-saved:g76');});
   await c.call('Emulation.setDeviceMetricsOverride',{width:375,height:900,deviceScaleFactor:1,mobile:false});
   await reload();await wait(()=>c.evaluate("document.querySelector('.reader-body')?.dataset.measuring==='false'&&!!document.querySelector('.sentence[data-index=\"0\"]')"),'补偿阅读器');
-  await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-explain')"),'补偿入口');
-  await ev(()=>document.querySelector('.gloss-block .action-row-explain').click());await wait(()=>c.evaluate("document.querySelector('.explain-result-text')?.textContent.length>500"),'长解读');
-  await ev(()=>{window.scrollTo(0,200);window.__g76Char=offset=>{const node=document.querySelector('.explain-result-text').firstChild,range=document.createRange();range.setStart(node,offset);range.setEnd(node,offset+1);return range.getBoundingClientRect().top;};});await sleep(350);
+  await click('.sentence[data-index="0"]');await wait(()=>c.evaluate("!!document.querySelector('.gloss-block .action-row-explain')"),'补偿入口');
+  await click('.gloss-block .action-row-explain');await wait(()=>c.evaluate("document.querySelector('.explain-result-text')?.textContent.length>500"),'长解读');
+  await ev(()=>{const fold=document.querySelector('.gloss-block .action-row-fold').getBoundingClientRect();
+   const top=document.querySelector('.shell > .col-left').getBoundingClientRect().bottom;
+   window.scrollBy(0,fold.top+fold.height/2-top-8);window.__g76Char=offset=>{const node=document.querySelector('.explain-result-text').firstChild,range=document.createRange();range.setStart(node,offset);range.setEnd(node,offset+1);return range.getBoundingClientRect().top;};});await sleep(350);
   await ev(()=>{let offset=0;while(__g76Char(offset)<60)offset++;window.__g76Reference={offset,top:__g76Char(offset)};});
   if(disable)await ev(()=>{window.__g76ScrollBy=window.scrollBy;window.scrollBy=()=>{};const style=document.createElement('style');style.id='g76-no-compensation';style.textContent='.reader-body{translate:0 0!important}';document.head.append(style);});
-  await ev(()=>document.querySelector('.gloss-block .action-row-fold').click());await sleep(350);
+  await click('.gloss-block .action-row-fold');await sleep(350);
   const delta=await ev(()=>Math.abs(__g76Char(__g76Reference.offset)-__g76Reference.top));
   console.log(JSON.stringify({scenario:'长解读保留字',disable,delta}));
   assert(disable?delta>.5:delta<=.5,disable?'关闭补偿必须检出':'长解读保留字位移');if(disable)negative++;

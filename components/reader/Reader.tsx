@@ -203,16 +203,24 @@ export default function Reader({ docId }: { docId: string }) {
   const typographyGestureTimerRef = useRef<number | undefined>(undefined);
   const typographyLayoutRef = useRef<{ anchor: CharAnchor | null; scrollY: number } | null>(null);
   const [savedSheetOpen, setSavedSheetOpen] = useState(false);
+  const [savedSheetClosing, setSavedSheetClosing] = useState(false);
+  const [typographySheetClosing, setTypographySheetClosing] = useState(false);
+  const drawerCloseFrame = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (drawerCloseFrame.current !== null) cancelAnimationFrame(drawerCloseFrame.current);
+  }, []);
+  useEffect(() => {
+    if (!savedSheetClosing) return;
+    const timer = window.setTimeout(() => setSavedSheetClosing(false), prefersReducedMotion() ? 0 : 260);
+    return () => window.clearTimeout(timer);
+  }, [savedSheetClosing]);
+  useEffect(() => {
+    if (!typographySheetClosing) return;
+    const timer = window.setTimeout(() => setTypographySheetClosing(false), prefersReducedMotion() ? 0 : 260);
+    return () => window.clearTimeout(timer);
+  }, [typographySheetClosing]);
   const [savedFilter, setSavedFilter] = useState<"all"|"gloss"|"explain">("all");
   const savedButtonRef = useRef<HTMLButtonElement>(null);
-  const savedDragStart = useRef<number | null>(null);
-  const savedDragMoved = useRef(false);
-  const [savedDragY, setSavedDragY] = useState(0);
-  function closeSavedSheet() {
-    savedDragStart.current = null;
-    setSavedDragY(0);
-    setSavedSheetOpen(false);
-  }
   const [feedbackCloseRequest, setFeedbackCloseRequest] = useState(0);
   const [mobileTypographyOpen, setMobileTypographyOpen] = useState(false);
   const mobileTypographyOpenRef = useRef(false);
@@ -2415,7 +2423,7 @@ export default function Reader({ docId }: { docId: string }) {
     settingsDragged.current = false;
     settingsDrag.current = null; setSettingsDragY(0);
     const target = event.target as Element;
-    if (window.innerWidth >= 768 || event.touches.length !== 1 || !target.closest(".reader-typography-sheet-header") || target.closest("button,input,textarea,select,a")) return;
+    if (window.innerWidth >= 768 || event.touches.length !== 1 || !target.closest(".reader-typography-sheet-header,.reader-saved-drag,.reader-saved-sheet header") || (target.closest("button,input,textarea,select,a") && !target.closest(".reader-saved-grip"))) return;
     const y = event.touches[0].clientY;
     settingsDrag.current = { start: y, y, time: event.timeStamp, speed: 0 };
     settingsDragged.current = false;
@@ -2430,19 +2438,38 @@ export default function Reader({ docId }: { docId: string }) {
     settingsDragged.current ||= Math.abs(y - drag.start) > 4;
     setSettingsDragY(Math.max(0, y - drag.start));
   }
-  function settingsTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
+  function settingsTouchEnd(event: React.TouchEvent<HTMLDivElement>, close = () => setTypographySheet(false)) {
     const drag = settingsDrag.current;
     settingsDragged.current = false;
     settingsDrag.current = null; setSettingsDragY(0);
     if (!drag || event.type === "touchcancel") return;
     const distance = drag.y - drag.start;
-    if (distance > 80 || (distance >= 20 && event.timeStamp - drag.time <= 80 && drag.speed >= .5)) setTypographySheet(false);
+    if (distance > 80 || (distance >= 20 && event.timeStamp - drag.time <= 80 && drag.speed >= .5)) {
+      if (drawerCloseFrame.current !== null) cancelAnimationFrame(drawerCloseFrame.current);
+      drawerCloseFrame.current = requestAnimationFrame(() => { drawerCloseFrame.current = null; close(); });
+    }
   }
+  function closeSavedSheet() {
+    settingsDrag.current = null;
+    settingsDragged.current = false;
+    setSettingsDragY(0);
+    if (savedSheetOpen) setSavedSheetClosing(true);
+    setSavedSheetOpen(false);
+  }
+  useEffect(() => {
+    if (!savedSheetOpen) return;
+    const media = window.matchMedia?.("(min-width: 768px)");
+    const resize = () => { if (media?.matches) closeSavedSheet(); };
+    resize();
+    media?.addEventListener("change", resize);
+    return () => media?.removeEventListener("change", resize);
+  }, [savedSheetOpen]);
   function setTypographySheet(open: boolean) {
     if (!open) { settingsDragged.current = false; settingsDrag.current = null; setSettingsDragY(0); }
-    if (open) { setSavedSheetOpen(false); setFeedbackCloseRequest(value=>value+1); }
+    if (open) { closeSavedSheet(); setFeedbackCloseRequest(value=>value+1); }
     if (open === mobileTypographyOpenRef.current) return;
-    if (!open) endFontSizeAdjustment();
+    if (!open) { endFontSizeAdjustment(); setTypographySheetClosing(window.innerWidth < 768); }
+    else setTypographySheetClosing(false);
     if (open) for (const attempt of readAttemptRef.current.values()) attempt.clock.stop(performance.now());
     mobileTypographyOpenRef.current = open;
     syncFloatingTypographyInteractivity(floatingTypographyEligibleRef.current);
@@ -2551,7 +2578,7 @@ export default function Reader({ docId }: { docId: string }) {
       pendingSavedJumpRef.current=item.index;
       expandSaved(item.index);
     }
-    setSavedSheetOpen(false);
+    closeSavedSheet();
   }
 
 
@@ -2601,7 +2628,7 @@ export default function Reader({ docId }: { docId: string }) {
           {mobileProgress && <span className="reader-mobile-progress">第 {mobileProgress.current} 段 · 共 {mobileProgress.total} 段</span>}
         </div>
         {mobileProgress && <div className="reader-mobile-progress-track" aria-hidden="true"><span style={{ width: `${mobileProgress.ratio * 100}%` }} /></div>}
-        <FeedbackButton placement="reader" openRequest={feedbackRequest} returnFocus={feedbackReturnFocus} closeRequest={feedbackCloseRequest} onOpen={() => {setSavedSheetOpen(false);setTypographySheet(false);}} />
+        <FeedbackButton placement="reader" openRequest={feedbackRequest} returnFocus={feedbackReturnFocus} closeRequest={feedbackCloseRequest} onOpen={() => {closeSavedSheet();setTypographySheet(false);}} />
 
         <div className="mode-switch reader-legacy-mode" role="group" aria-label="收藏显示设置">
           <span className="mode-label">收藏</span>
@@ -2618,7 +2645,7 @@ export default function Reader({ docId }: { docId: string }) {
         </div>
 
         <button type="button" className="reader-selection-mobile" data-selection-control data-reader-settings aria-label="划选" aria-pressed={selectionMode} onClick={toggleSelection}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M4 9V4h5m6 0h5v5M4 15v5h5m6 0h5v-5M8 12h8" /></svg><span>划选</span></button>
-        <button type="button" ref={savedButtonRef} className="reader-saved-mobile" data-reader-settings aria-label="收藏" aria-expanded={savedSheetOpen} aria-controls="reader-saved-sheet" onClick={() => {setTypographySheet(false);setFeedbackCloseRequest(value=>value+1);setSavedSheetOpen(value=>!value);}}><BookmarkIcon /></button>
+        <button type="button" ref={savedButtonRef} className="reader-saved-mobile" data-reader-settings aria-label="收藏" aria-expanded={savedSheetOpen} aria-controls="reader-saved-sheet" onClick={() => {setTypographySheet(false);setFeedbackCloseRequest(value=>value+1);if (savedSheetOpen) closeSavedSheet(); else { setSavedSheetClosing(false); setSavedSheetOpen(true); }}}><BookmarkIcon /></button>
         <button type="button" ref={attachTypographyButton} className="reader-typography-aa" data-reader-settings
           aria-label="阅读排版" aria-haspopup="dialog" aria-controls="reader-typography-sheet" aria-expanded={mobileTypographyOpen}
           onClick={() => setTypographySheet(!mobileTypographyOpenRef.current)}>Aa</button>
@@ -2777,23 +2804,18 @@ export default function Reader({ docId }: { docId: string }) {
           <SettingsPanel selectionActive={selectionMode} onSelectionToggle={toggleSelection} glossShape={glossShape} onGlossShapeChange={changeGlossShape} typography={typography} onTypographyChange={changeTypography}
             onTypographyGestureStart={startTypographyGesture} onTypographyGestureEnd={endTypographyGesture} />
       </aside>
-      {savedSheetOpen && <>
-        <div className="reader-saved-backdrop" data-reader-settings aria-hidden="true" onClick={closeSavedSheet} />
-        <div id="reader-saved-sheet" className="reader-saved-sheet" data-reader-settings role="dialog" aria-labelledby="reader-saved-title"
-          style={{ translate: savedDragY ? "0 " + savedDragY + "px" : undefined }}
+      {(savedSheetOpen || savedSheetClosing) && <>
+        <div className="reader-saved-backdrop" data-closing={savedSheetClosing || undefined} inert={savedSheetClosing} data-reader-settings aria-hidden="true" onClick={closeSavedSheet} />
+        <div id="reader-saved-sheet" className="reader-saved-sheet" data-closing={savedSheetClosing || undefined} inert={savedSheetClosing} aria-hidden={savedSheetClosing || undefined} data-reader-settings role="dialog" aria-labelledby="reader-saved-title"
+          onAnimationEnd={event => { if (event.target === event.currentTarget && event.animationName === "reader-sheet-out") setSavedSheetClosing(false); }}
+          data-dragging={settingsDrag.current !== null || undefined} style={{ translate: `0 ${settingsDragY}px` }}
+          onTouchStart={settingsTouchStart} onTouchMove={settingsTouchMove}
+          onTouchEnd={event => settingsTouchEnd(event, closeSavedSheet)} onTouchCancel={event => settingsTouchEnd(event, closeSavedSheet)}
+          onPointerDownCapture={() => { settingsDragged.current = false; }}
+          onClickCapture={event => { if (settingsDragged.current) { settingsDragged.current = false; event.preventDefault(); event.stopPropagation(); } }}
           onKeyDown={event => { if (event.key === "Escape") { closeSavedSheet(); savedButtonRef.current?.focus(); } }}>
-          <div className="reader-saved-drag"
-            onPointerDown={event => { if (!event.isPrimary || event.button !== 0) return; savedDragStart.current = event.clientY; savedDragMoved.current = false; (event.target as Element).setPointerCapture(event.pointerId); }}
-            onPointerMove={event => { if (!event.isPrimary || savedDragStart.current === null) return; const distance = event.clientY - savedDragStart.current; savedDragMoved.current ||= Math.abs(distance) > 4; setSavedDragY(Math.max(0, distance)); }}
-            onPointerUp={event => {
-              if (!event.isPrimary || savedDragStart.current === null) return;
-              if (event.clientY - savedDragStart.current > 80) closeSavedSheet();
-              else { savedDragStart.current = null; setSavedDragY(0); }
-            }}
-            onPointerCancel={() => { savedDragStart.current = null; setSavedDragY(0); }}>
-            <button type="button" className="reader-saved-grip" aria-label="关闭收藏" onClick={event => {
-              if (event.detail === 0 || !savedDragMoved.current) closeSavedSheet();
-            }} />
+          <div className="reader-saved-drag">
+            <button type="button" className="reader-saved-grip" aria-label="关闭收藏" onClick={closeSavedSheet} />
           </div>
           <header><h2 id="reader-saved-title">收藏</h2><span>{savedItems.length} 条 · 全书</span></header>
           <div className="saved-filters" role="group" aria-label="收藏筛选">
@@ -2819,18 +2841,21 @@ export default function Reader({ docId }: { docId: string }) {
         data-visible={floatingTypographyShown}
         aria-label="阅读排版" aria-haspopup="dialog" aria-controls="reader-typography-sheet" aria-expanded={mobileTypographyOpen}
         onClick={event => { event.stopPropagation(); setTypographySheet(true); }}>Aa</button>
-      {mobileTypographyOpen && <div ref={typographySheetRef} id="reader-typography-sheet" className="reader-typography-sheet"
+      {(mobileTypographyOpen || typographySheetClosing) && <>
+        <div className="reader-saved-backdrop reader-typography-backdrop" data-closing={typographySheetClosing || undefined} inert={typographySheetClosing} aria-hidden="true" />
+        <div ref={typographySheetRef} id="reader-typography-sheet" className="reader-typography-sheet" data-closing={typographySheetClosing || undefined} inert={typographySheetClosing} aria-hidden={typographySheetClosing || undefined}
         data-reader-settings role="dialog" aria-labelledby="reader-typography-sheet-title"
+        onAnimationEnd={event => { if (event.target === event.currentTarget && event.animationName === "reader-sheet-out") setTypographySheetClosing(false); }}
         data-dragging={settingsDrag.current !== null || undefined} style={{ translate: `0 ${settingsDragY}px` }}
         onTouchStart={settingsTouchStart} onTouchMove={settingsTouchMove} onTouchEnd={settingsTouchEnd} onTouchCancel={settingsTouchEnd}
         onPointerDownCapture={() => { settingsDragged.current = false; }}
         onClickCapture={event => { if (settingsDragged.current) { settingsDragged.current = false; event.preventDefault(); event.stopPropagation(); } }}>
-        <div className="reader-typography-sheet-header"><h2 id="reader-typography-sheet-title" tabIndex={-1}>阅读设置</h2>
+        <div className="reader-typography-sheet-header"><span className="reader-typography-grip reader-saved-grip" aria-hidden="true" /><h2 id="reader-typography-sheet-title" tabIndex={-1}>阅读设置</h2>
           <button type="button" aria-label="关闭阅读设置" onClick={() => setTypographySheet(false)}>关闭</button></div>
         <MobileReaderSettings value={typography} onChange={changeTypography} onFontSizeChange={value => changeTypography(value, false, true)} onGestureStart={startTypographyGesture} onGestureEnd={endTypographyGesture}
           glossShape={glossShape} onShapeChange={changeGlossShape} readingMode={readingMode} onModeChange={changeReadingMode}
           onFeedback={() => { setTypographySheet(false); setFeedbackRequest(value => value + 1); }} />
-      </div>}
+      </div></>}
       {contextMenu && (
         <ContextMenu
           point={contextMenu.point}

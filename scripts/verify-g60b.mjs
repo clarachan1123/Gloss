@@ -145,9 +145,15 @@ async function click(cdp, selector) {
     else {if(!await cdp.evaluate("!!document.querySelector('.reader-typography-sheet')"))await click(cdp,'.reader-typography-aa');
       await cdp.evaluate("document.querySelector('.reader-settings-feedback').scrollIntoView({block:'nearest'})");selector='.reader-settings-feedback';}
   }
-  const p = await evalFn(cdp, s => { if(s===".feedback-backdrop")return{x:1,y:1}; const r = document.querySelector(s).getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; }, selector);
+  const p = await evalFn(cdp, s => {
+    const el=document.querySelector(s),r=el.getBoundingClientRect();
+    const x=r.left+r.width/2,y=s===".feedback-backdrop"?(r.top+document.querySelector('.feedback-card').getBoundingClientRect().top)/2:r.top+r.height/2;
+    if(!el.contains(document.elementFromPoint(x,y)))throw Error("控件中心未命中 "+s);
+    return {x,y};
+  }, selector);
   await cdp.call("Input.dispatchMouseEvent", {type:"mousePressed",button:"left",clickCount:1,...p});
   await cdp.call("Input.dispatchMouseEvent", {type:"mouseReleased",button:"left",clickCount:1,...p});
+  if(selector==='.reader-typography-aa')await cdp.evaluate("Promise.all((document.querySelector('.reader-typography-sheet')?.getAnimations()??[]).map(a=>a.finished.catch(()=>{})))",true);
 }
 function space(page) {
   const rect = el => { const r=el.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom}; };

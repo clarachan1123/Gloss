@@ -18,8 +18,9 @@ async function assertFields(c){
   assert(state.disabledType==='boolean','Field HTMLButtonElement.disabled must exist and be boolean',state);
   assert(state.visibleType==='string'&&['true','false'].includes(state.visible),'Field dataset.visible must exist and be a boolean string',state);
 }
-async function click(c,selector){await assertFields(c);const p=await evaluate(c,selector=>{const el=document.querySelector(selector);if(!el)throw Error('Missing '+selector);const r=el.getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};},selector);
-  await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...p});await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...p});await settle(c);}
+async function click(c,selector){await assertFields(c);const p=await evaluate(c,selector=>{const el=document.querySelector(selector);if(!el)throw Error('Missing '+selector);const r=el.getBoundingClientRect();const point={x:r.left+r.width/2,y:r.top+r.height/2};if(!el.contains(document.elementFromPoint(point.x,point.y)))throw Error('Control is obscured: '+selector);return point;},selector);
+  await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...p});await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...p});await settle(c);if(selector==='[aria-label="关闭阅读设置"]')await waitForSheetExit(c);}
+const waitForSheetExit=c=>wait(()=>c.evaluate("!document.querySelector('.reader-typography-sheet')"),'Typography exit');
 async function scroll(c,y){await assertFields(c);await evaluate(c,y=>{window.dispatchEvent(new WheelEvent('wheel'));window.scrollTo({top:y,behavior:'instant'});},y);await frames(c,3);}
 function monitor(){
   const state=window.__g67={frames:0,maxClickable:0,failures:[],maxDelta:0,maxTranslate:0,negative:0};
@@ -101,18 +102,21 @@ async function zeroDisplacement(c,width){await assertFields(c);
 }
 async function closures(c,width){await assertFields(c);
   for(const kind of ['close','outside','escape']){
-    await align(c,11);await revealControls(c,width);
+    await align(c,11);
+    const entry=await c.evaluate("document.querySelector('.reader-typography-floating-aa')?.dataset.visible==='true'?'.reader-typography-floating-aa':'.reader-typography-aa'");
+    await click(c,entry);
     assert(await c.evaluate("document.activeElement.id==='reader-typography-sheet-title'"),'Title focus');
     const before=await c.evaluate("({y:scrollY,panels:[...document.querySelectorAll('.gloss-panel')].map(p=>p.dataset.sentenceIndex)})");
     await c.evaluate('window.__g19.events=[]');
     if(kind==='close')await click(c,'[aria-label="关闭阅读设置"]');
     else if(kind==='outside'){await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x:width/2,y:100});await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,x:width/2,y:100});await settle(c);}
     else {await c.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await c.call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await settle(c);}
+    await waitForSheetExit(c);
     const after=await c.evaluate("({y:scrollY,panels:[...document.querySelectorAll('.gloss-panel')].map(p=>p.dataset.sentenceIndex),closed:!document.querySelector('.reader-typography-sheet'),focus:document.activeElement===document.querySelector('.reader-typography-aa'),events:__g19.events})");
     assert(after.closed&&after.focus&&after.y===before.y&&JSON.stringify(after.panels)===JSON.stringify(before.panels),'Close/focus retains reading '+kind,{before,after});
     assert(after.events.filter(e=>e.event.startsWith('sentence_')||['gloss_abort','gloss_dismiss_early'].includes(e.event)).length===0,'No close/click events',after.events);
   }
-  await scroll(c,0);await revealControls(c,width);await click(c,'.reader-typography-aa');
+  await scroll(c,0);await revealControls(c,width);await click(c,'.reader-typography-aa');await waitForSheetExit(c);
   assert(await c.evaluate("!document.querySelector('.reader-typography-sheet')&&document.activeElement===document.querySelector('.reader-typography-aa')"),'Top toggle and focus');
   await align(c,11);await revealControls(c,width);
   await c.call('Emulation.setDeviceMetricsOverride',{width:768,height:900,deviceScaleFactor:1,mobile:false});await settle(c);
@@ -142,7 +146,10 @@ async function overlays(c,width){await assertFields(c);
   await click(c,'.reader-typography-aa');assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Menu second click opens sheet');await click(c,'[aria-label="关闭阅读设置"]');
   await scroll(c,0);await revealControls(c,width);await evaluate(c,()=>document.querySelector('.reader-settings-feedback').scrollIntoView({block:'nearest'}));await click(c,'.reader-settings-feedback');await align(c,11);
   assert(await c.evaluate("!!document.querySelector('.feedback-card')"),'Feedback open');
-  await click(c,'.reader-typography-aa');assert(await c.evaluate("!document.querySelector('.feedback-card')&&!document.querySelector('.reader-typography-sheet')"),'Feedback first click consumed');
+  const coveredAa=await evaluate(c,()=>{const r=document.querySelector('.reader-typography-aa').getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};});
+  assert(await evaluate(c,({x,y})=>document.elementFromPoint(x,y)?.matches('.feedback-backdrop'),coveredAa),'Feedback backdrop intercepts Aa');
+  for(const type of ['mousePressed','mouseReleased'])await c.call('Input.dispatchMouseEvent',{type,button:'left',clickCount:1,...coveredAa});
+  await wait(()=>c.evaluate("!document.querySelector('.feedback-card')"),'Feedback exit');assert(await c.evaluate("!document.querySelector('.feedback-card')&&!document.querySelector('.reader-typography-sheet')"),'Feedback first click consumed');
   await click(c,'.reader-typography-aa');assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Feedback second click opens sheet');await click(c,'[aria-label="关闭阅读设置"]');
   await c.evaluate('window.__g19.events=[]');await click(c,'.reader-typography-aa');
   assert(await c.evaluate("__g19.events.every(e=>!e.event.startsWith('sentence_')&&!['gloss_abort','gloss_dismiss_early'].includes(e.event))"),'No button reading event');await click(c,'[aria-label="关闭阅读设置"]');

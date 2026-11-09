@@ -17,6 +17,13 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
   const layerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const closeFrame = useRef<number | null>(null);
+  useEffect(() => {
+    if (!closing) return;
+    const timer = window.setTimeout(() => setClosing(false), window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 260);
+    return () => window.clearTimeout(timer);
+  }, [closing]);
   const [copyState, setCopyState] = useState<"ready" | "copied" | "manual">("ready");
   const [body, setBody] = useState("");
   const [contact, setContact] = useState("");
@@ -34,6 +41,7 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     draggedRef.current = false;
     dragRef.current = null; setDragY(0);
+    if (cardRef.current?.classList.contains("feedback-sheet")) setClosing(true);
     setOpen(false);
     setCopyState("ready");
     setStatus(value => value === "success" ? "idle" : value);
@@ -44,11 +52,12 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
 
   useEffect(() => { if (closeRequest > 0) close(); }, [closeRequest, close]);
   useEffect(() => { if (open) onOpen?.(); }, [open, onOpen]);
-  useEffect(() => { if (openRequest > 0) { setStatus(value => value === "success" ? "idle" : value); setOpen(true); } }, [openRequest]);
+  useEffect(() => { if (openRequest > 0) { setStatus(value => value === "success" ? "idle" : value); setClosing(false); setOpen(true); } }, [openRequest]);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (closeFrame.current !== null) cancelAnimationFrame(closeFrame.current);
       copyRequestRef.current++;
       if (timerRef.current !== null) clearTimeout(timerRef.current);
       requestRef.current?.abort();
@@ -161,7 +170,10 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
       dragRef.current = null; setDragY(0);
       if (!drag || event.type === "touchcancel") return;
       const distance = drag.y - drag.start;
-      if (distance > 80 || (distance >= 20 && event.timeStamp - drag.time <= 80 && drag.speed >= .5)) close();
+      if (distance > 80 || (distance >= 20 && event.timeStamp - drag.time <= 80 && drag.speed >= .5)) {
+        if (closeFrame.current !== null) cancelAnimationFrame(closeFrame.current);
+        closeFrame.current = requestAnimationFrame(() => { closeFrame.current = null; close(); });
+      }
     };
     const focus = () => {
       const card = cardRef.current, active = document.activeElement;
@@ -283,11 +295,11 @@ export default function FeedbackButton({ placement = "inline", openRequest = 0, 
   return <span className={"feedback-entry feedback-" + (appearance ?? placement)} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
     <button ref={buttonRef} type="button" className="feedback-button" aria-label="体验反馈" aria-expanded={open} aria-haspopup="dialog" onClick={() => {
       if (open) close();
-      else { setStatus(value => value === "success" ? "idle" : value); setOpen(true); }
+      else { setStatus(value => value === "success" ? "idle" : value); setClosing(false); setOpen(true); }
     }}>{placement === "reader" || placement === "shelf" || appearance === "landing" ? <><svg className="feedback-shelf-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg><span className="feedback-desktop-label">体验反馈</span>{placement !== "reader" && <span className="feedback-mobile-label">{appearance === "landing" ? "体验反馈" : "反馈"}</span>}</> : "体验反馈"}</button>
-    {open && createPortal(<div ref={layerRef} className="feedback-layer">
+    {(open || closing) && createPortal(<div ref={layerRef} className="feedback-layer" data-closing={closing || undefined} inert={closing} aria-hidden={closing || undefined}>
       {mobile && <div className="feedback-backdrop" aria-hidden="true" />}
-      <div ref={cardRef} className={"feedback-card" + (mobile ? " feedback-sheet" : "")} onAnimationEnd={event => { if (event.target === event.currentTarget) event.currentTarget.dataset.entered = "true"; }} style={{ translate: `0 ${dragY}px` }} data-dragging={dragRef.current !== null || undefined}
+      <div ref={cardRef} className={"feedback-card" + (mobile ? " feedback-sheet" : "")} onAnimationEnd={event => { if (event.target === event.currentTarget) { if (event.animationName === "reader-sheet-out") setClosing(false); else event.currentTarget.dataset.entered = "true"; } }} style={{ translate: `0 ${dragY}px` }} data-dragging={dragRef.current !== null || undefined}
         onPointerDownCapture={() => { draggedRef.current = false; }}
         onClickCapture={event => { if (draggedRef.current) { draggedRef.current = false; event.preventDefault(); event.stopPropagation(); } }} role="dialog" aria-label="体验反馈" aria-modal={mobile || undefined} tabIndex={-1}
         onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}

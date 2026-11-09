@@ -208,11 +208,36 @@ function assertSavedSection(f,reference=null){
     if(reference?.rows[index])assert(row.font===reference.rows[index].font&&row.weight===reference.rows[index].weight,'G76收藏条目字体保持',row);
   }
 }
+function typographyDrawerFacts(){
+  const sheet=document.querySelector('.reader-typography-sheet');
+  if(!sheet)return null;
+  const grip=sheet.querySelector('.reader-typography-grip'),backdrop=document.querySelector('.reader-typography-backdrop');
+  const style=getComputedStyle(sheet);
+  const token=expression=>{
+    const swatch=document.createElement('span');
+    swatch.style.color=expression;sheet.append(swatch);
+    const value=getComputedStyle(swatch).color;swatch.remove();return value;
+  };
+  const rect=grip?.getBoundingClientRect(),header=sheet.querySelector('.reader-typography-sheet-header').getBoundingClientRect();
+  return {
+    clientHeight:sheet.clientHeight,radius:[style.borderTopLeftRadius,style.borderTopRightRadius,style.borderBottomLeftRadius,style.borderBottomRightRadius],
+    background:style.backgroundColor,paper:token('var(--paper-main)'),shadow:style.boxShadow,shadowColor:token('color-mix(in srgb, var(--ink) 12%, transparent)'),
+    grip:rect&&[rect.width,rect.height,getComputedStyle(grip).borderRadius,getComputedStyle(grip).marginBottom,getComputedStyle(grip).backgroundColor,rect.left+rect.width/2-header.left-header.width/2],
+    rule:token('var(--rule)'),backdrop:backdrop&&[backdrop.getBoundingClientRect().top,getComputedStyle(backdrop).backgroundColor],
+    top:document.querySelector('.shell>.col-left').getBoundingClientRect().bottom,shade:token('color-mix(in srgb, var(--ink) 28%, transparent)'),
+    duration:style.animationDuration,expectedDuration:matchMedia('(prefers-reduced-motion: reduce)').matches?'0s':'0.22s'
+  };
+}
+function assertTypographyDrawer(f){
+  assert(f&&f.radius.join('/')==='16px/16px/0px/0px'&&f.background===f.paper&&f.shadow===f.shadowColor+' 0px -6px 24px 0px','G76 排版抽屉外观',f);
+  assert(f.grip?.slice(0,5).join('/')===[36,4,'2px','10px',f.rule].join('/')&&Math.abs(f.grip[5])<=.5,'G76 排版抽屉拖动条',f);
+  assert(f.backdrop?.[0]===f.top&&f.backdrop[1]===f.shade&&f.duration===f.expectedDuration,'G76 排版抽屉压暗层与入场动画',f);
+}
 async function snapshot(c,checkMargins=true){
   await c.evaluate('Promise.all([...document.querySelectorAll(".gloss-block,.explain-surface")].flatMap(el=>el.getAnimations({subtree:true})).filter(animation=>animation.animationName==="gloss-block-in").map(animation=>animation.finished.catch(()=>{})))');
   await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});await settle(c);
   await checkBranding(c);
-  const white=await evaluate(c,whiteBlockFacts),ui=await evaluate(c,g76UIFacts);
+  const white=await evaluate(c,whiteBlockFacts),ui=await evaluate(c,g76UIFacts),typography=await evaluate(c,typographyDrawerFacts);
   const result=await evaluate(c,()=>{
     for(const a of document.getAnimations()){a.pause();a.currentTime=0;}
     const skip=new Set(['SCRIPT','STYLE','LINK','META','TITLE','NEXT-ROUTE-ANNOUNCER']);
@@ -220,12 +245,12 @@ async function snapshot(c,checkMargins=true){
     const newVariables=new Set(['--brand-english','--brand-lockup','--font-brand','--font-brand-chinese','--saved-tag-gloss-bg','--saved-tag-gloss-fg','--saved-tag-explain-bg','--saved-tag-explain-fg']);
     const selector='.action-row-save,.action-row-explain,.action-row-notice,.landing-step-answer,.landing-demo-step-text,.mode-label,.reader-saved-empty,.saved-empty,.side-section[aria-labelledby="saved-title"]>.side-empty';
     const protectedNode=el=>el.matches('.reader-body,.reader-body-reader,.sentence,.gloss-panel-text,.explain-result-text,.shell,.col-middle')||!!el.closest('.sentence,.gloss-panel-text,.explain-result-text');
-    const nodes=[...document.querySelectorAll('html,body,body *')].filter(el=>!skip.has(el.tagName)&&!el.closest(separate)&&!el.matches('.gloss-block'));
+    const nodes=[...document.querySelectorAll('html,body,body *')].filter(el=>!skip.has(el.tagName)&&!el.closest(separate)&&!el.matches('.gloss-block,.reader-typography-sheet,.reader-typography-sheet-header,.reader-typography-grip,.reader-typography-backdrop'));
     const readStyles=el=>[null,'::before','::after'].map(p=>{const s=getComputedStyle(el,p);return Object.fromEntries([...s].filter(k=>k!=='--reader-gloss-font-size'&&!newVariables.has(k)).map(k=>[k,s.getPropertyValue(k)]));});
     const box=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return{x:r.x,y:r.y,w:r.width,h:r.height,visible:r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none',scroll:el.scrollWidth,client:el.clientWidth};};
     const panels=[...document.querySelectorAll(".gloss-panel")];
     const rows=nodes.map((el,i)=>({key:i+':'+el.tagName+':'+(el.tagName==='HTML'?'':el.className),styles:readStyles(el),derived:getComputedStyle(el).getPropertyValue('--reader-gloss-font-size'),box:box(el),viewport:innerWidth,autoMargins:window.__g70.autoMarginFacts(el),g76:{
-      savedSection:el.matches('[aria-labelledby="saved-title"]'),savedHeading:el.matches('.reader-saved-heading'),savedEmpty:el.matches('[aria-labelledby="saved-title"]>.side-empty'),
+      typographyHint:el.matches(".reader-typography-sheet .reader-sr-only"),savedSection:el.matches('[aria-labelledby="saved-title"]'),savedHeading:el.matches('.reader-saved-heading'),savedEmpty:el.matches('[aria-labelledby="saved-title"]>.side-empty'),
       panel:el.matches(".gloss-panel")?panels.indexOf(el):null,inlinePanel:el.matches(".gloss-panel-inline:has(> .gloss-block, > .explain-result)"),
       panels:panels.map((panel,id)=>el===panel||el.contains(panel)?id:null).filter(id=>id!==null),
       parentPanels:panels.map((panel,id)=>el.parentElement?.contains(panel)?id:null).filter(id=>id!==null),
@@ -255,7 +280,7 @@ async function snapshot(c,checkMargins=true){
     }finally{for(const [node,before] of changes)node.nodeValue=before;}
     return rows;
   });
-  result[0].g76Bundle={white,ui,saved:await evaluate(c,savedSectionFacts)};
+  result[0].g76Bundle={white,ui,typography,saved:await evaluate(c,savedSectionFacts)};
   if(checkMargins)await autoMarginNegatives(c,result);
   return result;
 }
@@ -309,6 +334,13 @@ function textSizeNegatives(base,actual,label){
 function projectG76Styles(base,actual,label,negative=true){
   const width=actual[0].viewport,reference=base[0].g76Bundle,current=actual[0].g76Bundle;
   assertWhiteBlocks(reference.white,current.white,width);assertG76UI(reference.ui,current.ui,width);if(width>=768)assertSavedSection(current.saved,reference.saved);
+  if(label.endsWith('/mobileDrawer')){
+    assertTypographyDrawer(current.typography);
+    const wrong=structuredClone(current.typography);wrong.radius[0]='0px';
+    let detected=false;try{assertTypographyDrawer(wrong);}catch{detected=true;}
+    assert(detected,'排版抽屉去圆角负对照');
+    report.negative.push({adaptation:label+'-drawer-radius',detected});
+  }
   const projected=structuredClone(base);
   assert(projected.length===actual.length,"G76结构规范化后的节点数",{label,base:projected.length,actual:actual.length});
   const deltas=new Map();
@@ -333,6 +365,20 @@ function projectG76Styles(base,actual,label,negative=true){
     if(derived&&dy!==0)assert(Math.abs(dy-sum(a.g76.panels))<=.5,"G76容器增高等于子面板尺寸差",{label,key:a.key,actual:dy,panels:sum(a.g76.panels)});
     for(let p=0;p<3;p++)for(const property of Object.keys(a.styles[p])){
       const before=b.styles[p][property],after=a.styles[p][property];if(before===after)continue;
+      if(a.g76.typographyHint&&p===0&&label.endsWith('/mobileDrawer')&&['top','bottom','inset-block-start','inset-block-end'].includes(property)){
+        const gripHeight=current.typography.grip[1]+parseFloat(current.typography.grip[3]);
+        const fromBottom=property==='bottom'||property==='inset-block-end';
+        const heightDifference=current.typography.clientHeight-reference.typography.clientHeight;
+        const expected=fromBottom?heightDifference-gripHeight:gripHeight;
+        const matches=value=>Math.abs(parseFloat(value)-parseFloat(before)-expected)<=.5;
+        assert(matches(after),'排版抽屉辅助文字仅随拖动条与内容盒高度推移',{label,property,before,after,expected});
+        if(negative){
+          const detected=!matches(parseFloat(after)+1);
+          assert(detected,'排版抽屉辅助文字额外位移负对照');
+          report.negative.push({adaptation:label+'-drawer-hint-'+property,detected});
+        }
+        b.styles[p][property]=after;continue;
+      }
       if(a.g76.blockEntry&&p===0&&["animation-name","animation-duration","animation-timing-function"].includes(property)){
         const expected={"animation-name":"gloss-block-in","animation-duration":"0.22s","animation-timing-function":"cubic-bezier(0.2, 0.7, 0.2, 1)"};
         assert(a.g76.motion&&after===expected[property],"G76块进入动画按设计",{label,key:a.key,property,after});
@@ -558,14 +604,14 @@ async function revealChecks(c,nav,own,width,negative=false){
     console.log(JSON.stringify({criterionE:{...label,negative,fall,total,before:before.count,first:first.count,final:rows.at(-1).count,frames:t.frames.length}}));
   }
 }
-async function suite(origin,width,candidate,revealNegative=false){return launch(origin,width,async(c,nav,own)=>{windowDocCache.set(c,await evaluate(c,id=>JSON.parse(localStorage.getItem('gloss:doc:'+id)),own.split('/').at(-1)));const styles=await defaultStates(c,nav,own,width);unchangedStylesNegative(styles.imported,width);const pointsResult=await points(c,nav,own);let hashes;if(width===1024)hashes=await layoutHash(c,nav,own);if(candidate){for(const size of SIZES)for(const saved of [false,true])for(const shape of ['inline','bubble']){await reset(c,nav,own,size);await openPanel(c,0);if(saved)await click(c,'.action-row-save');if(shape==='bubble'){await bubble(c,width);}await checkSize(c,size);}await locks(c,nav,own,width);await negative(c,nav,own,width);}if([375,768,1280].includes(width)&&(candidate||revealNegative))await revealChecks(c,nav,own,width,revealNegative);return{styles,points:pointsResult,hashes};},revealNegative);}
+async function suite(origin,width,candidate,revealNegative=false,baselineStyles=null){return launch(origin,width,async(c,nav,own)=>{windowDocCache.set(c,await evaluate(c,id=>JSON.parse(localStorage.getItem('gloss:doc:'+id)),own.split('/').at(-1)));const styles=await defaultStates(c,nav,own,width);unchangedStylesNegative(styles.imported,width);if(baselineStyles)for(const state of Object.keys(baselineStyles)){const label=width+"/"+state;compareStyles(projectG76Styles(baselineStyles[state],styles[state],label),styles[state],label);}const pointsResult=await points(c,nav,own);let hashes;if(width===1024)hashes=await layoutHash(c,nav,own);if(candidate){for(const size of SIZES)for(const saved of [false,true])for(const shape of ['inline','bubble']){await reset(c,nav,own,size);await openPanel(c,0);if(saved)await click(c,'.action-row-save');if(shape==='bubble'){await bubble(c,width);}await checkSize(c,size);}await locks(c,nav,own,width);await negative(c,nav,own,width);}if([375,768,1280].includes(width)&&(candidate||revealNegative))await revealChecks(c,nav,own,width,revealNegative);return{styles,points:pointsResult,hashes};},revealNegative);}
 
 async function diagnose(origin,order){return launch(origin,768,async(c,nav,own)=>{await reset(c,nav,own,17.5);await revealControls(c,768);await align(c,4);const ref=await c.evaluate('__g19.reference()');await evaluate(c,key=>__g70.start(key),ref.key);const steps=[];for(const value of [21,15]){const start=c.g70Diagnostics.length;await change(c,'fontSize',value);steps.push({value,diagnostic:c.g70Diagnostics.slice(start),state:await c.evaluate('({script:__g70.characterRect(__g70.trace.key),scriptBlocked:__g70.obstructed(__g70.trace.key),scrollY,observations:__g70.trace.observations})')});}await settle(c);const trace=await c.evaluate('__g70.end()');const row={origin,order,scriptKey:ref.key,dx:trace.after.x-trace.before.x,dy:trace.after.y-trace.before.y,steps,trace};console.log(JSON.stringify({diagnosis:row}));return row;});}
 if(process.env.G70_DIAG_ONLY==='1'){const rows=[];for(let order=1;order<=6;order++)rows.push(await diagnose(order%2?'http://127.0.0.1:3482':'http://127.0.0.1:3483',order));await writeFile(resolve(import.meta.dirname,'../tmp-g70-diagnosis.json'),JSON.stringify(rows,null,2));console.log('G-70 diagnosis collection completed');}
 else {
 
 const baselineOrigin=process.env.G70_BASELINE_ORIGIN??'http://127.0.0.1:3483',candidateOrigin=process.env.G70_CANDIDATE_ORIGIN??'http://127.0.0.1:3482';
-for(const width of WIDTHS){console.log(JSON.stringify({width,stage:'baseline-pass-1'}));const b1=await suite(baselineOrigin,width,false,true);console.log(JSON.stringify({width,stage:'baseline-pass-2'}));const b2=await suite(baselineOrigin,width,false);console.log(JSON.stringify({width,stage:'candidate'}));const a=await suite(candidateOrigin,width,true);for(const state of Object.keys(b1.styles)){compareStyles(projectG76Styles(b1.styles[state],a.styles[state],width+'/'+state),a.styles[state],width+'/'+state);}comparePoints(b1.points,b2.points,a.points,width);if(width===1024){assert(JSON.stringify(a.hashes)===JSON.stringify(b1.hashes),'Default 1024 visible layout hashes',{a:a.hashes,b:b1.hashes});report.hashes.push({width,...a.hashes});}console.log(JSON.stringify({width,completed:true,counts:{A:report.A,B:report.B,C:report.C,D:report.D,E:report.E}}));}
+for(const width of WIDTHS){console.log(JSON.stringify({width,stage:'baseline-pass-1'}));const b1=await suite(baselineOrigin,width,false,true);console.log(JSON.stringify({width,stage:'baseline-pass-2'}));const b2=await suite(baselineOrigin,width,false);console.log(JSON.stringify({width,stage:'candidate'}));const a=await suite(candidateOrigin,width,true,false,b1.styles);comparePoints(b1.points,b2.points,a.points,width);if(width===1024){assert(JSON.stringify(a.hashes)===JSON.stringify(b1.hashes),'Default 1024 visible layout hashes',{a:a.hashes,b:b1.hashes});report.hashes.push({width,...a.hashes});}console.log(JSON.stringify({width,completed:true,counts:{A:report.A,B:report.B,C:report.C,D:report.D,E:report.E}}));}
 console.log(JSON.stringify(report));
 console.log('G-70 gloss-size checks passed');
 

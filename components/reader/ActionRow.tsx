@@ -50,13 +50,14 @@ export default function ActionRow({ saved, disabled, onToggle, onFold, recall, o
   }, []);
 
   async function toggle() {
+    if (disabled || pending) return;
     setPending(true);
     try { const result = await onToggle(); if (result === "E1" || result === "E2") setNotice(result === "E1" ? "存储已满，没能收藏，仍可继续阅读。" : "这次没能收藏，仍可继续阅读。"); }
     finally { setPending(false); }
   }
   return <div ref={rowRef} className="action-row" data-block-actions={block} data-action-placement="below">
     {!selectionOnly && <div className="action-row-recall-slot">{recall && <button type="button" className="action-row-explain action-row-recall" data-generated={generated} data-tip={block === "explain" ? "看白话" : generated ? "看脉络解读" : "生成脉络解读"} aria-label={recall} onClick={event => {event.stopPropagation();onRecall?.();}}><ActionIcon path={block === "explain" ? speechPath : bulbPath} /><span className="action-row-recall-label">{recall}</span></button>}</div>}
-    <button type="button" className="action-row-save" aria-label={saved ? "取消收藏" : "收藏"} aria-pressed={saved} data-tip={saved ? "已收藏" : "收藏"} disabled={disabled || pending} onClick={event=>{event.stopPropagation();void toggle();}}><ActionIcon path="M6 3h12v18l-6-4-6 4z" filled={saved} /></button>
+    <button type="button" className="action-row-save" aria-label={disabled && block === "explain" ? "生成后才能收藏" : saved ? "已收藏" : "收藏"} aria-pressed={saved} aria-disabled={disabled || pending} data-tip={disabled && block === "explain" ? "生成后才能收藏" : saved ? "已收藏" : "收藏"} disabled={disabled || pending} onClick={event=>{event.stopPropagation();void toggle();}}><ActionIcon path="M6 3h12v18l-6-4-6 4z" filled={saved} /></button>
     <button type="button" className="action-row-fold" data-tip="收起" aria-label={block === "explain" ? "收起脉络解读" : "收起白话"} onClick={event=>{event.stopPropagation();onFold?.();}}><ActionIcon path="M6 15l6-6 6 6" /></button>
     {notice && <span className="action-row-notice" role="status">{notice}</span>}
   </div>;

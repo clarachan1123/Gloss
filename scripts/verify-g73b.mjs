@@ -264,9 +264,22 @@ try{
  const closed=()=>!document.querySelector('.mobile-swipe-open')&&location.pathname==='/';
  await c.evaluate('window.__g73bEvents=[]');
  for(const [dx,dy]of[[-47,0],[-9,0],[-40,60],[-48,45]]){await gesture('.mobile-current',dx,dy);await check('不误开 '+dx+'/'+dy,closed);}
- // 故障注入：阻断短横移的处理，真实触摸应误进阅读页，同一 closed 判据必须检出。
+ const shortMouseDrag=async()=>{
+  const p=await evaluate(()=>{
+   const el=document.querySelector('.mobile-current'),r=el.getBoundingClientRect();
+   const x=r.left+r.width/2,y=r.top+r.height/2;
+   if(!el.contains(document.elementFromPoint(x,y))||!el.contains(document.elementFromPoint(x-9,y)))throw Error('短横移路径未命中书架链接');
+   return{x,y};
+  });
+  await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,...p});
+  await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',button:'none',buttons:1,x:p.x-9,y:p.y});
+  await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',buttons:0,clickCount:1,x:p.x-9,y:p.y});
+  await sleep(220);
+ };
+ await shortMouseDrag();await check('9px 鼠标横移不误开',closed);
+ // 阻断同一 pointermove 处理，使用真实鼠标释放生成点击，保留短横移和原导航判据。
  await evaluate(()=>{window.__blockMove=e=>{if(e.target.closest('.mobile-current'))e.stopImmediatePropagation();};document.addEventListener('pointermove',window.__blockMove,true);});
- try{await gesture('.mobile-current',-9,0);negatives++;assert(!await evaluate(closed),'9px误导航负对照未检出');detected++;}
+ try{await shortMouseDrag();negatives++;assert(!await evaluate(closed),'9px误导航负对照未检出');detected++;}
  finally{await evaluate(()=>document.removeEventListener('pointermove',window.__blockMove,true));await c.call('Page.navigate',{url:origin+'/'});await wait("!!document.querySelector('.mobile-current')",'短横移负对照恢复');}
  await c.evaluate('window.__g73bEvents=[]');
  await negativeRuntime('低阈值误展开',closed,()=>document.querySelector('.mobile-swipe').classList.add('mobile-swipe-open'),()=>document.querySelector('.mobile-swipe').classList.remove('mobile-swipe-open'));

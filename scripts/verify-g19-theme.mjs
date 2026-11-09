@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 const ORIGIN=process.env.G19_THEME_ORIGIN??'http://localhost:3472';
 process.env.G19_IMPORT_ONLY='1';process.env.G19_ORIGIN=ORIGIN;
-const {Cdp,setup,ready,freePort,settle,revealControls,align,open,save,evaluate,ownedShelfCheck,measured}=await import('./verify-g19.mjs');
+const {Cdp,setup,ready,freePort,settle,revealControls,align,open,save,evaluate,ownedShelfCheck,measured,clickControl}=await import('./verify-g19.mjs');
 const ROOT=resolve(import.meta.dirname,'..'), KEY='gloss:settings:theme';
 const EDGE='C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const LIGHT_THEMES=['parchment','moon-white','eye-green'];
@@ -20,7 +20,7 @@ const TOKENS=Object.fromEntries(THEMES.map(t=>{const p=CSS.indexOf(`[data-theme=
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const assert=(v,label,detail)=>{if(!v)throw Error(label+(detail===undefined?'':': '+JSON.stringify(detail)));};
 async function wait(c,expression){for(let i=0;i<200;i++){if(await c.evaluate(expression))return;await pause(100);}throw Error('Timeout: '+expression);}
-async function choose(c,width,theme){await evaluate(c,(width,theme)=>{const scope=document.querySelector(width<768?'.reader-typography-sheet':'.col-right');scope.querySelector(`[data-reader-theme="${theme}"]`).click();},width,theme);await settle(c);}
+async function choose(c,width,theme){await clickControl(c,`${width<768?'.reader-typography-sheet':'.col-right'} [data-reader-theme="${theme}"]`);await settle(c);}
 async function prepare(c,width){
   await ownedShelfCheck(c,width);if(!await c.evaluate("localStorage.getItem('gloss:saved:sample')"))await save(c,5);
   // The shipped sample has no marked terms. Preserve its saved record format, adding a test-only term through the real renderer.
@@ -43,7 +43,7 @@ async function colors(c,theme,from,page,width){
       check('分隔线','.col-right','borderLeftColor','--rule');check('设置面板','.reader-tool > span:last-child','color','--gloss');
       check('主题控件','.reader-paper-options','color','--ink');check('反馈按钮底色','.feedback-button','backgroundColor',width>=768?'transparent':'--ink');
       check('反馈按钮文字','.feedback-button','color',width>=768?'--ink':'--paper-main');
-      if(width<768){check('Aa面板','.reader-typography-sheet','backgroundColor','--paper-side');check('Aa按钮边框','.reader-typography-aa','borderTopColor','--rule');}
+      if(width<768){check('Aa面板','.reader-typography-sheet','backgroundColor','--paper-main');check('Aa按钮边框','.reader-typography-aa','borderTopColor','--rule');}
     }else if(page==='shelf'){
       check('书架页面','body','backgroundColor','--paper-main');check('书架文字','.shelf-page','color','--ink');
     }else{
@@ -55,7 +55,18 @@ async function colors(c,theme,from,page,width){
     return rows;
   },theme,from,page,width,TOKENS);
   console.log(JSON.stringify({width,direction:from+'>'+theme,page,colors:result}));
-  originalChecks+=result.length;assert(result.every(r=>r.passed),'Target token mismatch',result.filter(r=>!r.passed));return result;
+  originalChecks+=result.length;assert(result.every(r=>r.passed),'Target token mismatch',result.filter(r=>!r.passed));
+  if(page==='reader'&&width<768){
+    const sheet=result.find(row=>row.selector==='.reader-typography-sheet');
+    const wrong=await evaluate(c,selector=>{
+      const el=document.querySelector(selector),previous=el.style.backgroundColor;
+      try{el.style.backgroundColor='var(--paper-side)';return getComputedStyle(el).backgroundColor;}
+      finally{el.style.backgroundColor=previous;}
+    },sheet.selector);
+    assert(wrong!==sheet.expected,'Aa 背景色退回旧值的负对照');
+    extraChecks++;
+  }
+  return result;
 }
 async function feedbackOutlineNegative(c,width){
   if(width<768)return;
@@ -75,11 +86,21 @@ async function landingFeedbackNegative(c,width){
   finally{await c.evaluate("document.querySelector('.landing-header .feedback-button').style.removeProperty('background-color')");}
 }
 async function hover(c,width,theme,from){
-  const r=await c.evaluate('window.__g19.reference()');await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:r.x+1,y:r.y+1});await settle(c);
+  const reopen=width<768&&await c.evaluate("!!document.querySelector('.reader-typography-sheet:not([data-closing])')");
+  if(reopen){
+    await clickControl(c,'[aria-label="关闭阅读设置"]');
+    await wait(c,"!document.querySelector('.reader-typography-sheet')");
+  }
+  const r=await evaluate(c,()=>{
+    const glyph=__g19.glyphs().find(({char,x,y})=>char.trim()&&document.elementFromPoint(x+1,y+1)?.closest('.reader-body .sentence'));
+    if(!glyph)throw Error('悬停缺少可命中的正文');
+    return glyph;
+  });await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:r.x+1,y:r.y+1});await settle(c);
   const actual=await c.evaluate("getComputedStyle(document.querySelector('.sentence-hover')).color");
   const hex=TOKENS[theme]['--hover'],expected=`rgb(${[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)).join(', ')})`;
   originalChecks++;assert(actual===expected,'Hover target token',{actual,expected});console.log(JSON.stringify({width,direction:from+'>'+theme,element:'悬停文字',actual,expected,passed:true}));
   await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});await settle(c);
+  if(reopen)await revealControls(c,width);
 }
 async function ledge(c,width,theme,from,baseline=false){
   const facts=()=>evaluate(c,(theme,width)=>{
@@ -149,8 +170,8 @@ async function landingSecondaryNegative(c,width,theme){
   finally{await c.evaluate("document.querySelector('.landing-secondary').style.removeProperty('border-bottom-width')");}
 }
 async function appearance(c,width,value){
-  if(width<768)await evaluate(c,value=>document.querySelector(`.reader-typography-sheet [data-reader-appearance="${value}"]`).click(),value);
-  else for(let i=0;i<3&&await c.evaluate("localStorage.getItem('gloss:settings:appearance')||'system'")!==value;i++)await c.evaluate("document.querySelector('.reader-appearance-cycle').click()");
+  if(width<768)await clickControl(c,`.reader-typography-sheet [data-reader-appearance="${value}"]`);
+  else for(let i=0;i<3&&await c.evaluate("localStorage.getItem('gloss:settings:appearance')||'system'")!==value;i++)await clickControl(c,'.reader-appearance-cycle');
   await settle(c);
 }
 async function paperVisibility(c,width,dark){
@@ -168,9 +189,9 @@ async function surfaceChecks(c,width,theme){
   await expectRoles(c,theme,[['正文','.reader-body','color','--text-body'],['主底','.col-main','backgroundColor','--paper-main'],['侧底','.col-right','backgroundColor','--paper-side'],['术语','.gloss-term','color','--term'],['描边',width<768?'.reader-typography-sheet .reader-typography-reset':'.settings-cache-button','borderTopColor','--control-border']],'reader');
   await hover(c,width,theme,theme);originalChecks--;
   await paperVisibility(c,width,theme==='dark');
-  if(width<768) {await c.evaluate("document.querySelector('[aria-label=\"关闭阅读设置\"]').click()");await settle(c);}
-  if(await c.evaluate("!!document.querySelector('.reader-typography-popover')"))await c.evaluate("document.querySelector('.settings-typography-toggle').click()");
-  if(width<768){await revealControls(c,width);await c.evaluate("document.querySelector('.reader-settings-feedback').click()");}else await c.evaluate("document.querySelector('.feedback-button').click()");await wait(c,"!!document.querySelector('.feedback-card textarea')");
+  if(width<768) {await clickControl(c,'[aria-label="关闭阅读设置"]');await settle(c);}
+  if(await c.evaluate("!!document.querySelector('.reader-typography-popover')"))await clickControl(c,'.settings-typography-toggle');
+  if(width<768){await revealControls(c,width);await clickControl(c,'.reader-settings-feedback');}else await clickControl(c,'.feedback-button');await wait(c,"!!document.querySelector('.feedback-card textarea')");
   await expectRoles(c,theme,[['卡片','.feedback-card','backgroundColor','--paper-main'],['输入','.feedback-form textarea','backgroundColor','--feedback-input-bg'],['占位','.feedback-form textarea','color','--feedback-placeholder','::placeholder'],['主按钮','.feedback-send','backgroundColor','--ink'],['主按钮字','.feedback-send','color','--paper-main']],'feedback');
   await evaluate(c,()=>{const t=document.querySelector('.feedback-form textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'甲'.repeat(1001));t.dispatchEvent(new Event('input',{bubbles:true}));});await settle(c);
   await expectRoles(c,theme,[['超字数','.feedback-error','color','--feedback-error']],'feedback-error');await feedbackRoleNegatives(c,width,theme);
@@ -418,7 +439,7 @@ async function run(width){
         await colors(c,to,from,'reader',width);await hover(c,width,to,from);
         const duration=await c.evaluate('getComputedStyle(document.documentElement).transitionDuration');assert(duration==='0.18s','Missing switch transition',duration);
         if(width<768)assert(await c.evaluate("document.querySelector('.reader-typography-sheet').getBoundingClientRect().height<=450"),'Mobile theme sheet exceeds half');
-        await c.evaluate("document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover'} .reader-typography-reset`).click()");await settle(c);
+        await clickControl(c,`${width<768?'.reader-typography-sheet':'.reader-typography-popover'} .reader-typography-reset`);await settle(c);
         assert(await c.evaluate('document.documentElement.dataset.theme')===to,'Typography reset changed theme');
         console.log(JSON.stringify({width,checkpoint:'page-colors',direction:from+'>'+to}));await pages(c,width,from,to);
       }

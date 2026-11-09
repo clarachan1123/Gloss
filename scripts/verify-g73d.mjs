@@ -5,7 +5,7 @@ import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 process.env.G19_IMPORT_ONLY='1';
-const {Cdp,evaluate}=await import('./verify-g19.mjs');
+const {Cdp,evaluate,clickControl}=await import('./verify-g19.mjs');
 const profile=await mkdtemp(join(tmpdir(),'gloss-g73d-'));
 const edge=spawn('C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',['--headless=new','--disable-gpu','--no-sandbox','--no-first-run','--disable-sync','--user-data-dir='+profile,'--remote-debugging-port=9506','--remote-allow-origins=*','about:blank'],{stdio:'ignore',windowsHide:true});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -14,7 +14,7 @@ let c,scenes=0,negatives=0,maxDelta=0;
 const ev=(fn,...args)=>evaluate(c,fn,...args);
 async function wait(fn,label){const end=Date.now()+20000;while(Date.now()<end){if(await fn())return;await sleep(50);}throw Error('等待失败 '+label);}
 async function settle(){await ev(()=>document.fonts.ready);await ev(()=>new Promise(r=>setTimeout(()=>requestAnimationFrame(()=>requestAnimationFrame(r)),400)));}
-async function click(sel){await ev(sel=>{const el=[...document.querySelectorAll(sel)].find(e=>e.getClientRects().length);if(!el)throw Error('缺少可见控件 '+sel);el.click();},sel);await settle();}
+async function click(sel){await clickControl(c,sel);await settle();}
 function geometry(){
  const rect=r=>[r.left,r.top+scrollY,r.right,r.bottom+scrollY];
  const out={main:rect(document.querySelector('.col-main').getBoundingClientRect()),body:rect(document.querySelector('.reader-body').getBoundingClientRect()),chars:{}};
@@ -128,7 +128,15 @@ async function jumpHighlights(){
  await negative('收起不清除',()=>!document.querySelector('[data-jump-highlight="true"]'),()=>document.querySelector('.saved-link').setAttribute('data-jump-highlight','true'),()=>document.querySelector('.saved-link').removeAttribute('data-jump-highlight'));
 }
 // 合成完整触摸链路并固定事件时间，避免机器速度影响甩动边界。
-async function drag(sel,distance,fast=false){await ev((sel,distance,fast)=>{const target=document.querySelector(sel);const duration=fast?20:1000;for(const [type,y,time]of [['touchstart',0,0],['touchmove',distance,duration],['touchend',distance,duration+1]]){const e=new Event(type,{bubbles:true,cancelable:true});Object.defineProperties(e,{touches:{value:type==='touchend'?[]:[{clientY:y}]},timeStamp:{value:time+1000}});target.dispatchEvent(e);}},sel,distance,fast);await settle();}
+async function drag(sel,distance,fast=false){
+ const point=await ev(sel=>{const el=document.querySelector(sel),r=el.getBoundingClientRect();const x=r.left+r.width/2,y=r.top+r.height/2;if(!el.contains(document.elementFromPoint(x,y)))throw Error('拖动起点未命中 '+sel);return{x,y};},sel);
+ const start=Date.now()/1000,move=start+(fast?0.020:1);
+ await c.call('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point],timestamp:start});
+ await c.call('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:point.x,y:point.y+distance}],timestamp:move});
+ await c.call('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[],timestamp:move+0.001});
+ await settle();
+ await sleep(600);
+}
 async function openSettings(){await click('.reader-typography-aa');}
 async function openFeedback(){await openSettings();await click('.reader-settings-feedback');}
 function state(){return{focus:document.activeElement?.className,overflow:document.documentElement.style.overflow,inert:[...document.body.children].filter(e=>e.inert).length,aa:document.querySelector('.reader-typography-aa').getAttribute('aria-expanded')};}

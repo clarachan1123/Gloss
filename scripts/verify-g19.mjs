@@ -103,17 +103,17 @@ function setup() {
   };
 }
 async function revealControls(c,width) {
-  const more=async()=>{if(width<768)await c.evaluate("(()=>{const b=document.querySelector('.reader-more-typography');if(b?.getAttribute('aria-expanded')==='false')b.click()})()");};
-  if(width<768) {
-    if(await c.evaluate("!!document.querySelector('.reader-typography-sheet')")){await more();return;}
-    const selector=await c.evaluate("document.querySelector('.reader-typography-floating-aa')?.dataset.visible==='true'?'.reader-typography-floating-aa':'.reader-typography-aa'");
-    const point=await evaluate(c,selector=>{const b=document.querySelector(selector),r=b.getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};},selector);
-    await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});
-    await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
-    await settle(c);assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Visible Aa opens shared sheet');await more();return;
+  if(width<768){
+    if(!await c.evaluate("!!document.querySelector('.reader-typography-sheet')")){
+      const selector=await c.evaluate("document.querySelector('.reader-typography-floating-aa')?.dataset.visible==='true'?'.reader-typography-floating-aa':'.reader-typography-aa'");
+      await clickControl(c,selector);await settle(c);
+      assert(await c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'Visible Aa opens shared sheet');
+    }
+    if(await c.evaluate("!!document.querySelector('.reader-more-typography[aria-expanded=false]')"))await clickControl(c,'.reader-more-typography');
+    return;
   }
-  await evaluate(c,width=>{const selector=width<768?'.reader-typography-aa':'.settings-typography-toggle',button=document.querySelector(selector);
-    if(button.getAttribute('aria-expanded')!=='true')button.click();},width); await settle(c);
+  if(await c.evaluate("document.querySelector('.settings-typography-toggle').getAttribute('aria-expanded')!=='true'"))await clickControl(c,'.settings-typography-toggle');
+  await settle(c);
 }
 async function align(c,index=11) {
   await evaluate(c,index=>{if(innerWidth<768)dispatchEvent(new WheelEvent('wheel'));const glyph=window.__g19.glyphs().find(g=>g.index===index&&g.char.trim());window.scrollTo({top:scrollY+glyph.y-(innerWidth<768?document.querySelector('.col-left').getBoundingClientRect().bottom+36:36),behavior:'instant'});},index); await settle(c);
@@ -121,12 +121,24 @@ async function align(c,index=11) {
 async function change(c,key,value) {
   if(key==='fontSize'&&await c.evaluate('innerWidth<768')){
     await revealControls(c,375);
-    await evaluate(c,async value=>{const text=()=>parseFloat(document.querySelector('.reader-size-stepper output').textContent);while(text()!==value){const label=text()<value?'字号增大':'字号减小',button=document.querySelector(`[aria-label="${label}"]`);button.scrollIntoView({block:'nearest'});button.click();await new Promise(r=>requestAnimationFrame(r));}},value);await settle(c);return;
+    const size=()=>c.evaluate("parseFloat(document.querySelector('.reader-size-stepper output').textContent)");
+    for(let current=await size();current!==value;current=await size()){
+      await clickControl(c,current<value?'[aria-label="字号增大"]':'[aria-label="字号减小"]');
+      await c.evaluate('new Promise(resolve=>requestAnimationFrame(resolve))');
+      assert(await size()!==current,'Font step took effect');
+    }
+    await settle(c);return;
   }
-  await evaluate(c,(key,value)=>{const prefix=innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover';
-    const input=document.querySelector(`${prefix} input[data-typography="${key}"]${typeof value==='string'?`[value="${value}"]`:''}`);
-    if(!input)throw Error('Missing typography input '+key);input.scrollIntoView({block:'nearest'}); if(input.type==='radio')input.click();
-    else {const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(input,String(value));input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));}},key,value);
+  const selector=await evaluate(c,(key,value)=>{
+    const prefix=innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover';
+    return prefix+' input[data-typography="'+key+'"]'+(typeof value==='string'?'[value="'+value+'"]':'');
+  },key,value);
+  if(await evaluate(c,selector=>document.querySelector(selector)?.type==='radio',selector)){
+    const label=selector.replace(' input',' label:has(> input')+')';
+    await clickControl(c,await evaluate(c,label=>document.querySelector(label)?label:null,label)??selector);
+  }else await evaluate(c,(selector,value)=>{const input=document.querySelector(selector);if(!input)throw Error('Missing typography input '+selector);
+    input.scrollIntoView({block:'nearest'});
+    {const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(input,String(value));input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));}},selector,value);
   await settle(c);
 }
 function checkRow(width,result,negative=false) {
@@ -162,13 +174,13 @@ async function samplerSelfCheck(c,width) {
   assert(result.every(r=>r.before===r.after),'Sampler callbacks leaked between scenes',result);console.log(JSON.stringify({width,samplerSelfCheck:result}));
 }
 async function open(c,index) {
-  if(await c.evaluate("!!document.querySelector('.reader-typography-popover')")){await c.evaluate("document.querySelector('.settings-typography-toggle').click()");await settle(c);}
+  if(await c.evaluate("!!document.querySelector('.reader-typography-popover')")){await clickControl(c,'.settings-typography-toggle');await settle(c);}
   await align(c,index);
   await evaluate(c,index=>{const span=document.querySelector(`.sentence[data-index="${index}"]`),r=span.getClientRects()[0];span.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:r.left+1,clientY:r.top+1}));},index); await settle(c);
 }
 async function save(c,index) {
   await open(c,index); await waitFor(()=>c.evaluate(`!!document.querySelector('.gloss-panel[data-sentence-index="${index}"][data-state="done"]')`),'gloss done');
-  await c.evaluate(`document.querySelector('.gloss-panel[data-sentence-index="${index}"] .action-row-save').click()`);await settle(c);
+  await clickControl(c,`.gloss-panel[data-sentence-index="${index}"] .action-row-save`);await settle(c);
 }
 async function reload(c) { await c.call('Page.reload');await ready(c); }
 async function layoutChecks(c,width) {
@@ -195,7 +207,7 @@ async function checks(c,width) {
   await align(c);
   for(const [key,values] of [['fontSize',[15,21,17.5]],['lineHeight',[1.5,2.1,1.75]],...(width>=768?[['lineChars',[20,45,32]]]:[]),['bodyFont',['serif','sans']],['glossFont',['sans','serif']]]) {
     for(const value of values) {
-      if(width<768&&key==='fontSize'){await c.evaluate("document.querySelector('[aria-label=\"关闭阅读设置\"]').click()");await revealControls(c,width);await align(c);}
+      if(width<768&&key==='fontSize'){await clickControl(c,'[aria-label="关闭阅读设置"]');await revealControls(c,width);await align(c);}
       await measured(c,width,`empty:${key}=${value}`,()=>change(c,key,value));
     }
   }
@@ -208,7 +220,7 @@ async function checks(c,width) {
       await c.call('Input.dispatchKeyEvent',await c.evaluate("innerWidth<768?({type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13}):({type:'keyDown',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37})"));
       await c.call('Input.dispatchKeyEvent',await c.evaluate("innerWidth<768?({type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13}):({type:'keyUp',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37})"));await sleep(100);}
   });
-  await measured(c,width,'reset',async()=>{await evaluate(c,()=>document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover'} .reader-typography-reset`).click());await settle(c);});
+  await measured(c,width,'reset',async()=>{await clickControl(c,(width<768?'.reader-typography-sheet':'.reader-typography-popover')+' .reader-typography-reset');await settle(c);});
   assert(await c.evaluate(`localStorage.getItem(${JSON.stringify(KEY)})`)===JSON.stringify(DEFAULTS),'restore all five');
   if(width<768){await c.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");await settle(c);}
   await save(c,5);await open(c,6);await settle(c);await revealControls(c,width);await align(c,8);
@@ -224,7 +236,7 @@ async function checks(c,width) {
     console.log(JSON.stringify({width,scenario:`clickedGlyphAfter:${key}`,key:clicked.key,dy:(await c.evaluate(`window.__g19.rect(${JSON.stringify(clicked.key)})`)).y-clicked.y,notFailureCriterion:true}));
   }
   // D13 is a separate operation under the newly selected typography.
-  if(width<768){await c.evaluate("document.querySelector('.reader-typography-aa').click()");await settle(c);}
+  if(width<768){await clickControl(c,'.reader-typography-aa');await settle(c);}
   await c.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");await settle(c);await align(c,8);
   await d13Sample(c,width,8,'D13-new-layout');
   await revealControls(c,width);await align(c,11);
@@ -252,8 +264,14 @@ async function coverageChecks(c,width) {
     for(const kind of ['aa','outside','escape']){
       if(kind==='aa'){await c.evaluate("window.dispatchEvent(new WheelEvent('wheel'));window.scrollTo({top:0,behavior:'instant'})");await settle(c);}
       await revealControls(c,width);const panels=await c.evaluate("[...document.querySelectorAll('.gloss-panel')].map(p=>p.dataset.sentenceIndex)");
-      await evaluate(c,kind=>{window.__g19.events=[];if(kind==='aa')document.querySelector('.reader-typography-aa').click();
-        else if(kind==='outside')document.querySelector('.reader-body').click();else document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));},kind);await settle(c);
+      await c.evaluate('window.__g19.events=[]');
+      if(kind==='aa')await clickControl(c,'.reader-typography-aa');
+      else if(kind==='outside'){
+        const point=await c.evaluate("(()=>{const el=document.querySelector('.reader-typography-backdrop'),r=el.getBoundingClientRect(),sheet=document.querySelector('.reader-typography-sheet').getBoundingClientRect();const x=(r.left+r.right)/2,y=(r.top+Math.min(sheet.top,r.bottom))/2;if(document.elementFromPoint(x,y)!==el)throw Error('压暗层可见区域中心未命中');return {x,y};})()");
+        for(const type of ['mousePressed','mouseReleased'])await c.call('Input.dispatchMouseEvent',{type,...point,button:'left',clickCount:1});
+      }
+      else for(const type of ['keyDown','keyUp'])await c.call('Input.dispatchKeyEvent',{type,key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+      await settle(c);
       assert(await c.evaluate("!document.querySelector('.reader-typography-sheet')"),'mobile sheet closed '+kind);
       assert(JSON.stringify(await c.evaluate("[...document.querySelectorAll('.gloss-panel')].map(p=>p.dataset.sentenceIndex)"))===JSON.stringify(panels),'closing sheet retains gloss');
       assert(await c.evaluate("document.activeElement===document.querySelector(document.querySelector('.reader-typography-floating-aa')?.dataset.visible==='true'?'.reader-typography-floating-aa':'.reader-typography-aa')"),'focus returned to Aa');
@@ -262,7 +280,7 @@ async function coverageChecks(c,width) {
   }
   const narrow={...DEFAULTS,lineChars:20};await evaluate(c,(key,value)=>localStorage.setItem(key,JSON.stringify(value)),KEY,narrow);await reload(c);
   assert(await c.evaluate("getComputedStyle(document.querySelector('.reader-body')).maxWidth")==='350px','stored hidden lineChars applies');
-  await revealControls(c,width);await c.evaluate("document.querySelector(`${innerWidth<768?'.reader-typography-sheet':'.reader-typography-popover'} .reader-typography-reset`).click()");await settle(c);
+  await revealControls(c,width);await clickControl(c,(width<768?'.reader-typography-sheet':'.reader-typography-popover')+' .reader-typography-reset');await settle(c);
   assert(await c.evaluate(`localStorage.getItem(${JSON.stringify(KEY)})`)===JSON.stringify(DEFAULTS),'reset restores hidden field');
   await change(c,'fontSize',20);
   await c.call('Page.navigate',{url:ORIGIN+'/read/g19-owned'});
@@ -314,7 +332,7 @@ async function negativeControl(c,width) {
   await c.evaluate('window.__g19.disable.disconnect();window.scrollBy=window.__g19.scrollBy;window.scrollTo=window.__g19.scrollTo');
 }
 async function d13Sample(c,width,index,label) {
-  if(await c.evaluate("!!document.querySelector('.reader-typography-popover')")){await c.evaluate("document.querySelector('.settings-typography-toggle').click()");await settle(c);}
+  if(await c.evaluate("!!document.querySelector('.reader-typography-popover')")){await clickControl(c,'.settings-typography-toggle');await settle(c);}
   const glyph=await evaluate(c,index=>window.__g19.glyphs().find(g=>g.index===index&&g.char.trim()),index);
   return measured(c,width,label,()=>evaluate(c,glyph=>{const r=window.__g19.rect(glyph.key),offset=Number(glyph.key.split(':')[1]);
     const span=[...document.querySelectorAll(`.sentence[data-index="${glyph.index}"]`)].find(s=>Number(s.dataset.offset)<=offset&&Number(s.dataset.offset)+s.textContent.length>offset);
@@ -337,7 +355,7 @@ async function boundaryChecks(c,width) {
   await measured(c,width,'book-end:fontSize-drag',()=>drag(c));
   await measured(c,width,'book-end:lineHeight-drag',()=>drag(c,'lineHeight'));
   for(const [key,font] of [['bodyFont','serif'],['bodyFont','sans'],['glossFont','sans'],['glossFont','serif']])await measured(c,width,'book-end:'+key+'='+font,()=>change(c,key,font));
-  if(width<768){await c.evaluate("document.querySelector('.reader-typography-aa').click()");await settle(c);}
+  if(width<768){await clickControl(c,'.reader-typography-aa');await settle(c);}
   await save(c,last);await align(c,last+1);await d13Sample(c,width,last+1,'D13-book-end-saved');
   const high={...DEFAULTS,fontSize:21,lineHeight:2.1};
   await evaluate(c,(key,value)=>{localStorage.removeItem('gloss:saved:sample');localStorage.setItem(key,JSON.stringify(value));},KEY,high);await reload(c);await revealControls(c,width);
@@ -349,11 +367,16 @@ async function boundaryChecks(c,width) {
 
 async function actualOwnedImport(c,width) {
   await c.call('Page.navigate',{url:ORIGIN+'/'});await waitFor(()=>c.evaluate("!!document.querySelector('.landing-secondary')"),'import entry');
-  await c.evaluate("(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key.startsWith('gloss:doc:')){const id=key.slice(10);set.call(this,'gloss:structure:'+id,JSON.stringify({version:1,prompt:'structure-v1',structure:'本地导入夹具结构。',savedAt:Date.now()}));window.__g19.importedId=id;}return set.call(this,key,value);};document.querySelector('.landing-secondary').click();})()");
+  await c.evaluate("(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key.startsWith('gloss:doc:')){const id=key.slice(10);set.call(this,'gloss:structure:'+id,JSON.stringify({version:1,prompt:'structure-v1',structure:'本地导入夹具结构。',savedAt:Date.now()}));window.__g19.importedId=id;}return set.call(this,key,value);};;})()");
+  await clickControl(c,'.landing-secondary');
   await waitFor(()=>c.evaluate("!!document.querySelector('input[type=file]')"),'file input');await c.call('DOM.enable');
   const doc=await c.call('DOM.getDocument'),input=await c.call('DOM.querySelector',{nodeId:doc.root.nodeId,selector:'input[type=file]'});
   await c.call('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[resolve(import.meta.dirname,'../test-fixtures/政治经济学批判-序言.docx')]});
-  await waitFor(()=>c.evaluate("(()=>{if(location.pathname.startsWith('/read/'))return true;const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='开始阅读');b?.click();return false;})()"),'imported reader');await ready(c);
+  const startButton=()=>c.evaluate("(()=>{const index=[...document.querySelectorAll('button')].findIndex(b=>b.textContent.trim()==='开始阅读');return index<0?null:index;})()");
+ await waitFor(async()=>await startButton()!==null,'开始阅读入口');
+ const startSelector=await evaluate(c,index=>{const button=document.querySelectorAll('button')[index];button.dataset.g76Start='true';return 'button[data-g76-start]';},await startButton());
+ await clickControl(c,startSelector);
+ await waitFor(()=>c.evaluate("location.pathname.startsWith('/read/')&&location.pathname!=='/read/sample'"),'imported reader');await ready(c);
   const result=await c.evaluate("(()=>{const col=document.querySelector('.col-left');return{available:col.clientWidth-(innerWidth<768?8:32),boxes:[document.querySelector('.reader-shelf-back'),...(innerWidth<768?[document.querySelector('.reader-mobile-heading')]:[[...document.querySelectorAll('.col-left .mode-label')].find(e=>e.getBoundingClientRect().height>0),...[...document.querySelectorAll('.col-left .mode-option')].filter(e=>e.getBoundingClientRect().height>0),document.querySelector('.feedback-button')]),document.querySelector('.reader-typography-aa')].map(el=>{const r=el.getBoundingClientRect();return{text:el.matches('.reader-shelf-back')?el.querySelector('.reader-back-text').textContent.replace(/^← /,''):el.textContent,font:getComputedStyle(el).fontSize,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width}}),imported:JSON.parse(localStorage.getItem('gloss:doc:'+location.pathname.split('/').at(-1))).meta.fileName}})()");
   assert(result.imported==='政治经济学批判-序言.docx','Real fixture imported',result);assert(result.boxes[0].text==='回到书架','Actual own book shelf link');
   assert(Math.max(...result.boxes.map(b=>(b.top+b.bottom)/2))-Math.min(...result.boxes.map(b=>(b.top+b.bottom)/2))<=2,'STOP: actual own book top row not one row',result);
@@ -430,6 +453,22 @@ async function run(width) {
     const absolute=resolve(profile);assert(absolute.startsWith(resolve(tmpdir(),persistent?'gloss-g19-perf-':'gloss-g19-edge-')),'Safe cleanup');if(!persistent)await rm(absolute,{recursive:true,force:true});
   }
 }
+export async function clickControl(c,selector){
+  const point=await evaluate(c,selector=>{
+    const el=document.querySelector(selector);
+    if(!el)throw Error("缺少控件 "+selector);
+    el.scrollIntoView({block:"nearest",inline:"nearest",behavior:"instant"});
+    const r=el.matches('.sentence')?[...el.getClientRects()].find(rect=>el.contains(document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2))):el.getBoundingClientRect();
+    if(!r)throw Error('原句没有可命中的行框 '+selector);
+    const x=r.left+r.width/2,y=r.top+r.height/2;
+    const hit=document.elementFromPoint(x,y);
+    if(!el.contains(hit))throw Error("控件中心未命中 "+selector+" "+JSON.stringify({x,y,hit:hit?.outerHTML.slice(0,150)}));
+    return {x,y};
+  },selector);
+  const {x,y}=point;
+  for(const type of ["mousePressed","mouseReleased"])await c.call("Input.dispatchMouseEvent",{type,x,y,button:"left",clickCount:1});
+}
+
 export { drag, change, checks, boundaryChecks, Cdp, setup, ready, freePort, settle, revealControls, align, open, save, evaluate, ownedShelfCheck, measured };
 if(process.env.G19_IMPORT_ONLY!=='1') {
   if(process.env.G19_PERF_MODE||process.env.G19_NEGATIVE_CONTROL==='1')await run(1280);else for(const width of WIDTHS)await run(width);

@@ -294,8 +294,13 @@ it("手机成功回到阅读关闭抽屉", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
   await mount(); await click(button()); await edit(bodyInput(), "测试"); await click(sendButton());
   expect(sendButton().textContent).toBe("回到阅读");
-  await click(sendButton()); expect(dialog()).toBeNull(); expect(document.activeElement).toBe(button());
+  await click(sendButton()); await finishMobileFeedbackClose(); expect(dialog()).toBeNull(); expect(document.activeElement).toBe(button());
 });
+
+async function finishMobileFeedbackClose() {
+  await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+  await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
+}
 
 // 从可拖区域开始才接管手势，沿用关闭函数恢复焦点与背景。
 it.each([[79, false], [81, true]])("手机标题慢拖 %spx，关闭=%s", async (distance, closed) => {
@@ -308,6 +313,7 @@ it.each([[79, false], [81, true]])("手机标题慢拖 %spx，关闭=%s", async 
   };
   const header = dialog()!.querySelector("h2")!;
   await touch("touchstart", 0, 0, header); await touch("touchmove", distance, 1000, header); await touch("touchend", distance, 1001, header);
+  if (closed) await finishMobileFeedbackClose();
   expect(!dialog()).toBe(closed);
   if (closed) { expect(document.activeElement).toBe(button()); expect(host.inert).toBe(false); }
 });
@@ -322,7 +328,7 @@ it("手机输入框起拖不关闭，快速标题下甩走现有关闭路径", a
     }
   }
   await drag(bodyInput(),100,1000); expect(dialog()).not.toBeNull();
-  await drag(dialog()!.querySelector("h2")!,20,20); expect(dialog()).toBeNull();
+  await drag(dialog()!.querySelector("h2")!,20,20); await finishMobileFeedbackClose(); expect(dialog()).toBeNull();
   expect(document.activeElement).toBe(button()); expect(host.inert).toBe(false);
 });
 
@@ -340,5 +346,6 @@ it("G73d 反馈慢拖79px回弹后第一次关闭恢复焦点", async () => {
   }
   expect(dialog()).not.toBeNull();
   await click(sendButton());
+  await finishMobileFeedbackClose();
   expect(dialog()).toBeNull(); expect(document.activeElement).toBe(button()); expect(host.inert).toBe(false);
 });

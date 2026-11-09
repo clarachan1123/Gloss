@@ -669,7 +669,7 @@ describe("G-15b 阅读器事件", () => {
 
     await click(container, ".action-row-save", 2_000);
     expect(of("gloss_save")).toEqual([{ event: "gloss_save", sentenceIndex: 0, edited: false }]);
-    expect(container.querySelector<HTMLElement>(".action-row-save")?.getAttribute("aria-label")).toBe("取消收藏");
+    expect(container.querySelector<HTMLElement>(".action-row-save")?.getAttribute("aria-label")).toBe("已收藏");
     await click(container, ".action-row-save", 3_000);
     expect(container.querySelector<HTMLElement>(".action-row-save")?.getAttribute("aria-label")).toBe("收藏");
     expect(of("gloss_save")).toHaveLength(1);
@@ -1772,6 +1772,11 @@ it("G73d 设置慢拖79px回弹后第一次关闭恢复焦点", async () => {
     }
     expect(host.querySelector('.reader-typography-sheet')).not.toBeNull();
     await click(host.querySelector('.reader-typography-sheet-header button')!);
+    const closing = host.querySelector<HTMLElement>('.reader-typography-sheet[data-closing]');
+    expect(closing?.inert).toBe(true);
+    const animationEnd = new Event('animationend', { bubbles: true });
+    Object.defineProperty(animationEnd, 'animationName', { value: 'reader-sheet-out' });
+    await act(async () => { closing!.dispatchEvent(animationEnd); });
     expect(host.querySelector('.reader-typography-sheet')).toBeNull();expect(document.activeElement).toBe(aa);expect(aa.getAttribute('aria-expanded')).toBe('false');
   } finally {await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals();}
 });

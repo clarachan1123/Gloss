@@ -4,15 +4,14 @@ import {mkdtemp,rm,mkdir,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 process.env.G19_IMPORT_ONLY='1';
-const {Cdp,setup,ready,freePort,settle,revealControls,align,open,evaluate,measured,drag,change}=await import('./verify-g19.mjs');
+const {Cdp,setup,ready,freePort,settle,revealControls,align,open,evaluate,measured,drag,change,clickControl}=await import('./verify-g19.mjs');
 const ORIGIN=process.env.G19C_ORIGIN??'http://localhost:3472';
 const ROOT=resolve(import.meta.dirname,'..');
 const EDGE='C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const assert=(ok,label,detail)=>{if(!ok)throw Error(label+(detail===undefined?'':': '+JSON.stringify(detail)));};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(fn,label){const end=Date.now()+20000;while(Date.now()<end){if(await fn())return;await sleep(100);}throw Error('Timeout: '+label);}
-async function click(c,selector){const p=await evaluate(c,selector=>{const el=document.querySelector(selector);if(!el)throw Error('Missing '+selector);const r=el.getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};},selector);
- await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...p});await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...p});await settle(c);}
+async function click(c,selector){await clickControl(c,selector);await settle(c);}
 function probes(){
  const state=window.__g19c={locks:[],raw:[],idleRaf:0};
  const realRaf=requestAnimationFrame;
@@ -103,7 +102,7 @@ function mobileProbe(){
 }
 async function mobileAlign(c,index,y=100){await evaluate(c,({index,y})=>{dispatchEvent(new WheelEvent('wheel'));const g=__g19.glyphs().find(g=>g.index===index&&g.char.trim());window.scrollTo({top:scrollY+g.y-y,behavior:'instant'});},{index,y});await settle(c);}
 async function mobileOpen(c){if(!await c.evaluate("!!document.querySelector('.reader-typography-sheet')"))await click(c,'.reader-typography-aa');}
-async function mobileMore(c){await mobileOpen(c);await c.evaluate("(()=>{const b=document.querySelector('.reader-more-typography');if(b.getAttribute('aria-expanded')==='false')b.click()})()");await settle(c);}
+async function mobileMore(c){await mobileOpen(c);if(await c.evaluate("!!document.querySelector('.reader-more-typography[aria-expanded=false]')"))await clickControl(c,'.reader-more-typography');await settle(c);}
 async function mobileScreenshot(c,width,height,theme,label){if(width!==375||height!==812)return;const dir=join(ROOT,'tmp-g19c-shots-3');await mkdir(dir,{recursive:true});const {data}=await c.call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile(join(dir,`reader-${width}x${height}-${theme}-${label}.png`),Buffer.from(data,'base64'));}
 async function mobileProgressCase(c,para,current,total){const index=await evaluate(c,para=>Number(document.querySelector(`.reader-paragraph[data-para="${para}"] .sentence, .reader-paragraph [data-para="${para}"] .sentence, [data-para="${para}"] .sentence`).dataset.index),para);
  await mobileAlign(c,index,52);const result=await c.evaluate("(()=>{const text=document.querySelector('.reader-mobile-progress').textContent,track=document.querySelector('.reader-mobile-progress-track').getBoundingClientRect(),bar=document.querySelector('.reader-mobile-progress-track>span').getBoundingClientRect();return{text,width:bar.width,totalWidth:track.width,header:document.querySelector('.col-left').getBoundingClientRect().height}})()");
@@ -114,16 +113,24 @@ async function mobileShots(c,theme){
 }
 async function fontSizeButtonRegressions(c) {
  const results=[];
- async function prepare(){await revealControls(c,375);await c.evaluate("document.querySelector('.reader-typography-sheet .reader-typography-reset').click()");await settle(c);await click(c,'[aria-label="关闭阅读设置"]');await revealControls(c,375);await c.evaluate("dispatchEvent(new WheelEvent('wheel'))");await mobileAlign(c,11,36);await c.evaluate('__g19c.locks=[]');}
+ async function prepare(){await revealControls(c,375);await click(c,'.reader-typography-sheet .reader-typography-reset');await settle(c);await click(c,'[aria-label="关闭阅读设置"]');await revealControls(c,375);await c.evaluate("dispatchEvent(new WheelEvent('wheel'))");await mobileAlign(c,11,36);await c.evaluate('__g19c.locks=[]');}
  for(const [kind,count] of [['frame',5],['400ms',5],['reader-scroll',3]])for(let iteration=1;iteration<=count;iteration++){
   await prepare();
   if(kind==='reader-scroll'){
    await mobileAlign(c,5,100);
-   await measured(c,375,'font-buttons:before-scroll',()=>c.evaluate("document.querySelector('[aria-label=\"字号减小\"]').click()"));
+   await measured(c,375,'font-buttons:before-scroll',()=>clickControl(c,'[aria-label="字号减小"]'));
    const before=await c.evaluate('scrollY');await c.call('Input.dispatchMouseEvent',{type:'mouseWheel',x:150,y:120,deltaX:0,deltaY:200});await settle(c);const after=await c.evaluate('scrollY');assert(Math.abs(after-before-200)<1,'Reader scroll 200px retained',{before,after});
-   const reference=await c.evaluate('__g19.reference()');await c.evaluate('__g19c.locks=[]');const row=await measured(c,375,'font-buttons:after-scroll',()=>c.evaluate("document.querySelector('[aria-label=\"字号减小\"]').click()"),false,reference.key);const locks=await c.evaluate('__g19c.locks');assert(locks.length>0&&locks.at(-1).key===reference.key,'Font button picks first glyph after reader scroll',{reference,locks});results.push({kind,iteration,maxDy:row.maxAbsDelta,key:reference.key,scrollDelta:after-before});
+   const reference=await c.evaluate('__g19.reference()');await c.evaluate('__g19c.locks=[]');const row=await measured(c,375,'font-buttons:after-scroll',()=>clickControl(c,'[aria-label="字号减小"]'),false,reference.key);const locks=await c.evaluate('__g19c.locks');assert(locks.length>0&&locks.at(-1).key===reference.key,'Font button picks first glyph after reader scroll',{reference,locks});results.push({kind,iteration,maxDy:row.maxAbsDelta,key:reference.key,scrollDelta:after-before});
   }else{
-   const row=await measured(c,375,'empty:fontSize=15:'+kind,()=>evaluate(c,async interval=>{while(parseFloat(document.querySelector('.reader-size-stepper output').textContent)!==15){const b=document.querySelector('[aria-label="字号减小"]');b.scrollIntoView({block:'nearest'});b.click();await new Promise(r=>interval?setTimeout(r,interval):requestAnimationFrame(r));}},kind==='400ms'?400:0));const locks=await c.evaluate('__g19c.locks');assert(locks.length===5&&locks.every(l=>l.key===row.key),'Font clicks share original anchor',{key:row.key,locks});results.push({kind,iteration,maxDy:row.maxAbsDelta,key:row.key,maxTranslate:row.maxTranslate});
+   const row=await measured(c,375,'empty:fontSize=15:'+kind,async()=>{
+    const size=()=>c.evaluate("parseFloat(document.querySelector('.reader-size-stepper output').textContent)");
+    for(let current=await size();current!==15;current=await size()){
+      await clickControl(c,'[aria-label="字号减小"]');
+      if(kind==='400ms')await sleep(400);
+      else await c.evaluate('new Promise(resolve=>requestAnimationFrame(resolve))');
+      assert(await size()!==current,'Font step took effect');
+    }
+   });const locks=await c.evaluate('__g19c.locks');assert(locks.length===5&&locks.every(l=>l.key===row.key),'Font clicks share original anchor',{key:row.key,locks});results.push({kind,iteration,maxDy:row.maxAbsDelta,key:row.key,maxTranslate:row.maxTranslate});
   }
  }
  console.log(JSON.stringify({fontSizeButtonRegressions:results,passed:true}));return results;
@@ -131,7 +138,7 @@ async function fontSizeButtonRegressions(c) {
 async function mobileChecks(c,width,height,theme){
  await evaluate(c,theme=>{localStorage.setItem('gloss:settings:appearance',theme==='dark'?'dark':'light');localStorage.setItem('gloss:settings:theme','parchment');localStorage.removeItem('gloss:settings:reader-typography');localStorage.removeItem('gloss:pos:sample');},theme);await c.call('Page.reload');await ready(c);await c.evaluate(`(${mobileProbe.toString()})()`);
  const fontSizeRegressions=width===375&&height===812&&theme==='parchment'?await fontSizeButtonRegressions(c):null;
- if(fontSizeRegressions){await revealControls(c,375);await c.evaluate("document.querySelector('.reader-typography-sheet .reader-typography-reset').click()");await settle(c);await click(c,'[aria-label="关闭阅读设置"]');await mobileAlign(c,0,52);}
+ if(fontSizeRegressions){await revealControls(c,375);await click(c,'.reader-typography-sheet .reader-typography-reset');await settle(c);await click(c,'[aria-label="关闭阅读设置"]');await mobileAlign(c,0,52);}
  const header=await c.evaluate("(()=>{const h=document.querySelector('.col-left').getBoundingClientRect(),a=document.querySelector('.reader-typography-aa').getBoundingClientRect(),b=document.querySelector('.reader-shelf-back').getBoundingClientRect();return{top:h.top,height:h.height,aa:[a.width,a.height],back:[b.width,b.height]}})()");
  assert(header.top===0&&Math.abs(header.height-52)<=.5&&header.aa.every(x=>x>=44)&&header.back.every(x=>x>=44),'Mobile fixed header and hit targets',header);
  await mobileScreenshot(c,width,height,theme,'start');
@@ -140,9 +147,14 @@ async function mobileChecks(c,width,height,theme){
  const long=await c.evaluate("(()=>{const title=document.querySelector('.reader-mobile-title'),p=document.querySelector('.reader-mobile-progress'),old=[title.textContent,p.textContent];title.textContent='长'.repeat(60);p.textContent='第 1234 段 · 共 1234 段';const r=document.querySelector('.col-left').getBoundingClientRect(),s=getComputedStyle(title),result={height:r.height,ellipsis:s.textOverflow==='ellipsis'&&title.scrollWidth>title.clientWidth,overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth};[title.textContent,p.textContent]=old;return result})()");assert(Math.abs(long.height-52)<=.5&&long.ellipsis&&long.overflow<=0,'Long mobile title and 1234 digits',long);
  // Import the real fixture with a local stored structure, avoiding model requests.
  await c.evaluate('__mobile.running=false');await c.call('Page.navigate',{url:ORIGIN+'/'});await wait(()=>c.evaluate("!!document.querySelector('.landing-secondary')"),'import entry');
- await c.evaluate("(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key.startsWith('gloss:doc:'))set.call(this,'gloss:structure:'+key.slice(10),JSON.stringify({version:1,prompt:'structure-v1',structure:'本地进度夹具结构。',savedAt:Date.now()}));return set.call(this,key,value);};document.querySelector('.landing-secondary').click()})()");
+ await c.evaluate("(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key.startsWith('gloss:doc:'))set.call(this,'gloss:structure:'+key.slice(10),JSON.stringify({version:1,prompt:'structure-v1',structure:'本地进度夹具结构。',savedAt:Date.now()}));return set.call(this,key,value);};})()");
+ await clickControl(c,'.landing-secondary');
  await wait(()=>c.evaluate("!!document.querySelector('input[type=file]')"),'import input');await c.call('DOM.enable');let dom=await c.call('DOM.getDocument'),node=await c.call('DOM.querySelector',{nodeId:dom.root.nodeId,selector:'input[type=file]'});await c.call('DOM.setFileInputFiles',{nodeId:node.nodeId,files:[join(ROOT,'test-fixtures/政治经济学批判-序言.docx')]});
- await wait(()=>c.evaluate("(()=>{if(location.pathname.startsWith('/read/')&&location.pathname!=='/read/sample')return true;[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='开始阅读')?.click();return false})()"),'imported document');await ready(c);
+ const startButton=()=>c.evaluate("(()=>{const index=[...document.querySelectorAll('button')].findIndex(b=>b.textContent.trim()==='开始阅读');return index<0?null:index;})()");
+ await wait(async()=>await startButton()!==null,'开始阅读入口');
+ const startSelector=await evaluate(c,index=>{const button=document.querySelectorAll('button')[index];button.dataset.g76Start='true';return 'button[data-g76-start]';},await startButton());
+ await clickControl(c,startSelector);
+ await wait(()=>c.evaluate("location.pathname.startsWith('/read/')&&location.pathname!=='/read/sample'"),'imported document');await ready(c);
  const imported=[await mobileProgressCase(c,2,3,15),await mobileProgressCase(c,3,4,15)];assert(await c.evaluate("[...document.querySelectorAll('[data-para=\"2\"] .sentence')].map(s=>s.textContent).join('').includes('序言')"),'Imported title paragraph');
  await c.call('Page.navigate',{url:ORIGIN+'/read/sample'});await ready(c);await c.evaluate(`(${mobileProbe.toString()})()`);await open(c,5);await mobileAlign(c,5);await mobileScreenshot(c,width,height,theme,'middle-gloss');await mobileAlign(c,11);
  await mobileOpen(c);assert(await c.evaluate("document.querySelector('.reader-typography-sheet-header h2').textContent==='阅读设置'&&document.querySelector('.reader-more-typography').getAttribute('aria-expanded')==='false'"),'Mobile settings title/default collapsed');

@@ -4,12 +4,13 @@ import ts from 'typescript';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 process.env.G19_IMPORT_ONLY='1';
-const {Cdp,evaluate}=await import('./verify-g19.mjs');
+const {Cdp,evaluate,clickControl}=await import('./verify-g19.mjs');
 const profile=await mkdtemp(join(tmpdir(),'gloss-g75-'));
 const edge=spawn('C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',['--headless=new','--disable-gpu','--no-sandbox','--no-first-run','--disable-sync','--user-data-dir='+profile,'--remote-debugging-port=9511','--remote-allow-origins=*','about:blank'],{stdio:'ignore',windowsHide:true});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));let c,scenes=0,negative=0;const candidateDemoSizes=[];
 const assert=(ok,label,facts)=>{if(!ok)throw Error(label+' '+JSON.stringify(facts));scenes++;};
 const ev=(fn,...args)=>evaluate(c,fn,...args);
+const click=selector=>clickControl(c,selector);
 async function wait(fn,label){const end=Date.now()+20000;while(Date.now()<end){if(await fn())return;await sleep(50);}throw Error('等待失败 '+label);}
 async function load(path,width,origin='http://127.0.0.1:3511'){
  await c.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
@@ -46,16 +47,16 @@ function seed(){
 async function actionText(selector,expected){await wait(()=>ev((s,e)=>document.querySelector(s)?.getAttribute('aria-label')===e,selector,expected),'按钮 '+expected);assert(await ev((s,e)=>document.querySelector(s).getAttribute('aria-label')===e,selector,expected),'按钮文案',expected);}
 async function point(ordinal,offset){return ev((ordinal,offset)=>{const e=document.querySelectorAll('.reader-body .sentence')[ordinal],n=e.firstChild,r=document.createRange();r.setStart(n,offset);r.setEnd(n,offset+1);const b=r.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2};},ordinal,offset);}
 async function selectionResult(width){
- await ev(width=>document.querySelector(width<768?'.reader-selection-mobile':'.reader-selection-desktop').click(),width);
+ await click(width<768?'.reader-selection-mobile':'.reader-selection-desktop');
  await ev(()=>scrollTo({top:0,behavior:'instant'}));await sleep(350);
  const a=await point(0,0),b=await point(1,4);
  if(width<768){await c.call('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});for(const p of [a,b]){await c.call('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{...p,id:1}]});await c.call('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});}await c.call('Emulation.setTouchEmulationEnabled',{enabled:false});}
  else{await c.call('Input.dispatchMouseEvent',{type:'mousePressed',...a,button:'left',clickCount:1});await c.call('Input.dispatchMouseEvent',{type:'mouseMoved',...b,button:'left',buttons:1});await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',...b,button:'left',clickCount:1});}
  await wait(()=>c.evaluate("!!document.querySelector('.reader-selection-bar [data-selection-control]')&&document.querySelector('.reader-selection-bar').dataset.selectionChars>0"),'划选准备');
- await ev(()=>[...document.querySelectorAll('.reader-selection-actions button')].find(b=>b.textContent==='确定').click());
+ await click(await ev(()=>'.reader-selection-actions button:nth-child('+([...document.querySelectorAll('.reader-selection-actions button')].findIndex(b=>b.textContent==='确定')+1)+')'));
  await wait(()=>c.evaluate("!!document.querySelector('[data-selection-id] .action-row-save:not(:disabled)')"),'划选结果');
  await actionText('[data-selection-id] .action-row-save','收藏');
- await ev(()=>document.querySelector('[data-selection-id] .action-row-save').click());await actionText('[data-selection-id] .action-row-save','取消收藏');
+ await click('[data-selection-id] .action-row-save');await actionText('[data-selection-id] .action-row-save','已收藏');
  assert(await ev(noOverflow),'划选结果零溢出',{width});assert(await c.evaluate("parseFloat(getComputedStyle(document.querySelector('[data-selection-id] .action-row-save')).fontSize)")===13,'划选结果下方控件13px');
 }
 try{
@@ -137,7 +138,7 @@ try{
   await brand('.shelf-brand-footer',18);
   assert(await ev(()=>{const e=document.querySelector('.shelf-brand-footer'),s=getComputedStyle(e);return e.getAttribute('aria-hidden')==='true'&&s.opacity==='0.8'&&s.marginTop==='34px'&&s.textAlign==='center';}),'书单落款规格');
   for(const value of ['parchment','moon-white','eye-green','dark']){await theme(value);assert(await ev(dark=>getComputedStyle(document.querySelector('.brand-lockup')).backgroundImage.endsWith((dark?'brand-lockup-dark.png':'brand-lockup.png')+'")'),value==='dark'),'小标随主题切换',value);}
-  await ev(()=>document.querySelector('.shelf-heading .feedback-button').click());await wait(()=>c.evaluate("!!document.querySelector('.feedback-card')"),'原反馈卡');
+  await click('.shelf-heading .feedback-button');await wait(()=>c.evaluate("!!document.querySelector('.feedback-card')"),'原反馈卡');
   await c.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await sleep(350);
  }
  await theme('dark');
@@ -154,7 +155,7 @@ try{
   await ev(()=>document.querySelector('.reader-sidebar-top').style.flexWrap='nowrap');f=await ev(row);assert(f.overflow||f.b.right>f.t.right,'禁用换行负对照检出',f);negative++;
   await ev(()=>{const t=document.querySelector('.reader-sidebar-top');t.style.removeProperty('width');t.style.removeProperty('flex-wrap');});f=await ev(row);assert(f.a.y===f.b.y&&!f.overflow,'恢复同行',f);console.log(JSON.stringify({width,top:f}));
   const footer=()=>{const col=document.querySelector('.col-left'),b=col.querySelector('.feedback-button').getBoundingClientRect(),r=col.getBoundingClientRect();return Math.abs(b.bottom-r.bottom+parseFloat(getComputedStyle(col).paddingBottom))<.5;};
-  assert(await ev(footer),'反馈位于可视底部');await ev(()=>document.querySelector('.feedback-button').click());await wait(()=>c.evaluate("!!document.querySelector('.feedback-card')"),'反馈卡');await sleep(350);assert(await ev(()=>{const c=document.querySelector('.feedback-card'),r=c.getBoundingClientRect(),b=document.querySelector('.feedback-button').getBoundingClientRect();return c.dataset.side==='above'&&r.bottom<=b.top&&r.top>=0&&r.left>=0&&r.right<=document.documentElement.clientWidth;}),'反馈向上且在视口内');await ev(()=>document.querySelector('.feedback-close').click());
+  assert(await ev(footer),'反馈位于可视底部');await click('.feedback-button');await wait(()=>c.evaluate("!!document.querySelector('.feedback-card')"),'反馈卡');await sleep(350);assert(await ev(()=>{const c=document.querySelector('.feedback-card'),r=c.getBoundingClientRect(),b=document.querySelector('.feedback-button').getBoundingClientRect();return c.dataset.side==='above'&&r.bottom<=b.top&&r.top>=0&&r.left>=0&&r.right<=document.documentElement.clientWidth;}),'反馈向上且在视口内');await click('.feedback-close');
   if(width===768){
    await negativeCheck('恢复旧左栏',()=>getComputedStyle(document.querySelector('.reader-sidebar-content')).display==='block'&&getComputedStyle(document.querySelector('.col-left>.wordmark')).display==='none',()=>document.querySelector('.reader-sidebar-content').style.display='contents',()=>document.querySelector('.reader-sidebar-content').style.removeProperty('display'));
    await negativeCheck('字标溢出左栏',()=>{const a=document.querySelector('.reader-sidebar-brand').getBoundingClientRect(),b=document.querySelector('.col-left').getBoundingClientRect();return a.left>=b.left&&a.right<=b.right;},()=>document.querySelector('.reader-sidebar-brand').style.transform='translateX(500px)',()=>document.querySelector('.reader-sidebar-brand').style.removeProperty('transform'));
@@ -162,13 +163,15 @@ try{
   }
  }
  for(const width of [320,375]){
+  await ev(()=>{localStorage.removeItem('gloss:saved:g75');localStorage.removeItem('gloss:selection-saved:g75');});
   await load('/read/g75',width);
   assert(await ev(()=>![...document.querySelectorAll('.col-left .brand-wordmark')].some(e=>e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0)),'手机阅读页无品牌');
-  await ev(()=>document.querySelector('.sentence[data-index="0"]').click());
+  await click('.sentence[data-index="0"]');
   await wait(()=>c.evaluate("!!document.querySelector('.action-row-save:not(:disabled)')"),'普通白话');
   await actionText('.action-row-save','收藏');await actionText('.action-row-explain','脉络解读');
-  await ev(()=>document.querySelector('.action-row-save').click());await actionText('.action-row-save','取消收藏');
-  await negativeCheck("书签无障碍名称",()=>document.querySelector(".action-row-save").getAttribute("aria-label")==="取消收藏",()=>document.querySelector(".action-row-save").setAttribute("aria-label","收藏"),()=>document.querySelector(".action-row-save").setAttribute("aria-label","取消收藏"));
+  await c.evaluate("Promise.all(document.querySelector('.reader-body').getAnimations({subtree:true}).filter(animation=>Number.isFinite(animation.effect.getComputedTiming().endTime)).map(animation=>animation.finished.catch(()=>{})))");
+  await click('.action-row-save');await actionText('.action-row-save','已收藏');
+  await negativeCheck("书签无障碍名称",()=>document.querySelector(".action-row-save").getAttribute("aria-label")==="已收藏",()=>document.querySelector(".action-row-save").setAttribute("aria-label","收藏"),()=>document.querySelector(".action-row-save").setAttribute("aria-label","已收藏"));
   await negativeCheck("解读入口无障碍名称",()=>document.querySelector(".action-row-explain").getAttribute("aria-label")==="脉络解读",()=>document.querySelector(".action-row-explain").setAttribute("aria-label","听不懂"),()=>document.querySelector(".action-row-explain").setAttribute("aria-label","脉络解读"));
   assert(await ev(()=>getComputedStyle(document.querySelector('.action-row-save')).fontSize==='13px'),'下方控件13px');
   await negativeCheck("下方书签字号",()=>getComputedStyle(document.querySelector(".action-row-save")).fontSize==="13px",()=>document.querySelector(".action-row-save").style.fontSize="14px",()=>document.querySelector(".action-row-save").style.removeProperty("font-size"));
@@ -176,16 +179,16 @@ try{
   await ev(()=>{const roles=['.action-row-save','.action-row-explain'];window.__g75Roles=()=>roles.map(role=>{const s=getComputedStyle(document.querySelector(role));return {role,values:['fontFamily','fontSize','lineHeight','letterSpacing','textAlign','textIndent','color','wordBreak','lineBreak'].map(p=>s[p])};});window.__g75RoleBefore=JSON.stringify(__g75Roles());});
   await negativeCheck('G66按角色比较未改属性',()=>JSON.stringify(__g75Roles())===__g75RoleBefore,()=>document.querySelector('.action-row-save').style.color='red',()=>document.querySelector('.action-row-save').style.removeProperty('color'));
   await negativeCheck('操作行溢出',noOverflow,()=>document.querySelector('.action-row').style.width='2000px',()=>document.querySelector('.action-row').style.removeProperty('width'));
-  await ev(()=>document.querySelector('.reader-typography-aa').click());await wait(()=>c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'手机设置');
-  await ev(()=>{const b=document.querySelector('.reader-more-typography');if(b?.getAttribute('aria-expanded')==='false')b.click();});await sleep(350);
+  await click('.reader-typography-aa');await wait(()=>c.evaluate("!!document.querySelector('.reader-typography-sheet')"),'手机设置');
+  if(await c.evaluate("!!document.querySelector('.reader-more-typography[aria-expanded=false]')"))await click('.reader-more-typography');await sleep(350);
   const settingsFavorites=()=>{const sheet=document.querySelector(".reader-typography-sheet"),group=sheet.querySelector('[role="group"][aria-label="收藏显示设置"]');return group?.querySelector(".mode-label")?.textContent==="收藏"&&[...group.querySelectorAll("button")].map(b=>b.textContent).join("|")==="显示|收起"&&!sheet.querySelector(".saved-list,.saved-link,#saved-title");};
   assert(await ev(settingsFavorites),"Aa保留显示收起并移出收藏列表");
   await negativeCheck("Aa收藏标签",settingsFavorites,()=>document.querySelector(".reader-typography-sheet .mode-label").textContent="收藏的白话",()=>document.querySelector(".reader-typography-sheet .mode-label").textContent="收藏");
   await negativeCheck("Aa不得恢复收藏列表",settingsFavorites,()=>{const list=document.createElement("ol");list.className="saved-list";list.id="g76-aa-negative";document.querySelector(".reader-typography-sheet").append(list);},()=>document.querySelector("#g76-aa-negative").remove());
-  await ev(()=>document.querySelector('.reader-typography-sheet-header button').click());
+  await click('.reader-typography-sheet-header button');
   await ev(()=>{localStorage.removeItem('gloss:saved:g75');localStorage.removeItem('gloss:selection-saved:g75');});await load('/read/g75',width);
   await selectionResult(width);assert(await ev(noOldWords),'阅读页旧词零残留');
-  await ev(()=>document.querySelector('.reader-shelf-back').click());await wait(()=>c.evaluate("!!document.querySelector('.shelf-page')"),'离开阅读页');assert(await c.evaluate('document.title')==='Glossline 句下','离页恢复标题');
+  await click('.reader-shelf-back');await wait(()=>c.evaluate("!!document.querySelector('.shelf-page')"),'离开阅读页');assert(await c.evaluate('document.title')==='Glossline 句下','离页恢复标题');
  }
  await load('/read/g75',1280);
  await negativeCheck('G73d字标字号判据',()=>{const s=getComputedStyle(document.querySelector('.reader-sidebar-brand .brand-english'));return s.fontSize==='20px'&&s.fontWeight==='600'&&!document.querySelector('.col-left .brand-chinese');},()=>document.querySelector('.reader-sidebar-brand .brand-english').style.fontSize='14px',()=>document.querySelector('.reader-sidebar-brand .brand-english').style.removeProperty('font-size'));
@@ -198,9 +201,9 @@ try{
  await load('/',375);await ev(()=>{localStorage.clear();localStorage.setItem('gloss:analytics:optout','1');localStorage.setItem('gloss:sample:breathed','1');});await load('/',375);
  await negativeCheck('空书架落款',()=>!document.querySelector('.shelf-brand-footer'),()=>{const e=document.createElement('div');e.className='shelf-brand-footer';document.body.append(e);},()=>document.querySelector('.shelf-brand-footer').remove());
  // 对照副本用于字号下限，字体大小取同一最大正文设置。
- await load('/',375,'http://127.0.0.1:3510');await wait(()=>c.evaluate("!!document.querySelector('.landing-demo-visible .action-row-save')"),'基线演示');const baselineDemoSize=await c.evaluate("parseFloat(getComputedStyle(document.querySelector('.landing-demo-visible .action-row-save')).fontSize)");assert(candidateDemoSizes.every(size=>size===13),'演示下方控件13px',{candidateDemoSizes,baselineDemoSize});await ev(seed);await load('/read/g75',375,'http://127.0.0.1:3510');await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("!!document.querySelector('.action-row-save:not(:disabled)')"),'基线操作行');
+ await load('/',375,'http://127.0.0.1:3510');await wait(()=>c.evaluate("!!document.querySelector('.landing-demo-visible .action-row-save')"),'基线演示');const baselineDemoSize=await c.evaluate("parseFloat(getComputedStyle(document.querySelector('.landing-demo-visible .action-row-save')).fontSize)");assert(candidateDemoSizes.every(size=>size===13),'演示下方控件13px',{candidateDemoSizes,baselineDemoSize});await ev(seed);await load('/read/g75',375,'http://127.0.0.1:3510');await click('.sentence[data-index="0"]');await wait(()=>c.evaluate("!!document.querySelector('.action-row-save:not(:disabled)')"),'基线操作行');
  const baselineSize=await c.evaluate("parseFloat(getComputedStyle(document.querySelector('.action-row-save')).fontSize)");
- await load('/',375);await ev(seed);await load('/read/g75',375);await ev(()=>{localStorage.removeItem('gloss:saved:g75');localStorage.removeItem('gloss:selection-saved:g75');});await load('/read/g75',375);await ev(()=>document.querySelector('.sentence[data-index="0"]').click());await wait(()=>c.evaluate("!!document.querySelector('.action-row-save:not(:disabled)')"),'候选操作行');
+ await load('/',375);await ev(seed);await load('/read/g75',375);await ev(()=>{localStorage.removeItem('gloss:saved:g75');localStorage.removeItem('gloss:selection-saved:g75');});await load('/read/g75',375);await click('.sentence[data-index="0"]');await wait(()=>c.evaluate("!!document.querySelector('.action-row-save:not(:disabled)')"),'候选操作行');
  assert(await ev(()=>getComputedStyle(document.querySelector('.action-row-save')).fontSize==='13px'),'阅读下方控件13px',{baselineSize});
  console.log(JSON.stringify({scenes,negative,passed:true}));
 }finally{try{if(c&&edge.exitCode===null)await c.call('Browser.close');}finally{c?.close();if(edge.exitCode===null)await Promise.race([new Promise(r=>edge.once('exit',r)),sleep(5000)]);const absolute=resolve(profile);if(!absolute.startsWith(resolve(tmpdir(),'gloss-g75-')))throw Error('临时目录路径不符');try{await rm(absolute,{recursive:true,force:true});}catch(error){console.warn('临时浏览器目录清理失败：'+error.code);}}}

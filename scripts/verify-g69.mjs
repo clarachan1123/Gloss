@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 process.env.G19_IMPORT_ONLY = '1';
-const { Cdp, freePort } = await import('./verify-g19.mjs');
+const { Cdp, freePort, clickControl } = await import('./verify-g19.mjs');
 const ORIGIN = process.env.G69_ORIGIN ?? 'http://127.0.0.1:3482';
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const COLORS = { parchment: ['#1F4E75', '#E7E9E6'], 'moon-white': ['#1F4E75', '#E4E8ED'], 'eye-green': ['#14446B', '#DCE4E0'], dark: ['#C4DAF0', '#252524'] };
@@ -251,7 +251,7 @@ async function mode(c,label) {
 
 async function saved(c, index, save) {
   await wait(c, `!!document.querySelector('.gloss-panel[data-sentence-index="${index}"] .action-row-save:not(:disabled)')`, 'save action');
-  await evaluate(c, index => document.querySelector('.gloss-panel[data-sentence-index="'+index+'"] .action-row-save').click(), index);
+  await clickControl(c, `.gloss-panel[data-sentence-index="${index}"] .action-row-save`);
   await wait(c, `document.querySelector('.gloss-panel[data-sentence-index="${index}"]')?.classList.contains('gloss-panel-saved')===${save}`, 'save transition'); await settle(c);
 }
 function compare(before, after) {
@@ -420,7 +420,13 @@ async function checks(c, width, theme) {
   await saved(c,0,true); await mode(c,'显示'); await evaluate(c,()=>__g69.inspect([])); scenarios++;
   await mode(c,'收起'); await click(c,0,'touch',[0],theme);
   assert(await c.evaluate("![...document.querySelectorAll('.sentence[data-index=\"0\"]')].some(s=>s.classList.contains('sentence-saved-collapsed'))"),'Expanded saved keeps existing underline behavior');
-  await click(c,0,'touch',[],theme); await evaluate(c,()=>document.querySelector('.saved-link').click()); await settle(c); await evaluate(c,()=>__g69.inspect([])); scenarios++;
+  await click(c,0,'touch',[],theme);
+  if(await c.evaluate('innerWidth<768')){
+    await clickControl(c,'.reader-saved-mobile');
+    await settle(c);
+    await clickControl(c,'.reader-saved-sheet .saved-link');
+  }else await clickControl(c,'.reader-sidebar-content .saved-link');
+  await settle(c); await evaluate(c,()=>__g69.inspect([])); scenarios++;
   await escape(c); await offscreen(c,theme,'down'); await offscreen(c,theme,'up');
   await click(c,1,'touch',[1],theme); await navigate(c,'/'); await wait(c,"!!document.querySelector('.landing-demo-visible')",'landing');
   assert(await c.evaluate("!document.querySelector('.sentence-active')"),'Landing unchanged / leaving cleans activity'); scenarios++;

@@ -4,7 +4,7 @@ import {mkdtemp,rm,mkdir,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 process.env.G19_IMPORT_ONLY='1';
-const {Cdp,setup,evaluate}=await import('./verify-g19.mjs');
+const {Cdp,setup,evaluate,clickControl}=await import('./verify-g19.mjs');
 const origin='http://127.0.0.1:3504',port=9504;
 const dir=resolve('tmp-g73c-shots');await mkdir(dir,{recursive:true});
 const profile=await mkdtemp(join(tmpdir(),'gloss-g73c-'));
@@ -17,7 +17,7 @@ async function wait(fn,label){const end=Date.now()+20000;while(Date.now()<end){i
 const ev=(fn,...args)=>evaluate(c,fn,...args);
 async function check(label,fn,...args){scenes++;const value=await ev(fn,...args);assert(value,label);passed++;}
 async function snap(name){const shot=await c.call('Page.captureScreenshot',{format:'png'});await writeFile(join(dir,name+'.png'),Buffer.from(shot.data,'base64'));shots++;}
-async function click(selector){const p=await ev(sel=>{const el=document.querySelector(sel);if(!el)throw Error('缺少 '+sel);const r=el.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};},selector);await point(p);}
+async function click(selector){await clickControl(c,selector);}
 async function point(p){await c.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...p});await c.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...p});}
 async function key(key,shift=false){await c.call('Input.dispatchKeyEvent',{type:'keyDown',key,code:key,modifiers:shift?8:0,windowsVirtualKeyCode:key==='Tab'?9:27});await c.call('Input.dispatchKeyEvent',{type:'keyUp',key,code:key});}
 async function edit(sel,text){await ev((sel,text)=>{const el=document.querySelector(sel),proto=el instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,text);el.dispatchEvent(new Event('input',{bubbles:true}));},sel,text);}
@@ -100,7 +100,7 @@ try{
   await click('.feedback-send');await wait(()=>c.evaluate("!!document.querySelector('.feedback-failure')"),'失败');await check(id+' 失败',failure);await zero(before,id+'-failure');await snap(id+'-failure');
   await ev(()=>window.__feedbackMode='success');await click('.feedback-send');await wait(()=>c.evaluate("!!document.querySelector('.feedback-success')"),'成功');await zero(before,id+'-success');await snap(id+'-success');
   await check(id+' 发送来源与新id',page=>__feedbackRows.length===2&&__feedbackRows.every(r=>r.source===page)&&__feedbackRows[0].id!==__feedbackRows[1].id,page==='landing'?'landing':page);
-  if(mobile){await click('.feedback-success .feedback-send');await check(id+' 回到阅读',()=>!document.querySelector('.feedback-card'));}
+  if(mobile){await click('.feedback-success .feedback-send');await wait(()=>c.evaluate("!document.querySelector('.feedback-card')"),'退场卸载');await check(id+' 回到阅读',()=>!document.querySelector('.feedback-card'));}
   else{await click('.feedback-again');await settled();await check(id+' 再写一条',()=>document.querySelector('textarea').value===''&&document.activeElement===document.querySelector('textarea'));await click('.feedback-close');}
   await settled();await zero(before,id+'-closed');await snap(id+'-closed');
   await check(id+' 焦点返回',mobile&&page==='reader'?()=>document.activeElement===document.querySelector('.reader-typography-aa'):()=>document.activeElement===document.querySelector('.feedback-button'));
@@ -132,7 +132,7 @@ try{
  await c.call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
  await check('减少动态时转圈停止',()=>getComputedStyle(document.querySelector('.feedback-spinner')).animationName==='none');
  await negative('减少动态转圈负对照',()=>getComputedStyle(document.querySelector('.feedback-spinner')).animationName==='none',()=>document.querySelector('.feedback-spinner').style.animation='feedback-spin 800ms linear infinite',()=>document.querySelector('.feedback-spinner').style.removeProperty('animation'));
- await key('Escape');await check('发送中Esc关闭',()=>!document.querySelector('.feedback-card'));await ev(()=>window.__feedbackResolve());await settled();
+ await key('Escape');await wait(()=>c.evaluate("!document.querySelector('.feedback-card')"),'退场卸载');await check('发送中Esc关闭',()=>!document.querySelector('.feedback-card'));await ev(()=>window.__feedbackResolve());await settled();
  await click('.feedback-button');await settled();await edit('textarea','键盘草稿');
  await c.call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
  await check('减少动态效果',()=>getComputedStyle(document.querySelector('.feedback-card')).animationName==='none');

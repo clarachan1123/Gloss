@@ -5,7 +5,7 @@ import { join, resolve, dirname } from "node:path";
 import ts from "typescript";
 import { createHash } from "node:crypto";
 process.env.G19_IMPORT_ONLY = "1";
-const { Cdp, freePort } = await import("./verify-g19.mjs");
+const { Cdp, freePort, clickControl } = await import("./verify-g19.mjs");
 const ROOT = resolve(import.meta.dirname, "..");
 const ORIGIN = process.env.G64A_ORIGIN ?? "http://127.0.0.1:3486";
 const BASE = process.env.G64A_BASE_ORIGIN ?? "http://127.0.0.1:3487";
@@ -58,7 +58,7 @@ async function navigate(c, url) {
   await wait(c, "document.querySelector('.reader-body')?.dataset.measuring==='false'", "正文就绪");
   await c.evaluate("document.fonts.ready.then(()=>new Promise(r=>setTimeout(r,400)))");
 }
-async function click(c, selector) { await evaluate(c, selector => document.querySelector(selector).click(), selector); }
+async function click(c, selector) { await clickControl(c, selector); }
 const toggle = width => width < 768 ? ".reader-selection-mobile" : ".reader-selection-desktop";
 async function stable(c, action, label) {
   const before = await c.evaluate("__g64.glyphs().filter(g=>g.y<innerHeight&&g.bottom>0&&g.width>0&&g.height>0)");
@@ -127,7 +127,8 @@ async function ordinary(c) {
   const g=await glyph(c,2,0,true);
   await c.call("Input.dispatchMouseEvent",{type:"mouseMoved",x:g.x,y:g.y});
   const hover=await c.evaluate("document.querySelector('.sentence[data-index=\"4\"]').classList.contains('sentence-hover')");
-  await c.evaluate("document.querySelector('.sentence[data-index=\"4\"]').click()");
+  await c.evaluate("document.querySelector('.sentence[data-index=\"4\"]').scrollIntoView({block:'center',behavior:'instant'})");
+    await click(c,'.sentence[data-index="4"]');
   await wait(c,"!!document.querySelector('.gloss-panel[data-sentence-index=\"4\"]')","普通点句白话");
   const menu=await c.evaluate("(()=>{const e=new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:100});document.querySelector('.sentence[data-index=\"4\"]').dispatchEvent(e);return {prevented:e.defaultPrevented,visible:!!document.querySelector('.reader-context-menu')}})()");
   await sleep(100);
@@ -152,7 +153,8 @@ async function realClick(c, selector, button = "left") {
 async function menuReady(c, origin) {
   await navigate(c,origin+"/read/sample");
   await glyph(c,2,0,true);
-  await click(c,'.sentence[data-index="4"]');
+  await c.evaluate("document.querySelector('.sentence[data-index=\"4\"]').scrollIntoView({block:'center',behavior:'instant'})");
+    await click(c,'.sentence[data-index="4"]');
   await wait(c,'document.querySelector(".gloss-panel[data-sentence-index=\\"4\\"]")?.dataset.state==="done"',"菜单准备白话完成");
   await c.evaluate('document.querySelector(".gloss-panel[data-sentence-index=\\"4\\"]").scrollIntoView({block:"center",behavior:"instant"})');
   await sleep(400);
@@ -425,7 +427,12 @@ async function resultFunctionalSmoke(c,width,source){
   await realClick(c,await glyph(c,3,source.start.offset));
   await wait(c,"!document.querySelector('[data-selection-id]')&&CSS.highlights.has('gloss-result-saved')","再点范围收起");
   await assertReturn(c,savedToggle,"iv 点击已留下范围收起");
-  await click(c,"[data-saved-selection-id]");
+  if(width<768){
+    await click(c,'.reader-saved-mobile');
+    await wait(c,"document.querySelectorAll('.reader-saved-sheet .saved-link').length===1","手机收藏抽屉的唯一范围条目");
+    await c.evaluate("Promise.all(document.querySelector('.reader-saved-sheet').getAnimations().map(animation=>animation.finished.catch(()=>{})))");
+    await click(c,'.reader-saved-sheet .saved-link');
+  }else await click(c,"[data-saved-selection-id]");
   await sleep(1000);
   await wait(c,"!!document.querySelector('[data-selection-id]')","左栏范围跳转");
   const top=await evaluate(c,p=>__g64.glyphs().find(g=>g.paraIndex===p.paraIndex&&g.offset===p.offset).y,source.start);
@@ -643,10 +650,11 @@ async function resultReadingMode(c,width){
   if(width<768){
     await click(c,".reader-typography-aa");
     await wait(c,"!!document.querySelector('.reader-typography-sheet')","手机设置打开");
+    await c.evaluate("Promise.all(document.querySelector('.reader-typography-sheet').getAnimations().map(animation=>animation.finished.catch(()=>{})))");
     await click(c,".reader-more-typography");
     await click(c,".reader-typography-sheet .mode-options .mode-option:nth-child(2)");
     await click(c,'[aria-label="关闭阅读设置"]');
-  }else await click(c,".mode-options .mode-option:nth-child(2)");
+  }else await click(c,".reader-sidebar-mode .mode-option:nth-child(2)");
 }
 
 async function resultMultiple(c,width){
@@ -874,7 +882,8 @@ async function run(width) {
     }
     await click(c, ".reader-selection-actions button:last-child");
     // 已展开白话保持，Esc 只退出模式。
-    await c.evaluate("document.querySelector('.sentence[data-index=\"4\"]').click()");
+    await c.evaluate("document.querySelector('.sentence[data-index=\"4\"]').scrollIntoView({block:'center',behavior:'instant'})");
+    await click(c,'.sentence[data-index="4"]');
     await wait(c,"!!document.querySelector('.gloss-panel')","已有白话");
     await wait(c,"document.querySelector('.gloss-panel[data-sentence-index=\"4\"]')?.dataset.state==='done'","端点准备：白话显示完成");
     await c.evaluate("document.querySelector('.gloss-panel[data-sentence-index=\"4\"]').scrollIntoView({block:'center',behavior:'instant'})");
